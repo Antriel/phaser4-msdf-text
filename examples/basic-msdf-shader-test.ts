@@ -10,9 +10,10 @@
  * - Font descriptor (.fnt file) - for later phases
  */
 
+import Phaser from 'phaser';
 import { loadMSDFShaders, createMSDFShaderConfig, MSDF_SHADER_KEYS } from '../src/MSDFShader';
 
-class BasicMSDFShaderTest extends Phaser.Scene {
+export class BasicMSDFShaderTest extends Phaser.Scene {
     constructor() {
         super({ key: 'BasicMSDFShaderTest' });
     }
@@ -67,17 +68,3 @@ class BasicMSDFShaderTest extends Phaser.Scene {
         console.log('Shader config:', shaderConfig);
     }
 }
-
-// Example game configuration
-const gameConfig: Phaser.Types.Core.GameConfig = {
-    type: Phaser.WEBGL,
-    width: 800,
-    height: 600,
-    backgroundColor: '#1a1a2e',
-    scene: BasicMSDFShaderTest
-};
-
-// Create and start the game
-const game = new Phaser.Game(gameConfig);
-
-export { BasicMSDFShaderTest, gameConfig };

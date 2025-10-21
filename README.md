@@ -34,6 +34,20 @@ phaser4-msdf-font/
 
 ## 🚀 Quick Start
 
+### Installation & Development
+
+```bash
+# Install dependencies
+npm install
+
+# Start development server
+npm run dev
+```
+
+The dev server will open at http://localhost:3000 with the MSDF shader test scene.
+
+**Note:** To see actual MSDF text rendering, you need to generate an MSDF font texture first. See the font generation instructions in [DEVELOPMENT.md](DEVELOPMENT.md#generating-test-font).
+
 ### Loading MSDF Shaders
 
 ```typescript

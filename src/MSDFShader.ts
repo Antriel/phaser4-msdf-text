@@ -167,11 +167,11 @@ export class MSDFShaderHelper {
 }
 
 /**
- * Default paths for MSDF shader files
+ * Default paths for MSDF shader files (relative to public directory)
  */
 export const MSDF_SHADER_PATHS = {
-    FRAGMENT: 'shaders/msdf/MSDFFont.frag',
-    VERTEX: 'shaders/msdf/MSDFFont.vert'
+    FRAGMENT: 'shaders/MSDFFont.frag',
+    VERTEX: 'shaders/MSDFFont.vert'
 } as const;
 
 /**
