@@ -22,9 +22,8 @@ export class BasicMSDFShaderTest extends Phaser.Scene {
         // Load MSDF shader files
         loadMSDFShaders(this);
 
-        // Load a sample MSDF font texture
-        // TODO: Replace with actual MSDF font texture path
-        this.load.image('msdf-font-atlas', 'assets/fonts/RobotoMedium.png');
+        // Load MSDF font texture (generated from Arial with msdf-atlas-gen)
+        this.load.image('msdf-font-atlas', 'assets/fonts/Arial.png');
     }
 
     create() {
@@ -32,12 +31,14 @@ export class BasicMSDFShaderTest extends Phaser.Scene {
         const height = this.scale.height;
 
         // Create MSDF shader configuration
-        // These values should match your font generation parameters
+        // These values MUST match the font generation parameters:
+        // - Atlas dimensions: 512x256 (from msdf-atlas-gen output)
+        // - Distance range: 4 (from -pxrange 4 parameter)
         const shaderConfig = createMSDFShaderConfig({
             name: 'MSDFTest',
-            textureWidth: 512,      // Match your atlas size
-            textureHeight: 512,     // Match your atlas size
-            distanceRange: 4,       // Match generation -pxrange parameter
+            textureWidth: 512,      // Atlas width
+            textureHeight: 256,     // Atlas height
+            distanceRange: 4,       // Must match -pxrange parameter
             fragmentKey: MSDF_SHADER_KEYS.FRAGMENT,
             vertexKey: MSDF_SHADER_KEYS.VERTEX
         });

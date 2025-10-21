@@ -84,6 +84,10 @@ export function createMSDFShaderConfig(options: MSDFShaderConfig): any {
             // Set MSDF-specific uniforms
             setUniform('uTexSize', [textureWidth, textureHeight]);
             setUniform('uPxRange', distanceRange);
+
+            // Set screen size for anti-aliasing calculation
+            // drawingContext has width/height properties
+            setUniform('uScreenSize', [drawingContext.width || 1280, drawingContext.height || 720]);
         }
     };
 }
