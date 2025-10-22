@@ -14,6 +14,11 @@ uniform float uPxRange;     // Distance field range (typically 2-4)
 // Text color
 uniform vec4 uTextColor;
 
+// Character UV bounds in atlas (u0, v0, u1, v1)
+// When rendering individual characters, this maps the quad to the character's region
+// Default: (0, 0, 1, 1) renders entire texture
+uniform vec4 uCharUV;
+
 // From vertex shader
 varying vec2 outTexCoord;
 
@@ -24,8 +29,11 @@ float median(float r, float g, float b) {
 }
 
 void main() {
+    // Remap UV coordinates from quad [0,1] to character atlas region [u0,v0]→[u1,v1]
+    vec2 uv = mix(uCharUV.xy, uCharUV.zw, outTexCoord);
+
     // Sample the MSDF texture
-    vec3 textureSample = texture2D(iChannel0, outTexCoord).rgb;
+    vec3 textureSample = texture2D(iChannel0, uv).rgb;
 
     // Get the median distance value
     float dist = median(textureSample.r, textureSample.g, textureSample.b);

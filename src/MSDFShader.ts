@@ -36,6 +36,12 @@ export interface MSDFShaderConfig {
 
     /** Path to vertex shader file (if loading inline) */
     vertexPath?: string;
+
+    /** Text color as [r, g, b, a] in 0-1 range (default: white) */
+    textColor?: number[];
+
+    /** Character UV bounds [u0, v0, u1, v1] (default: [0,0,1,1] for full texture) */
+    charUV?: number[];
 }
 
 /**
@@ -69,7 +75,9 @@ export function createMSDFShaderConfig(options: MSDFShaderConfig): any {
         textureHeight,
         distanceRange = 4,
         fragmentKey = 'MSDFFont-frag',
-        vertexKey = 'MSDFFont-vert'
+        vertexKey = 'MSDFFont-vert',
+        textColor = [1.0, 1.0, 1.0, 1.0],
+        charUV = [0.0, 0.0, 1.0, 1.0]
     } = options;
 
     return {
@@ -85,8 +93,11 @@ export function createMSDFShaderConfig(options: MSDFShaderConfig): any {
             setUniform('uTexSize', [textureWidth, textureHeight]);
             setUniform('uPxRange', distanceRange);
 
-            // Set text color (white by default)
-            setUniform('uTextColor', [1.0, 1.0, 1.0, 1.0]);
+            // Set text color
+            setUniform('uTextColor', textColor);
+
+            // Set character UV bounds (for rendering individual characters)
+            setUniform('uCharUV', charUV);
         }
     };
 }

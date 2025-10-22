@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minimal Test - Single A</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            overflow: hidden;
+        }
+        #game-container {
+            width: 100vw;
+            height: 100vh;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container"></div>
+
+    <script type="module">
+        import Phaser from 'phaser';
+        import { MinimalTest } from './examples/minimal-test.ts';
+
+        const config = {
+            type: Phaser.WEBGL,
+            width: 1280,
+            height: 720,
+            parent: 'game-container',
+            backgroundColor: '#000000',
+            scene: [MinimalTest],
+            scale: {
+                mode: Phaser.Scale.FIT,
+                autoCenter: Phaser.Scale.CENTER_BOTH
+            }
+        };
+
+        const game = new Phaser.Game(config);
+        window.game = game;
+        console.log('Minimal test started - check for red A in center');
+    </script>
+</body>
+</html>

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MSDF Font Parser Test</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 12px;
+            padding: 40px;
+            max-width: 800px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            color: #2d3748;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+
+        .subtitle {
+            color: #718096;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+
+        #console {
+            background: #1a202c;
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            padding: 20px;
+            border-radius: 8px;
+            min-height: 400px;
+            max-height: 600px;
+            overflow-y: auto;
+            font-size: 13px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            font-weight: 500;
+        }
+
+        .status.loading {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .status.success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .status.error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .btn {
+            margin-top: 20px;
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .btn:hover {
+            background: #5a67d8;
+        }
+
+        .btn:active {
+            background: #4c51bf;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔤 MSDF Font Parser Test</h1>
+        <p class="subtitle">Testing JSON parser with Arial.json from msdf-atlas-gen</p>
+
+        <div id="console"></div>
+
+        <div id="status" class="status loading">Loading parser test...</div>
+
+        <button class="btn" onclick="location.reload()">🔄 Reload Test</button>
+    </div>
+
+    <script type="module" src="/examples/test-msdf-parser.ts"></script>
+
+    <script>
+        // Intercept console.log and display in the page
+        const consoleDiv = document.getElementById('console');
+        const statusDiv = document.getElementById('status');
+
+        const originalLog = console.log;
+        const originalError = console.error;
+
+        console.log = function(...args) {
+            originalLog.apply(console, args);
+            const message = args.map(arg =>
+                typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+            ).join(' ');
+            consoleDiv.textContent += message + '\n';
+            consoleDiv.scrollTop = consoleDiv.scrollHeight;
+        };
+
+        console.error = function(...args) {
+            originalError.apply(console, args);
+            const message = args.map(arg =>
+                typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+            ).join(' ');
+            consoleDiv.innerHTML += `<span style="color: #ff6b6b;">${message}</span>\n`;
+            consoleDiv.scrollTop = consoleDiv.scrollHeight;
+            statusDiv.textContent = '❌ Test failed - see console for details';
+            statusDiv.className = 'status error';
+        };
+
+        // Listen for test completion
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                if (!statusDiv.classList.contains('error')) {
+                    statusDiv.textContent = '✅ Parser test completed - check console output';
+                    statusDiv.className = 'status success';
+                }
+            }, 2000);
+        });
+    </script>
+</body>
+</html>
