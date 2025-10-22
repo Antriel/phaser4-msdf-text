@@ -52,8 +52,11 @@ export class UltraMinimal extends Phaser.Scene {
             color: '#ffffff'
         });
 
-        // Test 2: Character 'A' with DEBUG shader
+        // Test 2: Character 'A' with DEBUG shader (FLIPPED V)
         console.log('Creating character A DEBUG shader...');
+
+        const v0_debug = 1 - 0.138671875;
+        const v1_debug = 1 - 0.001953125;
 
         const charADebug = this.add.shader({
             name: 'CharADebug',
@@ -64,7 +67,7 @@ export class UltraMinimal extends Phaser.Scene {
                 setUniform('uTexSize', [512, 256]);
                 setUniform('uPxRange', 4);
                 setUniform('uTextColor', [1, 0, 0, 1]);
-                setUniform('uCharUV', [0.9345703125, 0.001953125, 0.9990234375, 0.138671875]); // A's UVs
+                setUniform('uCharUV', [0.9345703125, v0_debug, 0.9990234375, v1_debug]); // FLIPPED V
             }
         }, 650, 200, 150, 150, ['atlas']);
 

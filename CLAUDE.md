@@ -99,13 +99,36 @@ MSDF fonts **MUST** use LINEAR filtering. NEAREST filtering will break the dista
 - ✅ TypeScript helper (MSDFShader.ts)
 - ✅ Working test rendering entire MSDF atlas
 - ✅ Clean, simplified approach (no derivatives needed)
+- ✅ Character-specific UV mapping with `uCharUV` uniform
 
-### Phase 2: MSDFText GameObject (NEXT)
-Following BitmapText architecture pattern:
-- Parse BMFont .fnt files (character metrics, kerning)
-- Render individual characters as quads (not whole atlas)
-- Use custom RenderNodes (Submitter, Texturer, Transformer)
-- Batch characters together for performance
-- Support text layout (alignment, wrapping, scaling)
+### Phase 2: MSDFText GameObject ✅ COMPLETE
+- ✅ JSON Parser (msdf-atlas-gen format)
+- ✅ MSDFFont class (data management, kerning, measurements)
+- ✅ MSDFText GameObject (renders individual characters)
+- ✅ Text layout engine (positioning, advance, kerning)
+- ✅ Multiple font sizes (scalable rendering)
+- ✅ Text colors (per-text color support)
+- ✅ Text alignment (left, center, right)
+- ✅ V-coordinate flipping for Phaser's OpenGL texture coordinates
+- ✅ Working test scenes with multiple examples
+
+### Phase 3: Optimization & Polish (NEXT)
+Potential improvements:
+- Phaser Loader integration (`this.load.msdfFont()`)
+- Batching optimization (single draw call for all characters)
+- Advanced text features (word wrapping, multi-color, effects)
+- Documentation and usage examples
 
 See MSDF-Font-Implementation-Plan.md for detailed progress tracking.
+
+## Key Discoveries
+
+### V-Coordinate Flipping
+**Critical Finding**: Phaser uses OpenGL's bottom-up texture coordinates, regardless of the `yOrigin` setting in the font JSON. All V-coordinates must be flipped:
+```typescript
+const v0 = 1 - (atlasBounds.bottom / atlasHeight);
+const v1 = 1 - (atlasBounds.top / atlasHeight);
+```
+
+### Per-Character Shader Configs
+Each character requires its own shader config with character-specific `uCharUV` values. The `setupUniforms` function is called every frame, so per-character UVs must be baked into each config.

@@ -32,12 +32,12 @@ export class MinimalTest extends Phaser.Scene {
         });
 
         // Hardcoded values for letter 'A' from Arial.json
-        // These are the exact values from the JSON file
+        // V coordinates are FLIPPED for Phaser (OpenGL convention)
         const charA = {
             u0: 0.9345703125,
-            v0: 0.001953125,
+            v0: 1 - 0.138671875,  // FLIPPED
             u1: 0.9990234375,
-            v1: 0.138671875,
+            v1: 1 - 0.001953125,  // FLIPPED
             // From planeBounds
             left: -0.059361049107142766,
             top: -0.77380952380952384,
@@ -59,13 +59,13 @@ export class MinimalTest extends Phaser.Scene {
         console.log('Pixel width:', pixelWidth);
         console.log('Pixel height:', pixelHeight);
 
-        // Create shader for 'A' with DEBUG shader
+        // Create shader for 'A' with MSDF shader
         const config = createMSDFShaderConfig({
             name: 'TestA',
             textureWidth: 512,
             textureHeight: 256,
             distanceRange: 4,
-            fragmentKey: 'debug-uv-frag', // Use debug shader
+            fragmentKey: MSDF_SHADER_KEYS.FRAGMENT,
             textColor: [1, 0, 0, 1], // Red
             charUV: [charA.u0, charA.v0, charA.u1, charA.v1]
         });
@@ -99,18 +99,8 @@ export class MinimalTest extends Phaser.Scene {
             console.log('Renderer:', renderer);
         });
 
-        this.add.text(20, 50, `DEBUG SHADER: Top half = UV debug colors, Bottom half = Actual texture`, {
-            fontSize: '16px',
-            color: '#ffff00'
-        });
-
-        this.add.text(20, 75, `Top: Red=U coord (${charA.u0.toFixed(2)}-${charA.u1.toFixed(2)}), Green=V coord (${charA.v0.toFixed(2)}-${charA.v1.toFixed(2)})`, {
-            fontSize: '14px',
-            color: '#ffffff'
-        });
-
-        this.add.text(20, 100, `Bottom: Should show letter 'A' from texture atlas`, {
-            fontSize: '14px',
+        this.add.text(20, 50, `Should show a large RED letter "A" in the center`, {
+            fontSize: '18px',
             color: '#ffffff'
         });
 

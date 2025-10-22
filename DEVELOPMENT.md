@@ -94,10 +94,19 @@ npm run preview
 - Basic test scene rendering full atlas
 - Dev environment fully configured
 
+✅ **Phase 2 COMPLETE:**
+- JSON parser for msdf-atlas-gen format
+- MSDFFont class (data container)
+- MSDFText GameObject (text renderer)
+- Character-by-character rendering with MSDF shaders
+- Text layout with advance, kerning, and alignment
+- Multiple font sizes and colors
+- Working test scenes
+
 🎯 **Next Phase:**
-- MSDFText GameObject (like BitmapText)
-- BMFont .fnt parser
-- Individual character rendering
+- Phaser loader integration
+- Batching optimization (RenderNodes)
+- Advanced text features (wrapping, effects)
 
 ### Generating Test Font
 
@@ -200,25 +209,78 @@ Check the browser console for:
 - GL_OES_standard_derivatives not needed (simplified approach works)
 - Phaser's default vertex shader is sufficient
 - Texture filtering: Must be LINEAR (not NEAREST)
+- **V-coordinates must be flipped**: Phaser uses OpenGL's bottom-up texture coordinates
+- **Per-character shader configs**: Each character needs its own config with baked-in UVs
+
+## Using MSDF Text (Phase 2 Complete!)
+
+### Basic Usage
+
+```typescript
+import { parseMSDFFont, MSDFFontJSON } from './src/MSDFFontParser';
+import { MSDFFont } from './src/MSDFFont';
+import { MSDFText } from './src/MSDFText';
+import { loadMSDFShaders } from './src/MSDFShader';
+
+class MyScene extends Phaser.Scene {
+    private font?: MSDFFont;
+
+    preload() {
+        // Load MSDF shaders
+        loadMSDFShaders(this);
+
+        // Load font assets
+        this.load.image('arial-msdf', 'assets/fonts/Arial.png');
+        this.load.json('arial-data', 'assets/fonts/Arial.json');
+    }
+
+    create() {
+        // Parse font data
+        const fontJson = this.cache.json.get('arial-data') as MSDFFontJSON;
+        const fontData = parseMSDFFont(fontJson, 'Arial');
+
+        // Create font instance
+        this.font = new MSDFFont(fontData, 'arial-msdf');
+
+        // Create text
+        const text = new MSDFText(this, 100, 100, this.font, 'Hello World!', 48);
+        text.setColorHex('#ffffff');
+        text.setAlign('center');
+
+        // Text is automatically added to scene via Container
+    }
+}
+```
+
+### MSDFText Features
+
+- **Font sizes**: `setText()`, `setFontSize()`
+- **Colors**: `setColor(r, g, b, a)`, `setColorHex('#ffffff')`
+- **Alignment**: `setAlign('left' | 'center' | 'right')`
+- **Line spacing**: `setLineSpacing(pixels)`
+- **Measurements**: `getTextWidth()`, `getTextHeight()`, `getTextBounds()`
+- **Automatic kerning**: Built into layout engine
+- **Scalable**: Sharp rendering at any font size
 
 ## Next Steps
 
-After verifying shaders work:
+Potential improvements for Phase 3:
 
-1. **Phase 2: Font Parser**
-   - Parse .fnt BMFont files
-   - Extract character metrics
-   - Handle kerning data
-
-2. **Phase 3: Text Rendering**
-   - Create MSDFText GameObject
-   - Implement glyph layout
-   - Support font sizing
-
-3. **Phase 4: Loader Integration**
-   - Custom Phaser loader for .fnt + .png
+1. **Phaser Loader Integration**
+   - Custom loader: `this.load.msdfFont('arial', ...)`
+   - Automatic JSON + PNG loading
    - Cache integration
-   - Multi-page fonts
+
+2. **Batching Optimization**
+   - RenderNodes (Submitter, Texturer, Transformer)
+   - Single draw call for all characters
+   - Improved performance for large text blocks
+
+3. **Advanced Features**
+   - Word wrapping
+   - Multi-color text (inline color tags)
+   - Text effects (shadow, outline, gradient)
+   - Rich text formatting
 
 ## Scripts
 

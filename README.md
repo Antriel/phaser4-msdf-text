@@ -10,12 +10,23 @@ High-quality scalable text rendering for Phaser 4 using Multi-channel Signed Dis
 - ✅ Simplified approach (no derivatives required)
 - ✅ TypeScript Helper Module
 - ✅ Working test rendering full MSDF atlas
+- ✅ Character-specific UV mapping
 
-**Phase 2: MSDFText GameObject** - 🚧 Next
+**Phase 2: MSDFText GameObject** - ✅ **COMPLETE!**
 
-- Parse BMFont .fnt files
-- Render individual characters (not whole atlas)
-- Text layout and batching
+- ✅ JSON parser for msdf-atlas-gen format
+- ✅ MSDFFont class (data management)
+- ✅ MSDFText GameObject (text renderer)
+- ✅ Character-by-character rendering with MSDF shaders
+- ✅ Text layout with advance, kerning, and alignment
+- ✅ Multiple font sizes and colors
+- ✅ V-coordinate flipping for Phaser's texture system
+
+**Phase 3: Optimization & Features** - 🚧 Next
+
+- Phaser Loader integration
+- Batching optimization (RenderNodes)
+- Advanced text features (wrapping, effects)
 
 See [MSDF-Font-Implementation-Plan.md](MSDF-Font-Implementation-Plan.md) for detailed progress.
 
@@ -52,40 +63,51 @@ npm run dev
 
 The dev server will open at http://localhost:3000 with the MSDF shader test scene.
 
-**Note:** To see actual MSDF text rendering, you need to generate an MSDF font texture first. See the font generation instructions in [DEVELOPMENT.md](DEVELOPMENT.md#generating-test-font).
+**Test the complete system:** Open http://localhost:3000/test-msdf-text.html to see MSDFText rendering in action!
 
-### Loading MSDF Shaders
+### Using MSDFText
 
 ```typescript
-import { loadMSDFShaders, createMSDFShaderConfig } from './src/MSDFShader';
+import { loadMSDFShaders } from './src/MSDFShader';
+import { parseMSDFFont, MSDFFontJSON } from './src/MSDFFontParser';
+import { MSDFFont } from './src/MSDFFont';
+import { MSDFText } from './src/MSDFText';
 
 class MyScene extends Phaser.Scene {
+    private font?: MSDFFont;
+
     preload() {
         // Load MSDF shaders
         loadMSDFShaders(this);
 
-        // Load MSDF font texture
-        this.load.image('font-atlas', 'assets/fonts/RobotoMedium.png');
+        // Load MSDF font assets
+        this.load.image('arial-msdf', 'assets/fonts/Arial.png');
+        this.load.json('arial-data', 'assets/fonts/Arial.json');
     }
 
     create() {
-        // Create shader configuration
-        const config = createMSDFShaderConfig({
-            textureWidth: 512,
-            textureHeight: 512,
-            distanceRange: 4  // Must match font generation
-        });
+        // Parse font data
+        const fontJson = this.cache.json.get('arial-data') as MSDFFontJSON;
+        const fontData = parseMSDFFont(fontJson, 'Arial');
 
-        // Create shader object
-        const shader = this.add.shader(
-            config,
-            400, 300,           // position
-            400, 300,           // size
-            ['font-atlas']      // textures
-        );
+        // Create font instance
+        this.font = new MSDFFont(fontData, 'arial-msdf');
+
+        // Create text
+        const text = new MSDFText(this, 100, 100, this.font, 'Hello World!', 48);
+        text.setColorHex('#ffffff');
+        text.setAlign('center');
+
+        // Text features:
+        // - Scalable to any size (sharp at all scales)
+        // - Automatic kerning
+        // - Color support
+        // - Alignment (left, center, right)
     }
 }
 ```
+
+**Note:** To generate your own MSDF fonts, see [DEVELOPMENT.md](DEVELOPMENT.md#generating-test-font).
 
 ## 🛠️ Shader Details
 
@@ -154,33 +176,44 @@ Based on the [Ceramic Engine](https://github.com/ceramic-engine/ceramic) (MIT li
 - [x] Premultiplied alpha implementation
 - [x] TypeScript helpers
 - [x] Working test (renders full atlas)
+- [x] Character-specific UV mapping
 
-### Phase 2: MSDFText GameObject 🚧 (Next)
-- [ ] Study Phaser's BitmapText architecture
-- [ ] TypeScript interfaces for font data
-- [ ] BMFont format parser (.fnt files)
-- [ ] Character and kerning data structures
+### Phase 2: MSDFText GameObject ✅ **COMPLETE**
+- [x] JSON parser for msdf-atlas-gen format
+- [x] TypeScript interfaces for font data
+- [x] Character and kerning data structures
+- [x] MSDFFont class (data management)
+- [x] MSDFText GameObject (text renderer)
+- [x] Individual character quads with shaders
+- [x] Text layout engine (advance, kerning, alignment)
+- [x] Multiple font sizes and colors
+- [x] V-coordinate flipping for Phaser
+- [x] Working test scenes
 
-### Phase 3: Character Rendering
-- [ ] MSDFFont class (data management)
-- [ ] MSDFText GameObject (like BitmapText)
-- [ ] Individual character quads
-- [ ] Batching with RenderNodes
-
-### Phase 4: Loader Integration
-- [ ] Asset loader for .fnt + .png
+### Phase 3: Loader Integration 🚧 (Next)
+- [ ] Custom Phaser loader: `this.load.msdfFont()`
+- [ ] Automatic JSON + PNG loading
 - [ ] Cache integration
 - [ ] Multi-page font support
 
-### Phase 5: Tooling
+### Phase 4: Batching Optimization
+- [ ] RenderNodes (Submitter, Texturer, Transformer)
+- [ ] Single draw call for all characters
+- [ ] Performance improvements for large text blocks
+
+### Phase 5: Advanced Features
+- [ ] Word wrapping
+- [ ] Multi-color text (inline tags)
+- [ ] Text effects (shadow, outline, gradient)
+- [ ] Rich text formatting
+
+### Phase 6: Tooling & Documentation
 - [ ] Font generation scripts
 - [ ] CLI tools for font creation
 - [ ] Sample fonts
-
-### Phase 6: Testing & Examples
-- [ ] Scaling tests
+- [ ] API documentation
+- [ ] Usage examples
 - [ ] Performance benchmarks
-- [ ] Comparison demos
 
 ## 📝 License
 
@@ -195,12 +228,27 @@ This project is inspired by the MIT-licensed [Ceramic Engine](https://github.com
 
 ---
 
-**Status:** Phase 1 ✅ COMPLETE - Shaders working perfectly!
-**Next:** Phase 2 - MSDFText GameObject (BitmapText architecture)
+**Status:** Phase 2 ✅ COMPLETE - Full MSDF text rendering system working!
+**Next:** Phase 3 - Phaser Loader Integration & Batching Optimization
 
 ## 🎉 Key Achievements
 
-- **Premultiplied alpha discovery**: Critical for Phaser 4 compatibility
+### Phase 1 Discoveries:
+- **Premultiplied alpha**: Critical for Phaser 4 Shader GameObject compatibility
 - **Simplified approach**: No derivatives needed, works on all WebGL 1.0+ devices
-- **Clean implementation**: Simple, maintainable shader code
-- **Proven rendering**: Successfully renders MSDF atlas with smooth anti-aliasing
+- **Clean shader code**: Maintainable MSDF fragment shader
+
+### Phase 2 Discoveries:
+- **V-coordinate flipping**: Phaser uses OpenGL's bottom-up texture coordinates regardless of font JSON `yOrigin`
+- **Per-character shader configs**: Each character needs its own config with baked-in UV coordinates
+- **Normalized dimensions**: Character dimensions must be scaled from planeBounds, not atlas pixel dimensions
+- **Working text system**: Complete MSDFText GameObject with layout, kerning, colors, and alignment
+
+### What's Working:
+✅ JSON parser (msdf-atlas-gen format)
+✅ MSDFFont class (data management, measurements, kerning)
+✅ MSDFText GameObject (scalable text rendering)
+✅ Multiple font sizes (sharp at any scale)
+✅ Text colors and alignment
+✅ Automatic kerning
+✅ Test scenes demonstrating all features
