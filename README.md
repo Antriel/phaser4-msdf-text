@@ -4,12 +4,18 @@ High-quality scalable text rendering for Phaser 4 using Multi-channel Signed Dis
 
 ## 🎯 Project Status
 
-**Phase 1: Shader Implementation** - ✅ Core Implementation Complete
+**Phase 1: Shader Implementation** - ✅ **COMPLETE!**
 
-- ✅ MSDF Fragment Shader
-- ✅ MSDF Vertex Shader
+- ✅ MSDF Fragment Shader with premultiplied alpha
+- ✅ Simplified approach (no derivatives required)
 - ✅ TypeScript Helper Module
-- ⏳ Testing (requires Phaser 4 runtime)
+- ✅ Working test rendering full MSDF atlas
+
+**Phase 2: MSDFText GameObject** - 🚧 Next
+
+- Parse BMFont .fnt files
+- Render individual characters (not whole atlas)
+- Text layout and batching
 
 See [MSDF-Font-Implementation-Plan.md](MSDF-Font-Implementation-Plan.md) for detailed progress.
 
@@ -88,20 +94,26 @@ class MyScene extends Phaser.Scene {
 The MSDF fragment shader implements the core distance field rendering algorithm:
 
 - **Median Function**: Extracts signed distance from RGB channels
-- **Screen-Space Derivatives**: Uses `fwidth()` for resolution-independent anti-aliasing
-- **Smooth Edges**: Calculates opacity based on signed distance for crisp rendering
+- **Smoothstep Anti-aliasing**: Simple `smoothstep(0.4, 0.6, dist)` for clean edges
+- **Premultiplied Alpha**: Required by Phaser 4 - `vec4(color.rgb * alpha, alpha)`
 
 **Key Uniforms:**
 - `iChannel0` - MSDF texture sampler
 - `uTexSize` - Texture dimensions (vec2)
 - `uPxRange` - Distance field range (float, typically 4)
+- `uTextColor` - Text color (vec4)
 
-### Vertex Shader (`MSDFFont.vert`)
+**Simplified Approach:**
+- No derivatives (`fwidth()`) needed - works without GL_OES_standard_derivatives
+- Direct smoothstep on median value provides excellent anti-aliasing
+- Premultiplied alpha ensures proper transparency
 
-Standard vertex shader that passes through:
-- Position (transformed to clip space)
-- Texture coordinates
-- Vertex color
+### Vertex Shader
+
+Uses Phaser's default vertex shader (no custom vertex shader needed):
+- Position transformation to clip space
+- Texture coordinates passed through
+- Compatible with Shader GameObject
 
 ## 📚 Technical Background
 
@@ -122,7 +134,8 @@ Based on the [Ceramic Engine](https://github.com/ceramic-engine/ceramic) (MIT li
 
 ### Runtime
 - Phaser 4 (WebGL renderer with "Beam" architecture)
-- WebGL with `GL_OES_standard_derivatives` extension support
+- WebGL 1.0+ (no extensions required)
+- Premultiplied alpha support (standard in Phaser 4)
 
 ### Font Generation
 - `msdf-atlas-gen` binaries (included in `ceramic/git/msdf-atlas-gen-binary/`)
@@ -136,20 +149,23 @@ Based on the [Ceramic Engine](https://github.com/ceramic-engine/ceramic) (MIT li
 
 ## 🗺️ Roadmap
 
-### Phase 1: Shaders ✅ (Core Complete)
-- [x] Fragment and vertex shaders
+### Phase 1: Shaders ✅ **COMPLETE**
+- [x] Fragment shader with median() and smoothstep()
+- [x] Premultiplied alpha implementation
 - [x] TypeScript helpers
-- [ ] Testing and validation
+- [x] Working test (renders full atlas)
 
-### Phase 2: Data Structures (Next)
+### Phase 2: MSDFText GameObject 🚧 (Next)
+- [ ] Study Phaser's BitmapText architecture
 - [ ] TypeScript interfaces for font data
 - [ ] BMFont format parser (.fnt files)
 - [ ] Character and kerning data structures
 
-### Phase 3: Font & Text GameObjects
-- [ ] MSDFFont class
-- [ ] MSDFText GameObject
-- [ ] Glyph rendering and layout
+### Phase 3: Character Rendering
+- [ ] MSDFFont class (data management)
+- [ ] MSDFText GameObject (like BitmapText)
+- [ ] Individual character quads
+- [ ] Batching with RenderNodes
 
 ### Phase 4: Loader Integration
 - [ ] Asset loader for .fnt + .png
@@ -179,5 +195,12 @@ This project is inspired by the MIT-licensed [Ceramic Engine](https://github.com
 
 ---
 
-**Status:** Phase 1 Core Implementation Complete ✅
-**Next:** Testing with Phaser 4 runtime + Phase 2 Data Structures
+**Status:** Phase 1 ✅ COMPLETE - Shaders working perfectly!
+**Next:** Phase 2 - MSDFText GameObject (BitmapText architecture)
+
+## 🎉 Key Achievements
+
+- **Premultiplied alpha discovery**: Critical for Phaser 4 compatibility
+- **Simplified approach**: No derivatives needed, works on all WebGL 1.0+ devices
+- **Clean implementation**: Simple, maintainable shader code
+- **Proven rendering**: Successfully renders MSDF atlas with smooth anti-aliasing

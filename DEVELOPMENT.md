@@ -87,15 +87,17 @@ npm run preview
 
 ### Current Status
 
-✅ **Completed:**
-- Phaser 4 setup
-- MSDF shaders implemented
-- Basic test scene created
-- Dev environment configured
+✅ **Phase 1 COMPLETE:**
+- Phaser 4 setup and configuration
+- MSDF shaders implemented and working
+- Premultiplied alpha rendering
+- Basic test scene rendering full atlas
+- Dev environment fully configured
 
-⏳ **Needs:**
-- MSDF font texture (see below)
-- Actual testing in browser
+🎯 **Next Phase:**
+- MSDFText GameObject (like BitmapText)
+- BMFont .fnt parser
+- Individual character rendering
 
 ### Generating Test Font
 
@@ -189,9 +191,15 @@ Check the browser console for:
 - Wrong texture size in config
 - Shader compilation failed (check console)
 
-**GL errors:**
-- Check if `GL_OES_standard_derivatives` is supported
-- Try on desktop Chrome/Firefox first (best WebGL support)
+**White rectangle (no characters visible):**
+- **Alpha blending issue!** Phaser requires premultiplied alpha
+- Shader must output: `vec4(color.rgb * alpha, alpha)`
+- NOT: `vec4(color.rgb, alpha)` (this won't work)
+
+**Key Discoveries:**
+- GL_OES_standard_derivatives not needed (simplified approach works)
+- Phaser's default vertex shader is sufficient
+- Texture filtering: Must be LINEAR (not NEAREST)
 
 ## Next Steps
 

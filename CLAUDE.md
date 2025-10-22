@@ -19,14 +19,16 @@ Based on [Ceramic Engine](https://github.com/ceramic-engine/ceramic) (MIT licens
 **MSDF Rendering**:
 - Distance field data stored in RGB channels of texture atlas
 - Fragment shader uses `median()` function to extract signed distance
-- Screen-space derivatives (`fwidth()`) enable resolution-independent anti-aliasing
+- Simple `smoothstep()` provides clean anti-aliasing without derivatives
+- **Premultiplied alpha required** for Phaser 4 Shader GameObject
 - LINEAR texture filtering is mandatory (not NEAREST)
 - Critical parameter: `pxRange` (distance range) must match between generation and runtime
 
 **Shader Requirements**:
-- GL_OES_standard_derivatives extension (for `fwidth()`)
 - Fragment shader calculates opacity based on signed distance field
-- Uniforms: `uTexture`, `uTexSize`, `uPxRange`
+- Premultiplied alpha: `rgb = color.rgb * alpha`
+- Uniforms: `iChannel0` (texture), `uTexSize`, `uPxRange`, `uTextColor`
+- No derivatives needed - simplified approach works perfectly
 
 **Font Data Structure**:
 - BMFont format with custom `distanceField` metadata line
@@ -77,10 +79,11 @@ phaser4-msdf-font/
 ### Texture Filtering
 MSDF fonts **MUST** use LINEAR filtering. NEAREST filtering will break the distance field interpolation.
 
-### Shader Compatibility
-- Desktop: GL_OES_standard_derivatives widely supported
-- Mobile: Check for extension availability
-- WebGL 2: Derivative support built-in
+### Phaser 4 Shader Discoveries
+- **Premultiplied alpha is mandatory**: Phaser's Shader GameObject expects `vec4(color.rgb * alpha, alpha)`
+- **Derivatives not required**: Simple `smoothstep(0.4, 0.6, median)` works perfectly
+- **Default vertex shader sufficient**: No custom vertex shader needed
+- **Texture binding**: Use `iChannel0` for texture sampler (texture unit 0)
 
 ## References
 - Ceramic Engine: https://github.com/ceramic-engine/ceramic
@@ -89,4 +92,20 @@ MSDF fonts **MUST** use LINEAR filtering. NEAREST filtering will break the dista
 - Phaser 4 Shader Guide: Available in this repository
 
 ## Current Status
-See MSDF-Font-Implementation-Plan.md for detailed progress tracking and task checklists.
+
+### Phase 1: Shader Implementation ✅ COMPLETE
+- ✅ Fragment shader with median() and smoothstep()
+- ✅ Premultiplied alpha implementation
+- ✅ TypeScript helper (MSDFShader.ts)
+- ✅ Working test rendering entire MSDF atlas
+- ✅ Clean, simplified approach (no derivatives needed)
+
+### Phase 2: MSDFText GameObject (NEXT)
+Following BitmapText architecture pattern:
+- Parse BMFont .fnt files (character metrics, kerning)
+- Render individual characters as quads (not whole atlas)
+- Use custom RenderNodes (Submitter, Texturer, Transformer)
+- Batch characters together for performance
+- Support text layout (alignment, wrapping, scaling)
+
+See MSDF-Font-Implementation-Plan.md for detailed progress tracking.

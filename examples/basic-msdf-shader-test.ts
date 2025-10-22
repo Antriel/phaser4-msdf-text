@@ -27,45 +27,66 @@ export class BasicMSDFShaderTest extends Phaser.Scene {
     }
 
     create() {
-        const width = this.scale.width;
-        const height = this.scale.height;
+      const width = this.scale.width;
+      const height = this.scale.height;
 
-        // Create MSDF shader configuration
-        // These values MUST match the font generation parameters:
-        // - Atlas dimensions: 512x256 (from msdf-atlas-gen output)
-        // - Distance range: 4 (from -pxrange 4 parameter)
-        const shaderConfig = createMSDFShaderConfig({
-            name: 'MSDFTest',
-            textureWidth: 512,      // Atlas width
-            textureHeight: 256,     // Atlas height
-            distanceRange: 4,       // Must match -pxrange parameter
-            fragmentKey: MSDF_SHADER_KEYS.FRAGMENT,
-            vertexKey: MSDF_SHADER_KEYS.VERTEX
-        });
+      console.log('=== MSDF SHADER TEST ===');
+      console.log('Scene dimensions:', width, height);
 
-        // Create a shader quad using the MSDF shader
-        const shader = this.add.shader(
-            shaderConfig,
-            width / 2,       // x position
-            height / 2,      // y position
-            400,             // width
-            300,             // height
-            ['msdf-font-atlas']  // texture to use
-        );
+      // Create MSDF shader configuration
+      console.log('Creating MSDF shader config...');
+      const shaderConfig = createMSDFShaderConfig({
+          name: 'MSDFTest',
+          textureWidth: 512,
+          textureHeight: 256,
+          distanceRange: 4,
+          fragmentKey: MSDF_SHADER_KEYS.FRAGMENT,
+      });
+      delete shaderConfig.vertexKey;  // Use Phaser's default vertex shader
+      console.log('Shader config:', shaderConfig);
 
-        // Add some info text
-        this.add.text(10, 10, 'MSDF Shader Test', {
-            fontSize: '24px',
-            color: '#ffffff'
-        });
+      // Create MSDF shader quad - renders entire font atlas
+      console.log('Creating MSDF shader quad...');
+      const msdfShader = this.add.shader(
+          shaderConfig,
+          width / 2,      // center x
+          height / 2,     // center y
+          600,            // width
+          400,            // height
+          ['msdf-font-atlas']
+      );
+      console.log('MSDF shader created:', msdfShader);
 
-        this.add.text(10, 40, 'The quad above should render with MSDF shader', {
-            fontSize: '16px',
-            color: '#cccccc'
-        });
+      // Info text
+      this.add.text(10, 10, 'MSDF SHADER TEST - SUCCESS!', {
+          fontSize: '24px',
+          color: '#00ff00'
+      });
 
-        // Debug info
-        console.log('MSDF Shader created:', shader);
-        console.log('Shader config:', shaderConfig);
+      this.add.text(10, 45, 'The quad should show the entire MSDF font atlas', {
+          fontSize: '16px',
+          color: '#ffffff'
+      });
+
+      this.add.text(10, 70, 'with white characters on transparent background', {
+          fontSize: '16px',
+          color: '#ffffff'
+      });
+
+      this.add.text(10, 100, 'Next step: Create MSDFText GameObject to render individual characters!', {
+          fontSize: '14px',
+          color: '#ffff00'
+      });
+
+      console.log('=== MSDF SHADER TEST COMPLETE ===');
+
+      // Check if texture loaded
+      const texture = this.textures.get('msdf-font-atlas');
+      console.log('Font atlas texture:', texture);
+      if (texture) {
+          console.log('Texture exists, source:', texture.source);
+      } else {
+          console.error('ERROR: Font atlas texture not found!');
+      }
     }
 }

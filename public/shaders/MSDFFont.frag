@@ -10,11 +10,12 @@ uniform sampler2D iChannel0;
 // MSDF parameters
 uniform vec2 uTexSize;      // Texture dimensions in pixels
 uniform float uPxRange;     // Distance field range (typically 2-4)
-uniform vec2 uScreenSize;   // Screen/viewport dimensions for scaling
+
+// Text color
+uniform vec4 uTextColor;
 
 // From vertex shader
 varying vec2 outTexCoord;
-varying vec4 outColor;
 
 // Median function - the heart of MSDF
 // Extracts signed distance from RGB channels
@@ -26,21 +27,14 @@ void main() {
     // Sample the MSDF texture
     vec3 textureSample = texture2D(iChannel0, outTexCoord).rgb;
 
-    // Get signed distance from the three channels
-    float sigDist = median(textureSample.r, textureSample.g, textureSample.b) - 0.5;
+    // Get the median distance value
+    float dist = median(textureSample.r, textureSample.g, textureSample.b);
 
-    // Calculate screen-space distance for anti-aliasing
-    // Using a simplified approach that works without derivatives
-    vec2 unitRange = uPxRange / uTexSize;
-    float screenPxDistance = sigDist * dot(unitRange, uScreenSize);
+    // Apply smoothstep for anti-aliasing
+    // The range (0.4, 0.6) provides good anti-aliasing around the 0.5 threshold
+    float alpha = smoothstep(0.4, 0.6, dist);
 
-    // Calculate opacity with smooth edges
-    // Using smoothstep for antialiasing
-    float opacity = smoothstep(-0.5, 0.5, screenPxDistance);
-
-    // Blend with transparent background
-    vec4 bgColor = vec4(0.0, 0.0, 0.0, 0.0);
-
-    // Mix background with text color based on opacity
-    gl_FragColor = mix(bgColor, outColor, opacity);
+    // Use premultiplied alpha (required by Phaser's shader rendering)
+    vec3 rgb = uTextColor.rgb * alpha;
+    gl_FragColor = vec4(rgb, alpha * uTextColor.a);
 }
