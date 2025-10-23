@@ -13,7 +13,7 @@
  * Based on the Ceramic Engine MSDF implementation (MIT licensed).
  */
 
-module.exports = [
+export default [
     '#ifdef GL_FRAGMENT_PRECISION_HIGH',
     'precision highp float;',
     '#else',

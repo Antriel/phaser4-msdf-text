@@ -7,7 +7,7 @@
  * Based on Phaser's Multi-vert.js but simplified for MSDF text rendering.
  */
 
-module.exports = [
+export default [
     'precision mediump float;',
     '',
     '// Uniforms',

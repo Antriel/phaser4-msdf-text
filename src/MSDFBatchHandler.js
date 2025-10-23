@@ -11,9 +11,9 @@
  * Based on BatchHandlerPointLight pattern from Phaser 4.
  */
 
-const Phaser = require('phaser');
-const ShaderSourceVS = require('./shaders/MSDF-vert');
-const ShaderSourceFS = require('./shaders/MSDF-frag');
+import Phaser from 'phaser';
+import ShaderSourceVS from './shaders/MSDF-vert.js';
+import ShaderSourceFS from './shaders/MSDF-frag.js';
 
 /**
  * @class MSDFBatchHandler
@@ -231,13 +231,8 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
             // Update vertex buffer with actual instance count
             this.vertexBufferLayout.buffer.update(this.instanceCount * this.bytesPerInstance);
 
-            // Bind MSDF texture to texture unit 0
-            if (this._currentTexture) {
-                drawingContext.renderer.setTexture(this._currentTexture, 0);
-                programManager.setUniform('uMainSampler', 0);
-            }
-
             // Draw
+            // Note: Texture binding is handled automatically by drawElements
             this.manager.renderer.drawElements(
                 drawingContext,
                 this._currentTexture ? [this._currentTexture] : [],
@@ -287,4 +282,4 @@ MSDFBatchHandler.defaultConfig = {
     }
 };
 
-module.exports = MSDFBatchHandler;
+export default MSDFBatchHandler;

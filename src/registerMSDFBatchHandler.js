@@ -11,39 +11,51 @@
  *   registerMSDFBatchHandler(game);
  */
 
-const MSDFBatchHandler = require('./MSDFBatchHandler');
+import MSDFBatchHandler from './MSDFBatchHandler.js';
 
 /**
  * Register the MSDF batch handler with Phaser's renderer
  *
  * @param {Phaser.Game} game - The Phaser game instance
- * @returns {boolean} True if registration succeeded, false otherwise
+ * @returns {boolean|Promise<boolean>} True if registration succeeded, false otherwise, or Promise if waiting for game ready
  */
 export function registerMSDFBatchHandler(game) {
-    if (!game || !game.renderer) {
-        console.error('registerMSDFBatchHandler: Invalid game instance or renderer not available');
+    if (!game) {
+        console.error('registerMSDFBatchHandler: Invalid game instance');
         return false;
+    }
+
+    // If renderer isn't ready yet, wait for the 'ready' event
+    // Note: In Phaser 4, it's called 'renderNodes' not 'renderNodeManager'
+    if (!game.renderer || !game.renderer.renderNodes) {
+        console.warn('registerMSDFBatchHandler: Renderer not ready yet. Waiting for game \'ready\' event...');
+        return new Promise((resolve) => {
+            game.events.once('ready', () => {
+                resolve(registerMSDFBatchHandler(game));
+            });
+        });
     }
 
     const renderer = game.renderer;
 
-    // Check if renderer has renderNodeManager (WebGL only)
-    if (!renderer.renderNodeManager) {
-        console.error('registerMSDFBatchHandler: RenderNodeManager not found. Is WebGL enabled?');
+    // Check if renderer has renderNodes (WebGL only)
+    if (!renderer.renderNodes) {
+        console.error('registerMSDFBatchHandler: RenderNodes not found. Is WebGL enabled?');
         return false;
     }
 
-    const renderNodeManager = renderer.renderNodeManager;
+    const renderNodeManager = renderer.renderNodes;
 
-    // Check if already registered
-    if (renderNodeManager.has('BatchHandlerMSDF')) {
+    // Check if already registered (check both instances and constructors)
+    if (renderNodeManager._nodeConstructors && renderNodeManager._nodeConstructors['BatchHandlerMSDF']) {
         console.warn('registerMSDFBatchHandler: MSDFBatchHandler already registered');
         return true;
     }
 
     try {
-        // Register the batch handler
-        renderNodeManager.add('BatchHandlerMSDF', MSDFBatchHandler);
+        // Register the batch handler CONSTRUCTOR (not instance)
+        // The RenderNodeManager will auto-instantiate it when getNode() is called
+        renderNodeManager.addNodeConstructor('BatchHandlerMSDF', MSDFBatchHandler);
         console.log('MSDFBatchHandler registered successfully');
         return true;
     } catch (error) {
@@ -51,5 +63,3 @@ export function registerMSDFBatchHandler(game) {
         return false;
     }
 }
-
-module.exports = { registerMSDFBatchHandler };

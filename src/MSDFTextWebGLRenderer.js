@@ -8,7 +8,8 @@
  * Based on BitmapTextWebGLRenderer from Phaser 4.
  */
 
-const BatchMSDFChar = require('./BatchMSDFChar');
+import BatchMSDFChar from './BatchMSDFChar.js';
+import GetCalcMatrix from 'phaser/src/gameobjects/GetCalcMatrix';
 
 /**
  * Temporary tint data object (reused to avoid allocations)
@@ -39,10 +40,8 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
     const camera = drawingContext.camera;
     camera.addToRenderList(src);
 
-    // Get batch handler (custom MSDF batch handler)
-    const batchHandler = src.customRenderNodes && src.customRenderNodes.BatchHandler
-        ? src.customRenderNodes.BatchHandler
-        : src.defaultRenderNodes && src.defaultRenderNodes.BatchHandler;
+    // Get batch handler instance (already resolved in constructor)
+    const batchHandler = src.customRenderNodes.BatchHandler || src.defaultRenderNodes.BatchHandler;
 
     if (!batchHandler) {
         console.warn('MSDFText: No batch handler found');
@@ -57,7 +56,6 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
     }
 
     // Get calculation matrix (combines object transform, camera, and parent)
-    const GetCalcMatrix = require('phaser/src/gameobjects/GetCalcMatrix');
     const calcMatrix = GetCalcMatrix(src, camera, parentMatrix, !drawingContext.useCanvas).calc;
 
     // Setup MSDF-specific parameters on batch handler
@@ -100,4 +98,4 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
     }
 }
 
-module.exports = MSDFTextWebGLRenderer;
+export default MSDFTextWebGLRenderer;

@@ -76,4 +76,4 @@ function BatchMSDFChar(drawingContext, batchHandler, texture, char, calcMatrix, 
     );
 }
 
-module.exports = BatchMSDFChar;
+export default BatchMSDFChar;

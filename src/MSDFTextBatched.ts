@@ -15,8 +15,7 @@
 
 import Phaser from 'phaser';
 import { MSDFFont } from './MSDFFont';
-
-const MSDFTextWebGLRenderer = require('./MSDFTextWebGLRenderer');
+import MSDFTextWebGLRenderer from './MSDFTextWebGLRenderer.js';
 
 export type TextAlign = 'left' | 'center' | 'right';
 
@@ -38,6 +37,10 @@ interface CharacterData {
  * MSDFText GameObject with batched rendering
  */
 export class MSDFText extends Phaser.GameObjects.GameObject {
+    // Position properties (GameObject doesn't include Transform by default)
+    public x: number = 0;
+    public y: number = 0;
+
     // Font and text properties
     private font: MSDFFont;
     public _text: string = '';
@@ -54,8 +57,15 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
     public _texture: any = null; // WebGLTextureWrapper
     public _pxRange: number = 4;
 
-    // Default render nodes for batched rendering
-    defaultRenderNodes: any;
+    // Rendering properties (required by Phaser's renderer)
+    public blendMode: number = 0; // NORMAL blend mode
+    public alpha: number = 1.0;
+    public tint: number = 0xffffff;
+    public visible: boolean = true;
+
+    // Render nodes for batched rendering (following Phaser's RenderNodes pattern)
+    public customRenderNodes: any;
+    public defaultRenderNodes: any;
 
     constructor(
         scene: Phaser.Scene,
@@ -72,7 +82,8 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
         this._fontSize = fontSize;
 
         // Set position
-        this.setPosition(x, y);
+        this.x = x;
+        this.y = y;
 
         // Get texture wrapper from Phaser's texture cache
         const frame = scene.sys.textures.getFrame(font.textureKey);
@@ -87,15 +98,73 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
 
         // Configure render nodes for batching
         // Note: MSDFBatchHandler must be registered with RenderNodeManager first
-        this.defaultRenderNodes = {
-            BatchHandler: 'BatchHandlerMSDF'  // Reference to registered batch handler
-        };
+        this.customRenderNodes = {};
+        this.defaultRenderNodes = {};
+
+        // Initialize render nodes (similar to Components.RenderNodes.initRenderNodes)
+        const renderer = scene.sys.renderer;
+        if (renderer && renderer.renderNodes) {
+            const manager = renderer.renderNodes;
+            // Get the actual BatchHandler instance from the manager
+            this.defaultRenderNodes['BatchHandler'] = manager.getNode('BatchHandlerMSDF');
+            // Also set up a Submitter (we can reuse SubmitterQuad)
+            this.defaultRenderNodes['Submitter'] = manager.getNode('SubmitterQuad');
+        }
 
         // Add to scene
         scene.add.existing(this);
 
         // Initial build
         this.rebuildText();
+    }
+
+    // ========================================================================
+    // Position
+    // ========================================================================
+
+    /**
+     * Set position
+     */
+    setPosition(x: number, y: number): this {
+        this.x = x;
+        this.y = y;
+        return this;
+    }
+
+    // ========================================================================
+    // Rendering Properties
+    // ========================================================================
+
+    /**
+     * Set alpha/opacity (0-1)
+     */
+    setAlpha(value: number): this {
+        this.alpha = value;
+        return this;
+    }
+
+    /**
+     * Set tint color (0xRRGGBB format)
+     */
+    setTint(value: number): this {
+        this.tint = value;
+        return this;
+    }
+
+    /**
+     * Set blend mode
+     */
+    setBlendMode(value: number): this {
+        this.blendMode = value;
+        return this;
+    }
+
+    /**
+     * Set visibility
+     */
+    setVisible(value: boolean): this {
+        this.visible = value;
+        return this;
     }
 
     // ========================================================================
@@ -222,12 +291,13 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
     /**
      * WebGL rendering method
      * Called by Phaser's renderer when this GameObject needs to be drawn
+     * Note: In Phaser's rendering pipeline, 'this' is NOT the GameObject - use 'src' instead
      */
     renderWebGL(renderer: any, src: this, drawingContext: any, parentMatrix: any): void {
-        // Rebuild if needed
-        if (this.needsRebuild) {
-            this.rebuildText();
-            this.needsRebuild = false;
+        // Rebuild if needed (use src, not this!)
+        if (src.needsRebuild) {
+            src.rebuildText();
+            src.needsRebuild = false;
         }
 
         // Delegate to MSDFTextWebGLRenderer

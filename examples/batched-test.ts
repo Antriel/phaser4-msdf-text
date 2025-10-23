@@ -138,8 +138,6 @@ const config: Phaser.Types.Core.GameConfig = {
 // Create game
 const game = new Phaser.Game(config);
 
-// IMPORTANT: Register MSDF batch handler AFTER game creation
-console.log('Registering MSDF batch handler...');
+// Register MSDF batch handler (will auto-wait for renderer to be ready)
 registerMSDFBatchHandler(game);
-
 console.log('Batched test initialized! Check console for debug info.');
