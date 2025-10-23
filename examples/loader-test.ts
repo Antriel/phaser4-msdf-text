@@ -132,6 +132,14 @@ export class LoaderTest extends Phaser.Scene {
 
         const benefit4 = new MSDFText(this, 20, yPos, font, '✓ Clean, readable code', 24);
         benefit4.setColorHex('#51cf66');
+        this.tweens.add({
+          targets: benefit4,
+          scale: 15,
+          yoyo: true,
+          duration: 3000,
+          ease: "Quad.easeInOut",
+          repeat: -1,
+        });
 
         // =================================================================
         // Info panel

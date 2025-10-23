@@ -16,30 +16,26 @@ function updateStatus(message: string) {
 
 // Game configuration
 const config: Phaser.Types.Core.GameConfig = {
-    type: Phaser.WEBGL,
-    width: 1280,
-    height: 720,
-    parent: 'game-container',
-    backgroundColor: '#1a1a2e',
-    scene: [BasicMSDFShaderTest],
-    scale: {
-        mode: Phaser.Scale.FIT,
-        autoCenter: Phaser.Scale.CENTER_BOTH
+  type: Phaser.WEBGL,
+  parent: "game-container",
+  backgroundColor: "#1a1a2e",
+  scene: [BasicMSDFShaderTest],
+  scale: {
+    width: window.innerWidth,
+    height: window.innerHeight,
+    mode: Phaser.Scale.RESIZE,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+  },
+  callbacks: {
+    preBoot: (game) => {
+      updateStatus("Phaser 4 booting...");
     },
-    render: {
-        antialias: true,
-        pixelArt: false
+    postBoot: (game) => {
+      updateStatus("Phaser 4 ready!");
+      console.log("Phaser 4 Game Instance:", game);
+      console.log("Renderer:", game.renderer);
     },
-    callbacks: {
-        preBoot: (game) => {
-            updateStatus('Phaser 4 booting...');
-        },
-        postBoot: (game) => {
-            updateStatus('Phaser 4 ready!');
-            console.log('Phaser 4 Game Instance:', game);
-            console.log('Renderer:', game.renderer);
-        }
-    }
+  },
 };
 
 // Initialize Phaser
