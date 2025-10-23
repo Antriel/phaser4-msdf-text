@@ -89,8 +89,10 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
         const frame = scene.sys.textures.getFrame(font.textureKey);
         if (frame && frame.glTexture) {
             this._texture = frame.glTexture;
+            console.log(`[MSDFText] Texture loaded:`, font.textureKey, this._texture);
         } else {
             console.warn(`MSDFText: Could not get texture wrapper for '${font.textureKey}'`);
+            console.log('[MSDFText] Frame:', frame);
         }
 
         // Get MSDF distance range parameter
@@ -103,12 +105,18 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
 
         // Initialize render nodes (similar to Components.RenderNodes.initRenderNodes)
         const renderer = scene.sys.renderer;
+        console.log('[MSDFText] Renderer:', renderer);
         if (renderer && renderer.renderNodes) {
             const manager = renderer.renderNodes;
+            console.log('[MSDFText] RenderNodes manager:', manager);
             // Get the actual BatchHandler instance from the manager
             this.defaultRenderNodes['BatchHandler'] = manager.getNode('BatchHandlerMSDF');
+            console.log('[MSDFText] BatchHandler:', this.defaultRenderNodes['BatchHandler']);
             // Also set up a Submitter (we can reuse SubmitterQuad)
             this.defaultRenderNodes['Submitter'] = manager.getNode('SubmitterQuad');
+            console.log('[MSDFText] Submitter:', this.defaultRenderNodes['Submitter']);
+        } else {
+            console.warn('[MSDFText] Renderer or renderNodes not available!');
         }
 
         // Add to scene
@@ -294,6 +302,8 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
      * Note: In Phaser's rendering pipeline, 'this' is NOT the GameObject - use 'src' instead
      */
     renderWebGL(renderer: any, src: this, drawingContext: any, parentMatrix: any): void {
+        console.log('[MSDFText] renderWebGL called, characters:', src._characters.length, 'visible:', src.visible);
+
         // Rebuild if needed (use src, not this!)
         if (src.needsRebuild) {
             src.rebuildText();
@@ -313,8 +323,11 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
         this.clearCharacters();
 
         if (!this._text || this._text.length === 0) {
+            console.log('[MSDFText] rebuildText: No text to render');
             return;
         }
+
+        console.log(`[MSDFText] rebuildText: Building "${this._text}" at size ${this._fontSize}`);
 
         // Layout characters
         let cursorX = 0;
@@ -383,6 +396,8 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
 
         // Apply alignment
         this.applyAlignment();
+
+        console.log(`[MSDFText] rebuildText: Created ${this._characters.length} character quads`);
     }
 
     /**

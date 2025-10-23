@@ -70,7 +70,17 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
 
     /**
      * Generate element indices for quad instances
-     * Each quad = 4 vertices, drawn as 2 triangles with triangle strip
+     * Each quad = 4 vertices, drawn as 2 triangles
+     *
+     * Vertex layout (from batch() method):
+     *   0: Bottom-left
+     *   1: Top-left
+     *   2: Bottom-right
+     *   3: Top-right
+     *
+     * Counter-clockwise winding (WebGL default):
+     *   Triangle 1: 0, 2, 1 (bottom-left, bottom-right, top-left)
+     *   Triangle 2: 1, 2, 3 (top-left, bottom-right, top-right)
      *
      * @param {number} instances - Number of quads
      * @returns {ArrayBuffer} Index buffer data
@@ -83,15 +93,17 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
 
         for (let i = 0; i < instances; i++) {
             const index = i * 4;
-            // Triangle strip with degenerate triangles to connect quads
-            indices[offset++] = index;     // Bottom-left (first vertex, degenerate)
-            indices[offset++] = index;     // Bottom-left
-            indices[offset++] = index + 1; // Top-left
-            indices[offset++] = index + 2; // Bottom-right
-            indices[offset++] = index + 3; // Top-right
-            indices[offset++] = index + 3; // Top-right (last vertex, degenerate)
+            // Triangle 1 (counter-clockwise: bottom-left, bottom-right, top-left)
+            indices[offset++] = index;     // Vertex 0: Bottom-left
+            indices[offset++] = index + 2; // Vertex 2: Bottom-right
+            indices[offset++] = index + 1; // Vertex 1: Top-left
+            // Triangle 2 (counter-clockwise: top-left, bottom-right, top-right)
+            indices[offset++] = index + 1; // Vertex 1: Top-left
+            indices[offset++] = index + 2; // Vertex 2: Bottom-right
+            indices[offset++] = index + 3; // Vertex 3: Top-right
         }
 
+        console.log('[MSDFBatchHandler] Generated indices for', instances, 'quads:', indices.slice(0, 12));
         return buffer;
     }
 
@@ -104,6 +116,10 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
         const programManager = this.programManager;
         const width = drawingContext.width;
         const height = drawingContext.height;
+
+        console.log('[MSDFBatchHandler] setupUniforms - Resolution:', width, 'x', height);
+        console.log('[MSDFBatchHandler] setupUniforms - pxRange:', this._pxRange);
+        console.log('[MSDFBatchHandler] setupUniforms - textColor:', this._textColor);
 
         // MSDF-specific uniforms
         programManager.setUniform('uPxRange', this._pxRange);
@@ -211,7 +227,10 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
     run(drawingContext) {
         const instanceCount = this.instanceCount;
 
+        console.log('[MSDFBatchHandler] run() called with', instanceCount, 'instances');
+
         if (instanceCount === 0) {
+            console.log('[MSDFBatchHandler] No instances to render');
             return;
         }
 
@@ -220,19 +239,42 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
         const programManager = this.programManager;
         const programSuite = programManager.getCurrentProgramSuite();
 
+        console.log('[MSDFBatchHandler] Program suite:', programSuite);
+
         if (programSuite) {
             const program = programSuite.program;
             const vao = programSuite.vao;
 
+            console.log('[MSDFBatchHandler] Program:', program, 'VAO:', vao);
+
+            // Check program compilation status
+            const gl = this.manager.renderer.gl;
+            const isLinked = gl.getProgramParameter(program.webGLProgram, gl.LINK_STATUS);
+            console.log('[MSDFBatchHandler] Program linked:', isLinked);
+            if (!isLinked) {
+                const log = gl.getProgramInfoLog(program.webGLProgram);
+                console.error('[MSDFBatchHandler] Program link error:', log);
+            }
+
             // Setup uniforms
+            console.log('[MSDFBatchHandler] Setting up uniforms...');
             this.setupUniforms(drawingContext);
             programManager.applyUniforms(program);
 
             // Update vertex buffer with actual instance count
+            console.log('[MSDFBatchHandler] Updating vertex buffer with', this.instanceCount, 'instances,', this.instanceCount * this.bytesPerInstance, 'bytes');
             this.vertexBufferLayout.buffer.update(this.instanceCount * this.bytesPerInstance);
 
             // Draw
             // Note: Texture binding is handled automatically by drawElements
+            console.log('[MSDFBatchHandler] Calling drawElements with texture:', this._currentTexture, 'indices:', instanceCount * this.indicesPerInstance);
+
+            // Check for WebGL errors before drawing
+            let error = gl.getError();
+            if (error !== gl.NO_ERROR) {
+                console.error('[MSDFBatchHandler] WebGL error BEFORE draw:', error);
+            }
+
             this.manager.renderer.drawElements(
                 drawingContext,
                 this._currentTexture ? [this._currentTexture] : [],
@@ -241,6 +283,16 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
                 instanceCount * this.indicesPerInstance,
                 0
             );
+
+            // Check for WebGL errors after drawing
+            error = gl.getError();
+            if (error !== gl.NO_ERROR) {
+                console.error('[MSDFBatchHandler] WebGL error AFTER draw:', error);
+            }
+
+            console.log('[MSDFBatchHandler] drawElements complete');
+        } else {
+            console.error('[MSDFBatchHandler] No program suite available!');
         }
 
         // Reset batch
