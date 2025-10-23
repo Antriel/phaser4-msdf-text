@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MSDF Batched Rendering Test - Phase 4</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #1a1a1a;
+            font-family: Arial, sans-serif;
+            color: #ffffff;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 5px;
+            max-width: 300px;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        #info h3 {
+            margin-top: 0;
+            color: #00ff00;
+        }
+        #info code {
+            background: #333;
+            padding: 2px 4px;
+            border-radius: 3px;
+            color: #ffff00;
+        }
+        #game-container {
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <h3>Phase 4: Batched Rendering</h3>
+        <p><strong>Performance Test:</strong></p>
+        <ul>
+            <li>Check DevTools Performance tab</li>
+            <li>Look for reduced draw calls</li>
+            <li>Compare FPS with Phase 3</li>
+        </ul>
+        <p><strong>Expected:</strong></p>
+        <ul>
+            <li>1-2 draw calls per text object</li>
+            <li>Smooth 60 FPS</li>
+            <li>Low GPU usage</li>
+        </ul>
+        <p><code>F12</code> to open DevTools</p>
+    </div>
+    <div id="game-container"></div>
+    <script type="module" src="/examples/batched-test.ts"></script>
+</body>
+</html>
