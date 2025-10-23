@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MSDF Loader Test - Phaser 4</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0a0a;
+            overflow: hidden;
+        }
+
+        #game-container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #game-container canvas {
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        #status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #00ff00;
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-size: 14px;
+            font-family: 'Courier New', monospace;
+            border: 1px solid #00ff00;
+            z-index: 1000;
+        }
+
+        #instructions {
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #ffffff;
+            padding: 15px;
+            border-radius: 5px;
+            font-size: 12px;
+            max-width: 350px;
+            border: 1px solid #333;
+            z-index: 1000;
+        }
+
+        #instructions h3 {
+            margin: 0 0 10px 0;
+            color: #00aaff;
+            font-size: 14px;
+        }
+
+        #instructions code {
+            background: rgba(0, 255, 0, 0.1);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+            color: #88ff88;
+        }
+
+        #instructions ul {
+            margin: 10px 0 0 0;
+            padding-left: 20px;
+        }
+
+        #instructions li {
+            margin: 5px 0;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+    <div id="status">Initializing...</div>
+
+    <div id="game-container"></div>
+
+    <div id="instructions">
+        <h3>📦 MSDF Loader API Test</h3>
+        <p style="margin-bottom: 10px;">
+            New simplified loading API:
+        </p>
+        <code>loadMSDFFont(this, 'key', 'path')</code>
+        <br>
+        <code>const font = getMSDFFont(this, 'key')</code>
+        <ul>
+            <li>✓ Automatic JSON + PNG loading</li>
+            <li>✓ Built-in shader loading</li>
+            <li>✓ Font caching & parsing</li>
+            <li>✓ Clean, simple API</li>
+        </ul>
+    </div>
+
+    <script type="module">
+        import Phaser from 'phaser';
+        import { LoaderTest } from './examples/loader-test.ts';
+
+        // Update status
+        function updateStatus(message) {
+            const statusEl = document.getElementById('status');
+            if (statusEl) {
+                statusEl.textContent = message;
+            }
+            console.log('Status:', message);
+        }
+
+        // Game configuration
+        const config = {
+            type: Phaser.WEBGL,
+            width: 1280,
+            height: 720,
+            parent: 'game-container',
+            backgroundColor: '#1a1a2e',
+            scene: [LoaderTest],
+            scale: {
+                mode: Phaser.Scale.FIT,
+                autoCenter: Phaser.Scale.CENTER_BOTH
+            },
+            render: {
+                antialias: true,
+                pixelArt: false
+            },
+            callbacks: {
+                preBoot: (game) => {
+                    updateStatus('Phaser 4 booting...');
+                },
+                postBoot: (game) => {
+                    updateStatus('✓ MSDF Loader API Active');
+                    console.log('Phaser 4 Game Instance:', game);
+                    console.log('Renderer:', game.renderer);
+                }
+            }
+        };
+
+        // Initialize Phaser
+        updateStatus('Initializing...');
+        const game = new Phaser.Game(config);
+
+        // Global access for debugging
+        window.game = game;
+
+        console.log('MSDF Loader Test started');
+        console.log('Game config:', config);
+    </script>
+</body>
+</html>

@@ -22,9 +22,15 @@ High-quality scalable text rendering for Phaser 4 using Multi-channel Signed Dis
 - ✅ Multiple font sizes and colors
 - ✅ V-coordinate flipping for Phaser's texture system
 
-**Phase 3: Optimization & Features** - 🚧 Next
+**Phase 3: Loader Integration** - ✅ **COMPLETE!**
 
-- Phaser Loader integration
+- ✅ Simplified loader API (`loadMSDFFont()` and `getMSDFFont()`)
+- ✅ Automatic JSON + PNG loading
+- ✅ Font caching and parsing
+- ✅ Built-in error handling
+
+**Phase 4: Optimization & Features** - 🚧 Next
+
 - Batching optimization (RenderNodes)
 - Advanced text features (wrapping, effects)
 
@@ -44,9 +50,14 @@ phaser4-msdf-font/
 │       ├── MSDFFont.frag             # MSDF fragment shader (GLSL)
 │       └── MSDFFont.vert             # MSDF vertex shader (GLSL)
 ├── src/
-│   └── MSDFShader.ts                 # TypeScript helpers for MSDF shaders
+│   ├── MSDFShader.ts                 # TypeScript helpers for MSDF shaders
+│   ├── MSDFFontParser.ts             # JSON parser for msdf-atlas-gen format
+│   ├── MSDFFont.ts                   # Font data management class
+│   ├── MSDFText.ts                   # Text rendering GameObject
+│   └── MSDFLoader.ts                 # Simplified loader API (NEW!)
 └── examples/
-    └── basic-msdf-shader-test.ts     # Basic usage example
+    ├── loader-test.ts                # New loader API example
+    └── msdf-text-test.ts             # Full text rendering example
 ```
 
 ## 🚀 Quick Start
@@ -63,9 +74,49 @@ npm run dev
 
 The dev server will open at http://localhost:3000 with the MSDF shader test scene.
 
-**Test the complete system:** Open http://localhost:3000/test-msdf-text.html to see MSDFText rendering in action!
+**Test the complete system:**
+- http://localhost:3000/loader-test.html - New simplified loader API
+- http://localhost:3000/test-msdf-text.html - Full text rendering demo
 
-### Using MSDFText
+### Using MSDFText (Simplified Loader API)
+
+**Recommended approach** - uses the new simplified loader:
+
+```typescript
+import { loadMSDFFont, getMSDFFont } from './src/MSDFLoader';
+import { MSDFText } from './src/MSDFText';
+
+class MyScene extends Phaser.Scene {
+    preload() {
+        // Load MSDF font with one function call!
+        // Automatically loads: shaders, texture (.png), and metadata (.json)
+        loadMSDFFont(this, 'arial', 'assets/fonts/Arial');
+    }
+
+    create() {
+        // Get the loaded and parsed font
+        const font = getMSDFFont(this, 'arial');
+
+        if (!font) return; // Handle error
+
+        // Create text - scalable, sharp at any size!
+        const text = new MSDFText(this, 100, 100, font, 'Hello World!', 48);
+        text.setColorHex('#ffffff');
+        text.setAlign('center');
+
+        // Text features:
+        // ✓ Scalable to any size (sharp at all scales)
+        // ✓ Automatic kerning
+        // ✓ Color support
+        // ✓ Alignment (left, center, right)
+    }
+}
+```
+
+<details>
+<summary><b>Alternative: Manual Loading (Advanced)</b></summary>
+
+If you need more control, you can load assets manually:
 
 ```typescript
 import { loadMSDFShaders } from './src/MSDFShader';
@@ -97,17 +148,111 @@ class MyScene extends Phaser.Scene {
         const text = new MSDFText(this, 100, 100, this.font, 'Hello World!', 48);
         text.setColorHex('#ffffff');
         text.setAlign('center');
+    }
+}
+```
+</details>
 
-        // Text features:
-        // - Scalable to any size (sharp at all scales)
-        // - Automatic kerning
-        // - Color support
-        // - Alignment (left, center, right)
+**Note:** To generate your own MSDF fonts, see [DEVELOPMENT.md](DEVELOPMENT.md#generating-test-font).
+
+## 📦 Loader API Reference
+
+The `MSDFLoader` module provides a simplified API for loading MSDF fonts in Phaser 4.
+
+### Core Functions
+
+#### `loadMSDFFont(scene, key, config)`
+
+Load MSDF font assets during the preload phase.
+
+**Parameters:**
+- `scene: Phaser.Scene` - The current scene (usually `this`)
+- `key: string` - Unique identifier for this font
+- `config: string | MSDFLoadConfig` - Base path (string) or configuration object
+
+**Simple usage:**
+```typescript
+preload() {
+    loadMSDFFont(this, 'arial', 'assets/fonts/Arial');
+    // Loads: Arial.png, Arial.json, and MSDF shaders
+}
+```
+
+**Advanced usage:**
+```typescript
+preload() {
+    loadMSDFFont(this, 'arial', {
+        basePath: 'assets/fonts/Arial',
+        fontName: 'Arial Bold',
+        loadShaders: false  // Skip if already loaded
+    });
+}
+```
+
+#### `getMSDFFont(scene, key)`
+
+Retrieve a loaded and parsed MSDFFont instance.
+
+**Parameters:**
+- `scene: Phaser.Scene` - The current scene
+- `key: string` - Font key from `loadMSDFFont()`
+
+**Returns:** `MSDFFont | undefined`
+
+**Usage:**
+```typescript
+create() {
+    const font = getMSDFFont(this, 'arial');
+    if (font) {
+        const text = new MSDFText(this, x, y, font, 'Hello!', 48);
     }
 }
 ```
 
-**Note:** To generate your own MSDF fonts, see [DEVELOPMENT.md](DEVELOPMENT.md#generating-test-font).
+### Utility Functions
+
+#### `hasMSDFFont(scene, key)`
+
+Check if a font is loaded and ready.
+
+**Returns:** `boolean`
+
+```typescript
+if (hasMSDFFont(this, 'arial')) {
+    // Font is ready to use
+}
+```
+
+#### `listMSDFFonts(scene)`
+
+Get all loaded font keys.
+
+**Returns:** `string[]`
+
+```typescript
+const fonts = listMSDFFonts(this);
+console.log('Loaded fonts:', fonts); // ['arial', 'roboto', ...]
+```
+
+#### `removeMSDFFont(scene, key)`
+
+Remove a font from the cache (doesn't unload assets).
+
+```typescript
+removeMSDFFont(this, 'arial');
+```
+
+#### `debugMSDFFonts(scene)`
+
+Print debug information about all loaded fonts to console.
+
+```typescript
+debugMSDFFonts(this);
+// === MSDF Fonts ===
+// Total fonts: 2
+//   arial: Font: Arial | Base Size: 42px | ...
+//   roboto: Font: Roboto | Base Size: 48px | ...
+```
 
 ## 🛠️ Shader Details
 
@@ -190,13 +335,15 @@ Based on the [Ceramic Engine](https://github.com/ceramic-engine/ceramic) (MIT li
 - [x] V-coordinate flipping for Phaser
 - [x] Working test scenes
 
-### Phase 3: Loader Integration 🚧 (Next)
-- [ ] Custom Phaser loader: `this.load.msdfFont()`
-- [ ] Automatic JSON + PNG loading
-- [ ] Cache integration
-- [ ] Multi-page font support
+### Phase 3: Loader Integration ✅ **COMPLETE**
+- [x] Simplified loader API: `loadMSDFFont()` and `getMSDFFont()`
+- [x] Automatic JSON + PNG loading
+- [x] Cache integration
+- [x] Built-in shader loading
+- [x] Error handling and debugging utilities
+- [ ] Multi-page font support (future enhancement)
 
-### Phase 4: Batching Optimization
+### Phase 4: Batching Optimization (Next)
 - [ ] RenderNodes (Submitter, Texturer, Transformer)
 - [ ] Single draw call for all characters
 - [ ] Performance improvements for large text blocks
@@ -228,8 +375,8 @@ This project is inspired by the MIT-licensed [Ceramic Engine](https://github.com
 
 ---
 
-**Status:** Phase 2 ✅ COMPLETE - Full MSDF text rendering system working!
-**Next:** Phase 3 - Phaser Loader Integration & Batching Optimization
+**Status:** Phase 3 ✅ COMPLETE - Simplified loader API implemented!
+**Next:** Phase 4 - Batching Optimization
 
 ## 🎉 Key Achievements
 
@@ -244,6 +391,12 @@ This project is inspired by the MIT-licensed [Ceramic Engine](https://github.com
 - **Normalized dimensions**: Character dimensions must be scaled from planeBounds, not atlas pixel dimensions
 - **Working text system**: Complete MSDFText GameObject with layout, kerning, colors, and alignment
 
+### Phase 3 Discoveries:
+- **Helper functions vs plugins**: Helper function approach provides immediate value without game config changes
+- **Scene data storage**: Phaser's `scene.data` is perfect for storing font cache across scene lifecycle
+- **Automatic parsing**: Lazy parsing on first `getMSDFFont()` call reduces preload overhead
+- **Clean API**: Two-function API (`loadMSDFFont` + `getMSDFFont`) covers 95% of use cases
+
 ### What's Working:
 ✅ JSON parser (msdf-atlas-gen format)
 ✅ MSDFFont class (data management, measurements, kerning)
@@ -251,4 +404,6 @@ This project is inspired by the MIT-licensed [Ceramic Engine](https://github.com
 ✅ Multiple font sizes (sharp at any scale)
 ✅ Text colors and alignment
 ✅ Automatic kerning
+✅ **Simplified loader API** (`loadMSDFFont` + `getMSDFFont`)
+✅ Automatic caching and parsing
 ✅ Test scenes demonstrating all features
