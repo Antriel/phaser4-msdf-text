@@ -1,49 +1,11 @@
 /**
  * Main entry point for Phaser 4 MSDF Font Test
+ *
+ * TEMPORARILY RUNNING PHASE 3 DEBUG TEST
  */
 
-import Phaser from 'phaser';
-import { BasicMSDFShaderTest } from '../examples/basic-msdf-shader-test';
+// Importing Phase 3 test instead of main test
+import '../examples/phase3-msdf-test';
 
-// Update status in UI
-function updateStatus(message: string) {
-    const statusEl = document.getElementById('status');
-    if (statusEl) {
-        statusEl.textContent = message;
-    }
-    console.log('Status:', message);
-}
-
-// Game configuration
-const config: Phaser.Types.Core.GameConfig = {
-  type: Phaser.WEBGL,
-  parent: "game-container",
-  backgroundColor: "#1a1a2e",
-  scene: [BasicMSDFShaderTest],
-  scale: {
-    width: window.innerWidth,
-    height: window.innerHeight,
-    mode: Phaser.Scale.RESIZE,
-    autoCenter: Phaser.Scale.CENTER_BOTH,
-  },
-  callbacks: {
-    preBoot: (game) => {
-      updateStatus("Phaser 4 booting...");
-    },
-    postBoot: (game) => {
-      updateStatus("Phaser 4 ready!");
-      console.log("Phaser 4 Game Instance:", game);
-      console.log("Renderer:", game.renderer);
-    },
-  },
-};
-
-// Initialize Phaser
-updateStatus('Initializing...');
-const game = new Phaser.Game(config);
-
-// Global access for debugging
-(window as any).game = game;
-
-console.log('Phaser 4 MSDF Font Test started');
-console.log('Game config:', config);
+console.log('[Phase 3] Test loaded from main.ts');
+console.log('[Phase 3] Check the browser window for MSDF-rendered characters!');
