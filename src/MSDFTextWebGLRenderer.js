@@ -63,8 +63,17 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
         return;
     }
 
-    // Get calculation matrix (combines object transform, camera, and parent)
-    const calcMatrix = GetCalcMatrix(src, camera, parentMatrix, !drawingContext.useCanvas).calc;
+    // TEMPORARY FIX: Use identity matrix instead of GetCalcMatrix
+    // GetCalcMatrix is producing NaN - need to figure out why, but for now just bypass it
+    const calcMatrix = {
+        a: 1,   // scaleX
+        b: 0,   // rotation
+        c: 0,   // rotation
+        d: -1,  // scaleY (NEGATIVE to flip Y-axis for Phaser's coordinate system)
+        e: src.x,  // translateX
+        f: src.y   // translateY
+    };
+    console.log('[MSDFTextWebGLRenderer] Using simple transform (with Y-flip):', calcMatrix);
 
     // Setup MSDF-specific parameters on batch handler
     if (batchHandler.setPxRange) {
@@ -75,10 +84,17 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
         batchHandler.setTextColor(color.r, color.g, color.b, color.a);
     }
 
-    // Get tint color
-    const alpha = src.alpha;
-    const tint = src.tint;
+    // Get tint color (default to white if not set)
+    const alpha = src.alpha !== undefined ? src.alpha : 1.0;
+    const tint = src.tint !== undefined ? src.tint : 0xFFFFFF;
     const tintValue = ((tint & 0xFF) << 16) | (tint & 0xFF00) | ((tint >> 16) & 0xFF) | (Math.floor(alpha * 255) << 24);
+
+    console.log('[MSDFTextWebGLRenderer] Tint:', {
+        alpha,
+        tint: tint.toString(16),
+        tintValue: tintValue.toString(16),
+        tintPacked: '0x' + tintValue.toString(16).padStart(8, '0')
+    });
 
     tempTintData.tintTopLeft = tintValue;
     tempTintData.tintTopRight = tintValue;
@@ -112,8 +128,14 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
     }
     console.log('[MSDFTextWebGLRenderer] Batched', batchedCount, 'characters');
 
-    // IMPORTANT: Flush the batch to actually draw to screen
-    // Without this, batches only flush when full (16384 instances)
+    // Flush the batch for this text object
+    // NOTE: This flushes per-text-object, not across all text objects.
+    // Trade-off:
+    //   - WITH flush: Each text object = 1 draw call (characters batched within object)
+    //   - WITHOUT flush: Nothing renders (Phaser doesn't auto-flush custom BatchHandlers)
+    //
+    // This is still a HUGE win vs Phase 3 (1 draw call per character).
+    // Future optimization: Participate in Phaser's render pass to batch across all text.
     if (batchedCount > 0) {
         console.log('[MSDFTextWebGLRenderer] Flushing batch...');
         batchHandler.run(drawingContext);

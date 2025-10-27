@@ -70,41 +70,45 @@ class Phase3TestScene extends Phaser.Scene {
         this.quad1 = new SimpleQuad(this, 50, 50, 200, 200, 'arial-msdf');
         // These UVs are approximate - we'd need to parse the .fnt file for exact coordinates
         // For now, let's show a region that should contain characters
-        this.quad1.setUV(0.0, 0.0, 0.15, 0.15);
-        console.log('[Phase 3] Quad 1 created - testing MSDF character rendering');
+        this.quad1.setUV(0.0, 0.0, 1, 1);
+        console.log(
+          "[Phase 3] Quad 1 created - testing MSDF character rendering"
+        );
 
         // Quad 2: Different region
-        this.quad2 = new SimpleQuad(this, 300, 50, 200, 200, 'arial-msdf');
-        this.quad2.setUV(0.2, 0.2, 0.35, 0.35);
-        console.log('[Phase 3] Quad 2 created - different UV region');
+        this.quad2 = new SimpleQuad(this, 300, 50, 200, 200, "arial-msdf");
+        this.quad2.setUV(0.9, 0.9, 1, 1);
+        console.log("[Phase 3] Quad 2 created - different UV region");
 
         // Quad 3: Another region
-        this.quad3 = new SimpleQuad(this, 550, 50, 200, 200, 'arial-msdf');
-        this.quad3.setUV(0.5, 0.5, 0.65, 0.65);
-        console.log('[Phase 3] Quad 3 created - another UV region');
+        this.quad3 = new SimpleQuad(this, 550, 50, 200, 200, "arial-msdf");
+        this.quad3.setUV(0.9, 0.9, 1, 1);
+        console.log("[Phase 3] Quad 3 created - another UV region");
 
         // Add instruction text
-        this.add.text(50, 280,
-            'Phase 3: MSDF Algorithm Test\n\n' +
-            'Expected: Clean, crisp character edges\n' +
-            '(not blurry like Phase 2)\n\n' +
-            'If you see sharp MSDF-rendered characters,\n' +
-            'the MSDF algorithm works!\n\n' +
-            'This means the issue in MSDFBatchHandler\n' +
-            'is something ELSE (vertex layout, tint, etc.)\n\n' +
-            'Check console for logs.',
-            {
-                fontSize: '16px',
-                color: '#00ff00',
-                fontFamily: 'Arial',
-                backgroundColor: '#000000',
-                padding: { x: 10, y: 10 }
-            }
+        this.add.text(
+          50,
+          280,
+          "Phase 3: MSDF Algorithm Test\n\n" +
+            "Expected: Clean, crisp character edges\n" +
+            "(not blurry like Phase 2)\n\n" +
+            "If you see sharp MSDF-rendered characters,\n" +
+            "the MSDF algorithm works!\n\n" +
+            "This means the issue in MSDFBatchHandler\n" +
+            "is something ELSE (vertex layout, tint, etc.)\n\n" +
+            "Check console for logs.",
+          {
+            fontSize: "16px",
+            color: "#00ff00",
+            fontFamily: "Arial",
+            backgroundColor: "#000000",
+            padding: { x: 10, y: 10 },
+          }
         );
 
         // Add comparison: Show raw texture for reference
-        const rawQuad = new SimpleQuad(this, 50, 500, 150, 75, 'arial-msdf');
-        rawQuad.setUV(0.0, 0.0, 0.15, 0.15);
+        const rawQuad = new SimpleQuad(this, 50, 500, 200, 200, "arial-msdf");
+        rawQuad.setUV(0.9, 0.9, 1, 1);
 
         this.add.text(210, 520,
             'Reference: Same region\nwithout MSDF would look\nblurry (see Phase 2)',

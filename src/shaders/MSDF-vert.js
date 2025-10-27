@@ -26,7 +26,7 @@ export default [
     'void main()',
     '{',
     '    // Transform position to clip space',
-    '    gl_Position = uProjectionMatrix * vec4(inPosition, 1.0, 1.0);',
+    '    gl_Position = uProjectionMatrix * vec4(inPosition, 0.0, 1.0);',
     '    ',
     '    // Pass through texture coordinates (already mapped to character in atlas)',
     '    outTexCoord = inTexCoord;',

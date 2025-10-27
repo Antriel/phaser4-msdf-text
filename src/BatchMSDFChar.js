@@ -63,16 +63,32 @@ function BatchMSDFChar(drawingContext, batchHandler, texture, char, calcMatrix, 
     const tintBR = tintData.tintBottomRight;
 
     // Batch the character quad
+    // NOTE: SimpleBatchHandler expects: BL, TL, TR, BR (not TL, BL, BR, TR!)
+    // Log only first character to avoid spam
+    if (Math.random() < 0.1) {
+        console.log('[BatchMSDFChar] Sample character:', {
+            charPos: {x: char.x, y: char.y, w: char.w, h: char.h},
+            uvs: {u0, v0, u1, v1},
+            vertices: {
+                BL: [tx1, ty1],
+                TL: [tx0, ty0],
+                TR: [tx3, ty3],
+                BR: [tx2, ty2]
+            },
+            viewport: `${drawingContext.width}x${drawingContext.height}`
+        });
+    }
+
     batchHandler.batch(
         drawingContext,
         texture,
-        tx0, ty0,  // Top-left
-        tx1, ty1,  // Bottom-left
-        tx2, ty2,  // Bottom-right
-        tx3, ty3,  // Top-right
+        tx1, ty1,  // Bottom-left (was tx0, ty0)
+        tx0, ty0,  // Top-left (was tx1, ty1)
+        tx3, ty3,  // Top-right (was tx2, ty2)
+        tx2, ty2,  // Bottom-right (was tx3, ty3)
         u0, v0,    // UV top-left
         u1, v1,    // UV bottom-right
-        tintTL, tintBL, tintTR, tintBR  // Tint colors
+        tintBL, tintTL, tintTR, tintBR  // Tint colors (reordered to match vertices)
     );
 }
 

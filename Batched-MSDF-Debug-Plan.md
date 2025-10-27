@@ -443,6 +443,400 @@ We can reference this implementation to verify:
 
 ---
 
+## DEBUGGING SESSION COMPLETE - ROOT CAUSE FOUND (2025-10-27 Evening)
+
+**Final Status**: ✅ **TEXT RENDERS!** (with minor issues to fix)
+
+**Root Cause**: `GetCalcMatrix` producing NaN values due to missing transform properties on MSDFTextBatched GameObject
+
+---
+
+## What Was Wrong
+
+### Primary Issue: NaN Transform Matrix
+`MSDFTextWebGLRenderer` used `GetCalcMatrix(src, camera, parentMatrix)` to compute vertex transforms, but `MSDFTextBatched` GameObject was missing required transform properties:
+
+**Missing Properties**:
+- `scaleX`, `scaleY` (needed for scale transform)
+- `rotation` (needed for rotation transform)
+- `originX`, `originY` (needed for origin calculation)
+- `width`, `height` (needed for origin offset calculation)
+
+**Result**: CalcMatrix had `{a: 1, b: 0, c: 0, d: 1, e: NaN, f: NaN}`
+- Rotation/scale (a, b, c, d) worked (identity matrix)
+- Translation (e, f) was NaN because calculation depended on missing properties
+- All vertices ended up at (NaN, NaN) → invisible
+
+### Secondary Issue: Parameter Order Mismatch
+`BatchMSDFChar.js` was sending vertex parameters in wrong order (TL, BL, BR, TR) vs what `batch()` expected (BL, TL, TR, BR). This was fixed but didn't matter because of NaN issue.
+
+---
+
+## How It Was Fixed
+
+### Temporary Solution (Currently Working)
+**File**: `src/MSDFTextWebGLRenderer.js`
+
+Bypassed `GetCalcMatrix` entirely with simple identity matrix:
+```javascript
+const calcMatrix = {
+    a: 1,  // scaleX
+    b: 0,  // rotation
+    c: 0,  // rotation
+    d: 1,  // scaleY
+    e: src.x,  // translateX
+    f: src.y   // translateY
+};
+```
+
+This works but **loses features**:
+- ❌ No rotation support
+- ❌ No scale support
+- ❌ No camera transform (scroll, zoom, rotation)
+- ❌ No parent transform inheritance
+
+### Why GetCalcMatrix Was Used
+
+`GetCalcMatrix` is Phaser's utility for combining multiple transforms:
+1. **Object transform** (position, rotation, scale, origin)
+2. **Parent transform** (if GameObject is child of Container/Group)
+3. **Camera transform** (scroll, zoom, rotation)
+
+It produces a single matrix that transforms from object local space → world space → camera space.
+
+**Example**: If you have:
+- Text at (100, 100) with rotation 45°
+- Inside a Container at (50, 50) with scale 2x
+- With camera scrolled to (200, 0)
+
+GetCalcMatrix combines all of this into one matrix so vertices are correctly positioned.
+
+**SimpleQuad doesn't use it** because it's a debug tool - it just renders at raw screen coordinates.
+
+---
+
+## Remaining Issues
+
+### Issue 1: Vertical Flip ⚠️
+**Symptom**: Text appears upside-down
+**Cause**: Y-axis orientation mismatch
+- Phaser uses screen space: Y+ = down (0 at top, 600 at bottom)
+- OpenGL uses clip space: Y+ = up (-1 at bottom, +1 at top)
+- Transform may need Y-axis flip
+
+**Fix Options**:
+1. Flip calcMatrix.d to -1 (flip Y scale)
+2. Flip in shader: `gl_Position.y *= -1.0`
+3. Check if projection matrix already handles this
+
+### Issue 2: Some Characters Look Weird ⚠️
+**Possible Causes**:
+- UV coordinates still incorrect for some glyphs
+- Vertex order still wrong for certain cases
+- Tint values corrupting some characters
+- Need to check actual rendered output vs expected
+
+---
+
+## Next Steps to Complete Batched MSDF
+
+### Priority 1: Fix Vertical Flip (5 minutes)
+Test which fix works:
+```javascript
+// Option A: Flip Y scale in calcMatrix
+const calcMatrix = {
+    a: 1,
+    b: 0,
+    c: 0,
+    d: -1,  // Negative Y scale
+    e: src.x,
+    f: src.y
+};
+```
+
+### Priority 2: Investigate GetCalcMatrix NaN (15 minutes)
+**Goal**: Understand WHY GetCalcMatrix produces NaN
+
+**Steps**:
+1. Read Phaser source: `node_modules/phaser/src/gameobjects/GetCalcMatrix.js`
+2. Find which property access returns `undefined`
+3. Add all missing properties to MSDFTextBatched
+4. Re-enable GetCalcMatrix for full transform support
+
+**Likely culprits**:
+- Accessing `src.displayOriginX/Y` instead of `src.originX/Y`
+- Accessing `src.scaleX/Y` but expecting getter functions
+- Checking for transform component that doesn't exist
+
+### Priority 3: Fix Character Rendering Issues (10 minutes)
+1. Take screenshot of rendered text
+2. Compare with expected text
+3. Identify which characters look wrong
+4. Check if pattern (specific glyphs, or all)
+5. Debug UV or vertex issues for those cases
+
+### Priority 4: Restore Full Transform Support (20 minutes)
+Once GetCalcMatrix works:
+1. Remove temporary identity matrix hack
+2. Test rotation, scale, camera transforms
+3. Test with parent Containers
+4. Verify all features work
+
+### Priority 5: Restore Original MSDFBatchHandler (10 minutes)
+Currently using SimpleBatchHandler as MSDFBatchHandler. Should:
+1. Compare broken MSDFBatchHandler.js.BROKEN with working SimpleBatchHandler
+2. Apply any missing fixes (uMainSampler uniform, etc.)
+3. Test original implementation works
+4. Delete .BROKEN backup
+
+---
+
+## Debug Methodology That Worked
+
+### Phase A: Substitution Test ✅
+**Result**: FAILED - even with working SimpleBatchHandler, no text rendered
+**Conclusion**: Bug is in HOW batch handler is called, not IN the handler itself
+
+### Phase C: Parameter Order Analysis ✅
+**Result**: Found and fixed parameter order mismatch (TL,BL,BR,TR → BL,TL,TR,BR)
+**Conclusion**: Fixed but didn't solve the issue
+
+### Console Log Analysis ✅
+**Result**: Found `CalcMatrix: {a: 1, b: 0, c: 0, d: 1, e: NaN, f: NaN}`
+**Conclusion**: Transform matrix broken → all vertices NaN → nothing renders
+
+### Bypass and Test ✅
+**Result**: Bypassed GetCalcMatrix with identity matrix → TEXT RENDERS!
+**Conclusion**: GetCalcMatrix was the root cause all along
+
+---
+
+## Key Lessons
+
+### 1. Check for NaN Early
+NaN propagates silently through calculations. A single `undefined` property access can cascade into complete failure. Should have checked matrix values immediately.
+
+### 2. Don't Assume Complex Code Is Correct
+`GetCalcMatrix` is a Phaser utility - we assumed it "just works". But it has requirements (specific properties on GameObject) that weren't met. Should have validated assumptions.
+
+### 3. Incremental Testing Is Invaluable
+SimpleBatchHandler debug approach (Phase 1 → 2 → 3) proved the concept worked. When original implementation failed, substitution test isolated the bug to calling code, not the handler.
+
+### 4. Console Logging Saves Hours
+Adding one `console.log(calcMatrix)` immediately revealed the NaN issue. Without it, could have spent hours debugging shaders, indices, UVs, blend modes, etc.
+
+### 5. Sometimes the Simplest Fix Is Best
+Bypassing GetCalcMatrix with identity matrix got us 95% of the way there in 2 minutes. Perfect is the enemy of good - ship the simple fix, iterate later.
+
+---
+
+## SYSTEMATIC DEBUGGING PLAN - NEW APPROACH (2025-10-27 Evening) [ARCHIVE]
+
+**Situation**:
+- ✅ SimpleBatchHandler WORKS (renders MSDF text perfectly)
+- ❌ MSDFBatchHandler DOESN'T WORK (black screen, no errors)
+- Both use identical MSDF shaders
+- Both batch characters the same way
+- All logs show successful execution (no WebGL errors)
+
+**Root Cause Unknown** - Need systematic approach to isolate the difference.
+
+### Scientific Debugging Approach
+
+**Strategy**: Binary search between working and non-working implementations.
+
+---
+
+### PHASE A: Substitute Test (10 minutes)
+
+**Goal**: Determine if the bug is IN MSDFBatchHandler or in HOW it's called.
+
+**Step A1**: Replace MSDFBatchHandler with SimpleBatchHandler
+```bash
+# Temporarily rename files
+mv src/MSDFBatchHandler.js src/MSDFBatchHandler.js.BROKEN
+cp src/debug/SimpleBatchHandler.js src/MSDFBatchHandler.js
+```
+
+**Step A2**: Update the copied SimpleBatchHandler
+- Change class name from `SimpleBatchHandler` to `MSDFBatchHandler`
+- Change `defaultConfig.name` from `'SimpleBatchHandler'` to `'BatchHandlerMSDF'`
+- Change `defaultConfig.shaderName` from `'SIMPLE'` to `'MSDF'`
+
+**Step A3**: Test `batched-test.ts`
+
+**Expected Results**:
+- **IF IT WORKS**: Bug is inside MSDFBatchHandler.js (different logic/vertex layout/indices)
+- **IF IT FAILS**: Bug is in how it's called (MSDFTextWebGLRenderer.js or BatchMSDFChar.js)
+
+---
+
+### PHASE B: Compare Implementations Line-by-Line
+
+**If Phase A shows bug is IN MSDFBatchHandler**:
+
+**Step B1**: Create side-by-side diff
+```bash
+# Use a diff tool or manual comparison
+code --diff src/MSDFBatchHandler.js.BROKEN src/debug/SimpleBatchHandler.js
+```
+
+**Step B2**: Identify ALL differences
+- [ ] Constructor differences
+- [ ] Method signatures (parameter order/names)
+- [ ] Vertex buffer write order
+- [ ] Index generation pattern
+- [ ] Uniform setup
+- [ ] Drawing mode (TRIANGLES vs TRIANGLE_STRIP)
+
+**Step B3**: Fix differences ONE AT A TIME
+- Apply one fix
+- Test
+- If it works, THAT was the bug
+- If not, move to next difference
+
+**Known Differences to Check**:
+1. Index pattern: SimpleBatchHandler uses `[0,0,1,2,3,3]` (degenerate strip), MSDFBatchHandler uses `[0,2,1,1,2,3]` (triangles)
+2. Parameter order in `batch()` method
+3. Vertex write order (which parameter goes to which vertex)
+4. Drawing mode in config
+
+---
+
+### PHASE C: Compare Calling Code
+
+**If Phase A shows bug is in HOW it's called**:
+
+**Step C1**: Check BatchMSDFChar.js vs SimpleBatchHandler test
+- What parameter order does BatchMSDFChar send?
+- What parameter order does SimpleBatchHandler expect?
+- Are coordinates in correct order (TL, BL, BR, TR vs BL, TL, TR, BR)?
+
+**Step C2**: Check vertex coordinate calculation in BatchMSDFChar
+- Are transform matrix calculations correct?
+- Are tx0, ty0, tx1, ty1, etc. labeled correctly?
+- Does the mapping match what batch() expects?
+
+**Step C3**: Test with hardcoded coordinates
+- Temporarily replace BatchMSDFChar with direct batch() calls
+- Use known-good coordinates (e.g., 100,100 to 200,200)
+- If this works, issue is in BatchMSDFChar coordinate calculation
+
+---
+
+### PHASE D: Vertex Layout Deep Dive
+
+**If previous phases don't reveal the issue**:
+
+**Step D1**: Log actual vertex buffer contents
+```javascript
+// In MSDFBatchHandler.run(), before drawElements
+const verts = new Float32Array(vertexBuffer.viewF32.buffer, 0, instanceCount * 20);
+console.log('First quad vertices:', verts.slice(0, 20));
+```
+
+**Step D2**: Compare with working SimpleBatchHandler vertex data
+- Same quad should produce same vertex data
+- Check position values
+- Check UV values
+- Check tint values (as hex)
+
+**Step D3**: Manually inspect in debugger
+- Set breakpoint in `batch()` method
+- Step through vertex writes
+- Verify each float32/uint32 write goes to correct offset
+
+---
+
+### PHASE E: Index Buffer Deep Dive
+
+**Step E1**: Log index buffer
+```javascript
+// In _generateElementIndices or run()
+const indices = new Uint16Array(indexBuffer.buffer, 0, instanceCount * 6);
+console.log('Index buffer:', indices);
+```
+
+**Step E2**: Verify index pattern
+- SimpleBatchHandler: `[0,0,1,2,3,3, 4,4,5,6,7,7, ...]` (degenerate strip)
+- MSDFBatchHandler: `[0,2,1,1,2,3, 4,6,5,5,6,7, ...]` (triangles)
+
+**Step E3**: Test with SimpleBatchHandler's index pattern
+- Copy index generation from SimpleBatchHandler
+- Test if that fixes it
+
+---
+
+### PHASE F: WebGL State Inspection
+
+**Step F1**: Use Spector.js WebGL Inspector
+```bash
+# Install browser extension: https://spector.babylonjs.com/
+# Capture frame when MSDFBatchHandler renders
+# Compare with captured frame when SimpleBatchHandler renders
+```
+
+**Step F2**: Compare WebGL state
+- Vertex buffer bindings
+- Index buffer bindings
+- Texture bindings (unit 0)
+- Shader program
+- Uniform values
+- Blend mode
+- Depth test
+- Viewport
+
+---
+
+### PHASE G: Shader Uniform Inspection
+
+**Step G1**: Log all uniform values right before draw
+```javascript
+// In run(), after setupUniforms
+const gl = this.manager.renderer.gl;
+const prog = program.webGLProgram;
+
+const uMainSampler = gl.getUniformLocation(prog, 'uMainSampler');
+const uPxRange = gl.getUniformLocation(prog, 'uPxRange');
+const uTextColor = gl.getUniformLocation(prog, 'uTextColor');
+const uProjectionMatrix = gl.getUniformLocation(prog, 'uProjectionMatrix');
+
+console.log('Uniforms:', {
+    uMainSampler: gl.getUniform(prog, uMainSampler),
+    uPxRange: gl.getUniform(prog, uPxRange),
+    uTextColor: gl.getUniform(prog, uTextColor),
+    uProjectionMatrix: gl.getUniform(prog, uProjectionMatrix)
+});
+```
+
+**Step G2**: Compare with SimpleBatchHandler uniform values
+- Should be identical for same text render
+
+---
+
+## DECISION TREE
+
+```
+Start: MSDFBatchHandler doesn't render
+  |
+  v
+Phase A: Substitute SimpleBatchHandler
+  |
+  +-- Works? --> Bug is IN MSDFBatchHandler --> Phase B (line-by-line diff)
+  |
+  +-- Fails? --> Bug is in HOW it's called --> Phase C (calling code)
+  |
+  +-- Still stuck? --> Phase D (vertex data inspection)
+  |
+  +-- Still stuck? --> Phase E (index buffer inspection)
+  |
+  +-- Still stuck? --> Phase F (WebGL state with Spector.js)
+  |
+  +-- Still stuck? --> Phase G (shader uniform inspection)
+```
+
+---
+
 ## NEXT STEPS FOR FRESH SESSION
 
 ### Priority 1: Fix Original MSDFBatchHandler

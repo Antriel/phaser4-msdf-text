@@ -1,11 +1,11 @@
 /**
  * Main entry point for Phaser 4 MSDF Font Test
  *
- * TEMPORARILY RUNNING PHASE 3 DEBUG TEST
+ * TESTING PHASE A: MSDFBatchHandler substitution test
  */
 
-// Importing Phase 3 test instead of main test
-import '../examples/phase3-msdf-test';
+// Load batched-test.ts to test MSDFTextBatched with substituted SimpleBatchHandler
+import '../examples/batched-test';
 
-console.log('[Phase 3] Test loaded from main.ts');
-console.log('[Phase 3] Check the browser window for MSDF-rendered characters!');
+console.log('[Phase A] Testing MSDFTextBatched with SimpleBatchHandler substitution');
+console.log('[Phase A] This will prove if bug is IN MSDFBatchHandler or in HOW it\'s called');

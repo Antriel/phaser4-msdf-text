@@ -37,9 +37,16 @@ interface CharacterData {
  * MSDFText GameObject with batched rendering
  */
 export class MSDFText extends Phaser.GameObjects.GameObject {
-    // Position properties (GameObject doesn't include Transform by default)
+    // Transform properties (required by GetCalcMatrix)
     public x: number = 0;
     public y: number = 0;
+    public scaleX: number = 1;
+    public scaleY: number = 1;
+    public rotation: number = 0;
+    public originX: number = 0;
+    public originY: number = 0;
+    public width: number = 0;
+    public height: number = 0;
 
     // Font and text properties
     private font: MSDFFont;

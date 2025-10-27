@@ -124,15 +124,19 @@ class BatchedTestScene extends Phaser.Scene {
 
 // Game configuration
 const config: Phaser.Types.Core.GameConfig = {
-    type: Phaser.WEBGL,  // IMPORTANT: WebGL required for batching
-    width: 800,
-    height: 600,
-    backgroundColor: '#2d2d2d',
-    scene: BatchedTestScene,
-    scale: {
-        mode: Phaser.Scale.FIT,
-        autoCenter: Phaser.Scale.CENTER_BOTH
-    }
+  type: Phaser.WEBGL, // IMPORTANT: WebGL required for batching
+  width: 800,
+  height: 600,
+  backgroundColor: "#2d2d2d",
+  scene: BatchedTestScene,
+  scale: {
+    mode: Phaser.Scale.FIT,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+  },
+  fps: {
+    target: 10,
+    forceSetTimeOut: true,
+  },
 };
 
 // Create game
