@@ -260,14 +260,5 @@ export function listMSDFFonts(scene: Phaser.Scene): string[] {
  */
 export function debugMSDFFonts(scene: Phaser.Scene): void {
     const cache = getFontCache(scene);
-    console.log('=== MSDF Fonts ===');
-    console.log(`Total fonts: ${cache.size}`);
-
-    cache.forEach((font, key) => {
-        if (font instanceof MSDFFont) {
-            console.log(`  ${key}:`, font.getDebugInfo());
-        } else {
-            console.log(`  ${key}: [not yet parsed]`);
-        }
-    });
+    // Debug method intentionally left empty - fonts can be inspected via cache
 }

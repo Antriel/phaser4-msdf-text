@@ -376,6 +376,6 @@ export class MSDFText extends Phaser.GameObjects.Container {
      * Print debug info to console
      */
     printDebugInfo(): void {
-        console.log(this.getDebugInfo());
+        // Debug method intentionally left empty - use getDebugInfo() instead
     }
 }

@@ -33,10 +33,7 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
     const characters = src._characters;
     const characterCount = characters ? characters.length : 0;
 
-    console.log('[MSDFTextWebGLRenderer] Called with', characterCount, 'characters');
-
     if (characterCount === 0) {
-        console.log('[MSDFTextWebGLRenderer] No characters to render');
         return;
     }
 
@@ -46,18 +43,13 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
     // Get batch handler instance (already resolved in constructor)
     const batchHandler = src.customRenderNodes.BatchHandler || src.defaultRenderNodes.BatchHandler;
 
-    console.log('[MSDFTextWebGLRenderer] Batch handler:', batchHandler);
-
     if (!batchHandler) {
         console.warn('MSDFText: No batch handler found');
-        console.log('[MSDFTextWebGLRenderer] customRenderNodes:', src.customRenderNodes);
-        console.log('[MSDFTextWebGLRenderer] defaultRenderNodes:', src.defaultRenderNodes);
         return;
     }
 
     // Get MSDF texture
     const texture = src._texture;
-    console.log('[MSDFTextWebGLRenderer] Texture:', texture);
     if (!texture) {
         console.warn('MSDFText: No texture found');
         return;
@@ -66,15 +58,6 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
     // Get transform matrix combining object, parent, and camera transforms
     const matrixResult = GetCalcMatrix(src, camera, parentMatrix);
     const calcMatrix = matrixResult.calc;
-
-    console.log('[MSDFTextWebGLRenderer] Transform matrix:', {
-        a: calcMatrix.a,
-        b: calcMatrix.b,
-        c: calcMatrix.c,
-        d: calcMatrix.d,
-        e: calcMatrix.e,
-        f: calcMatrix.f
-    });
 
     // Setup MSDF-specific parameters on batch handler
     if (batchHandler.setPxRange) {
@@ -90,31 +73,20 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
     const tint = src.tint !== undefined ? src.tint : 0xFFFFFF;
     const tintValue = ((tint & 0xFF) << 16) | (tint & 0xFF00) | ((tint >> 16) & 0xFF) | (Math.floor(alpha * 255) << 24);
 
-    console.log('[MSDFTextWebGLRenderer] Tint:', {
-        alpha,
-        tint: tint.toString(16),
-        tintValue: tintValue.toString(16),
-        tintPacked: '0x' + tintValue.toString(16).padStart(8, '0')
-    });
-
     tempTintData.tintTopLeft = tintValue;
     tempTintData.tintTopRight = tintValue;
     tempTintData.tintBottomLeft = tintValue;
     tempTintData.tintBottomRight = tintValue;
 
     // Batch all characters
-    console.log('[MSDFTextWebGLRenderer] Batching', characterCount, 'characters');
     let batchedCount = 0;
     for (let i = 0; i < characterCount; i++) {
         const char = characters[i];
 
         // Skip spaces and zero-width characters
         if (!char || char.w === 0 || char.h === 0) {
-            console.log('[MSDFTextWebGLRenderer] Skipping character', i, '(zero size)');
             continue;
         }
-
-        console.log('[MSDFTextWebGLRenderer] Batching character', i, ':', char);
 
         // Batch this character
         BatchMSDFChar(
@@ -127,7 +99,6 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
         );
         batchedCount++;
     }
-    console.log('[MSDFTextWebGLRenderer] Batched', batchedCount, 'characters');
 
     // Flush the batch for this text object
     // NOTE: This flushes per-text-object, not across all text objects.
@@ -138,7 +109,6 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
     // This is still a HUGE win vs Phase 3 (1 draw call per character).
     // Future optimization: Participate in Phaser's render pass to batch across all text.
     if (batchedCount > 0) {
-        console.log('[MSDFTextWebGLRenderer] Flushing batch...');
         batchHandler.run(drawingContext);
     }
 }

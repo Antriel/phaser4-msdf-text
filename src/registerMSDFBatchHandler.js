@@ -56,7 +56,6 @@ export function registerMSDFBatchHandler(game) {
         // Register the batch handler CONSTRUCTOR (not instance)
         // The RenderNodeManager will auto-instantiate it when getNode() is called
         renderNodeManager.addNodeConstructor('BatchHandlerMSDF', MSDFBatchHandler);
-        console.log('MSDFBatchHandler registered successfully');
         return true;
     } catch (error) {
         console.error('registerMSDFBatchHandler: Failed to register', error);

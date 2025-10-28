@@ -1,17 +1,17 @@
 /**
- * Simple Batch Handler - Phase 1 Debug
+ * MSDF Batch Handler
  *
- * Minimal BatchHandler implementation that renders solid color quads.
- * No textures, no MSDF - just basic batched geometry rendering.
+ * Custom BatchHandler for rendering MSDF (Multi-channel Signed Distance Field) fonts.
+ * Efficiently batches multiple character quads into a single draw call with proper
+ * texture sampling and anti-aliased rendering.
  *
- * This is Phase 1 of the incremental MSDF debugging plan.
- * Goal: Verify that basic batching works before adding complexity.
+ * Based on Phaser 4's BatchHandler architecture with MSDF-specific shaders.
  */
 
 import Phaser from 'phaser';
 
 /**
- * Simple vertex shader - position + texture coordinates + tint
+ * MSDF vertex shader - position + texture coordinates + tint
  */
 const SimpleVertexShader = [
     'precision mediump float;',
@@ -33,7 +33,10 @@ const SimpleVertexShader = [
 ].join('\n');
 
 /**
- * MSDF fragment shader - with median() and smoothstep + tint
+ * MSDF fragment shader
+ *
+ * Uses median() to extract signed distance from RGB channels and smoothstep()
+ * for anti-aliasing. Supports text color and tint modulation.
  */
 const SimpleFragmentShader = [
     '#ifdef GL_FRAGMENT_PRECISION_HIGH',
@@ -147,7 +150,6 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
             indices[offset++] = index + 3; // Vertex 3 (degenerate)
         }
 
-        console.log('[MSDFBatchHandler] Generated indices for', instances, 'quads');
         return buffer;
     }
 
@@ -158,10 +160,6 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
      */
     setupUniforms(drawingContext) {
         const programManager = this.programManager;
-
-        console.log('[MSDFBatchHandler] setupUniforms - Resolution:', drawingContext.width, 'x', drawingContext.height);
-        console.log('[MSDFBatchHandler] setupUniforms - pxRange:', this._pxRange);
-        console.log('[MSDFBatchHandler] setupUniforms - textColor:', this._textColor);
 
         // Set texture sampler to texture unit 0
         programManager.setUniform('uMainSampler', 0);
@@ -183,10 +181,7 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
     run(drawingContext) {
         const instanceCount = this.instanceCount;
 
-        console.log('[MSDFBatchHandler] run() called with', instanceCount, 'instances');
-
         if (instanceCount === 0) {
-            console.log('[MSDFBatchHandler] No instances to render');
             return;
         }
 
@@ -195,30 +190,23 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
         const programManager = this.programManager;
         const programSuite = programManager.getCurrentProgramSuite();
 
-        console.log('[MSDFBatchHandler] Program suite:', programSuite);
-
         if (programSuite) {
             const program = programSuite.program;
             const vao = programSuite.vao;
 
-            console.log('[MSDFBatchHandler] Program:', program, 'VAO:', vao);
-
             // Check program compilation status
             const gl = this.manager.renderer.gl;
             const isLinked = gl.getProgramParameter(program.webGLProgram, gl.LINK_STATUS);
-            console.log('[MSDFBatchHandler] Program linked:', isLinked);
             if (!isLinked) {
                 const log = gl.getProgramInfoLog(program.webGLProgram);
                 console.error('[MSDFBatchHandler] Program link error:', log);
             }
 
             // Setup uniforms
-            console.log('[MSDFBatchHandler] Setting up uniforms...');
             this.setupUniforms(drawingContext);
             programManager.applyUniforms(program);
 
             // Update vertex buffer
-            console.log('[MSDFBatchHandler] Updating vertex buffer:', this.instanceCount * this.bytesPerInstance, 'bytes');
             this.vertexBufferLayout.buffer.update(this.instanceCount * this.bytesPerInstance);
 
             // Check for WebGL errors before drawing
@@ -228,7 +216,6 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
             }
 
             // Draw with texture
-            console.log('[MSDFBatchHandler] Calling drawElements with texture:', this._currentTexture, 'indices:', instanceCount * this.indicesPerInstance);
             this.manager.renderer.drawElements(
                 drawingContext,
                 this._currentTexture ? [this._currentTexture] : [],
@@ -243,8 +230,6 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
             if (error !== gl.NO_ERROR) {
                 console.error('[MSDFBatchHandler] WebGL error AFTER draw:', error);
             }
-
-            console.log('[MSDFBatchHandler] drawElements complete');
         } else {
             console.error('[MSDFBatchHandler] No program suite available!');
         }
@@ -331,16 +316,6 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
         vertexViewF32[vertexOffset32 + 17] = u1;
         vertexViewF32[vertexOffset32 + 18] = v0;
         vertexViewU32[vertexOffset32 + 19] = tintTRValue;
-
-        // Log only occasionally to avoid spam
-        if (this.instanceCount === 0) {
-            console.log('[MSDFBatchHandler] First quad of batch:', {
-                'BL (x0,y0)': [x0, y0, u0, v1],
-                'TL (x1,y1)': [x1, y1, u0, v0],
-                'BR (x3,y3)': [x3, y3, u1, v1],
-                'TR (x2,y2)': [x2, y2, u1, v0]
-            });
-        }
 
         // Increment instance count
         this.instanceCount++;
