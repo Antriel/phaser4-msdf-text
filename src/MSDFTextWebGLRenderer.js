@@ -63,17 +63,18 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
         return;
     }
 
-    // TEMPORARY FIX: Use identity matrix instead of GetCalcMatrix
-    // GetCalcMatrix is producing NaN - need to figure out why, but for now just bypass it
-    const calcMatrix = {
-        a: 1,   // scaleX
-        b: 0,   // rotation
-        c: 0,   // rotation
-        d: 1,   // scaleY (NO FLIP - yOffset already applied in text layout)
-        e: src.x,  // translateX
-        f: src.y   // translateY
-    };
-    console.log('[MSDFTextWebGLRenderer] Using simple identity transform:', calcMatrix);
+    // Get transform matrix combining object, parent, and camera transforms
+    const matrixResult = GetCalcMatrix(src, camera, parentMatrix);
+    const calcMatrix = matrixResult.calc;
+
+    console.log('[MSDFTextWebGLRenderer] Transform matrix:', {
+        a: calcMatrix.a,
+        b: calcMatrix.b,
+        c: calcMatrix.c,
+        d: calcMatrix.d,
+        e: calcMatrix.e,
+        f: calcMatrix.f
+    });
 
     // Setup MSDF-specific parameters on batch handler
     if (batchHandler.setPxRange) {

@@ -38,10 +38,18 @@ class BatchedTestScene extends Phaser.Scene {
       return;
     }
 
-    // Test 1: Simple text
+    // Test 1: Simple text with rotation
     this.text1 = new MSDFText(this, 400, 100, font, "Batched MSDF Text!", 48);
     this.text1.setColorHex("#00ff00");
     this.text1.setAlign("center");
+    // Add rotation animation to test transform support
+    this.tweens.add({
+      targets: this.text1,
+      rotation: Math.PI * 2,
+      duration: 3000,
+      repeat: -1,
+      ease: "Linear",
+    });
 
     // Test 2: Multi-line text
     this.text2 = new MSDFText(
@@ -127,10 +135,6 @@ const config: Phaser.Types.Core.GameConfig = {
   scale: {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
-  },
-  fps: {
-    target: 10,
-    forceSetTimeOut: true,
   },
 };
 

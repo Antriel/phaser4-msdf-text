@@ -47,6 +47,8 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
     public originY: number = 0;
     public width: number = 0;
     public height: number = 0;
+    public scrollFactorX: number = 1;
+    public scrollFactorY: number = 1;
 
     // Font and text properties
     private font: MSDFFont;
