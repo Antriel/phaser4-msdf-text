@@ -1,16 +1,131 @@
 # Batched MSDF Text Debugging Plan
 
-**Date**: 2025-10-27
-**Status**: Incremental debugging complete - ROOT CAUSE IDENTIFIED
+**Date**: 2025-10-28
+**Status**: ✅ **BATCHED MSDF TEXT RENDERING WORKING!**
 
 ## Executive Summary
 
 ✅ **Batching works!** SimpleBatchHandler successfully renders with MSDF algorithm.
 ✅ **MSDF algorithm works!** Median + smoothstep + premultiplied alpha all functional.
 ✅ **Texture sampling works!** Texture binding and UV mapping confirmed working.
+✅ **Text renders correctly!** Baseline alignment and character orientation fixed.
+✅ **Transform matrix working!** Identity matrix bypass functional for basic rendering.
 
-❌ **Current Issue**: Only 1 quad visible (out of 4 batched) - likely overlapping or offscreen rendering
-🔧 **Root Cause Found**: Missing/incorrect tint attribute in original MSDFBatchHandler
+🔧 **Remaining Work**: Restore full transform support (rotation, scale, camera, parent transforms)
+
+---
+
+## Files Modified in 2025-10-28 Session
+
+1. **`src/MSDFTextWebGLRenderer.js` (line 72)**
+   - Changed `d: -1` to `d: 1` in calcMatrix
+   - Removed Y-flip to fix baseline alignment
+
+2. **`src/MSDFTextBatched.ts` (lines 396-398)**
+   - Swapped UV coordinates: `v0: char.v1` and `v1: char.v0`
+   - Fixed upside-down letter rendering
+
+3. **`Batched-MSDF-Debug-Plan.md`**
+   - Updated executive summary
+   - Documented 2025-10-28 debugging session
+   - Updated remaining issues and next steps
+
+---
+
+## Debugging Session Results (2025-10-28) - FINAL FIXES ✅
+
+### Issue: Baseline Alignment Incorrect
+**Symptom**: All letters (uppercase and lowercase) aligned to same top edge, like "hanging from a clothesline"
+
+**Root Cause Analysis**:
+1. Initially suspected missing `yOffset` application - **NOT the issue**
+2. `yOffset` was correctly applied in `MSDFTextBatched.rebuildText()` (line 377)
+3. Real issue: **Y-flip in transform matrix** was inverting baseline relationships
+4. Transform matrix had `d: -1` (negative Y scale) which flipped all vertical positioning
+
+**Fix Applied** (`MSDFTextWebGLRenderer.js` line 72):
+```javascript
+// Before:
+d: -1,  // scaleY (NEGATIVE to flip Y-axis)
+
+// After:
+d: 1,   // scaleY (NO FLIP - yOffset already applied in text layout)
+```
+
+**Result**: ✅ Baseline alignment correct, but letters appeared upside-down
+
+---
+
+### Issue: Letters Rendering Upside-Down
+**Symptom**: With Y-flip removed, text had correct baseline but letters were vertically flipped
+
+**Root Cause**: UV coordinate mismatch between batched and non-batched rendering
+- `MSDFFontParser.ts` pre-flips V coordinates for Phaser's Shader GameObject (non-batched)
+- Lines 178-179: `v0 = 1 - (atlasBounds.bottom / atlasHeight)` and `v1 = 1 - (atlasBounds.top / atlasHeight)`
+- This works for `MSDFText` (non-batched) but not for `MSDFTextBatched`
+- Batched version needs different UV handling due to manual transform management
+
+**Fix Applied** (`MSDFTextBatched.ts` lines 396-398):
+```typescript
+// Store character layout data with swapped V coordinates
+this._characters.push({
+    x: charX,
+    y: charY,
+    w: charWidth,
+    h: charHeight,
+    u0: char.u0,
+    v0: char.v1,  // Swap v0 and v1 to flip orientation
+    u1: char.u1,
+    v1: char.v0   // Swap v0 and v1 to flip orientation
+});
+```
+
+**Why swap instead of `1 - v`?**
+- Using `1 - char.v0` would select a completely different region of the texture atlas
+- Example: `v0 = 0.1` becomes `1 - 0.1 = 0.9`, moving to wrong character
+- Swapping keeps same texture region but flips orientation
+
+**Result**: ✅ **TEXT RENDERS PERFECTLY!**
+- ✅ Correct baseline alignment (uppercase/lowercase at proper heights)
+- ✅ Descenders (g, p, q, y) drop below baseline correctly
+- ✅ Letters right-side up
+- ✅ All characters visible and correctly positioned
+
+---
+
+### Current Implementation Status (2025-10-28)
+
+**What Works** ✅:
+- ✅ Batched MSDF text rendering (multiple characters per draw call)
+- ✅ MSDF distance field algorithm (median + smoothstep)
+- ✅ Texture sampling and UV mapping
+- ✅ Baseline alignment with proper yOffset application
+- ✅ Character orientation (right-side up)
+- ✅ Tint/color support
+- ✅ Text layout (positioning, kerning, advance)
+- ✅ Text alignment (left, center, right)
+- ✅ Multiple font sizes
+- ✅ Basic positioning (x, y translation)
+
+**What Doesn't Work** ❌:
+- ❌ Rotation (transform matrix uses identity, no rotation support)
+- ❌ Scale (transform matrix uses identity, no scale support)
+- ❌ Camera transforms (scroll, zoom, rotation not applied)
+- ❌ Parent container transforms (not inherited from parent)
+
+**Current Workaround**:
+- Using simple identity matrix with only translation in `MSDFTextWebGLRenderer.js`:
+```javascript
+const calcMatrix = {
+    a: 1,   // scaleX
+    b: 0,   // rotation
+    c: 0,   // rotation
+    d: 1,   // scaleY
+    e: src.x,  // translateX
+    f: src.y   // translateY
+};
+```
+- This bypasses `GetCalcMatrix()` which was producing NaN values
 
 ---
 
@@ -515,79 +630,88 @@ GetCalcMatrix combines all of this into one matrix so vertices are correctly pos
 
 ---
 
-## Remaining Issues
+## Remaining Issues (Updated 2025-10-28)
 
-### Issue 1: Vertical Flip ⚠️
-**Symptom**: Text appears upside-down
-**Cause**: Y-axis orientation mismatch
-- Phaser uses screen space: Y+ = down (0 at top, 600 at bottom)
-- OpenGL uses clip space: Y+ = up (-1 at bottom, +1 at top)
-- Transform may need Y-axis flip
+### ✅ RESOLVED: Vertical Flip & Baseline Alignment
+**Status**: Fixed in 2025-10-28 session
+- Removed Y-flip from transform matrix (changed `d: -1` to `d: 1`)
+- Swapped UV coordinates (v0 ↔ v1) in `MSDFTextBatched.ts`
+- Text now renders correctly with proper baseline alignment
 
-**Fix Options**:
-1. Flip calcMatrix.d to -1 (flip Y scale)
-2. Flip in shader: `gl_Position.y *= -1.0`
-3. Check if projection matrix already handles this
+### ✅ RESOLVED: Character Orientation
+**Status**: Fixed in 2025-10-28 session
+- UV coordinate swap fixed upside-down letters
+- All characters now render right-side up
 
-### Issue 2: Some Characters Look Weird ⚠️
-**Possible Causes**:
-- UV coordinates still incorrect for some glyphs
-- Vertex order still wrong for certain cases
-- Tint values corrupting some characters
-- Need to check actual rendered output vs expected
+### ⚠️ REMAINING: Full Transform Support
+**Status**: Not yet implemented
+
+**Missing Features**:
+- Rotation (identity matrix only supports translation)
+- Scale (no scale transform applied)
+- Camera transforms (scroll, zoom, rotation ignored)
+- Parent container transforms (not inherited)
+
+**Root Cause**: `GetCalcMatrix()` produces NaN values, so using identity matrix bypass
 
 ---
 
-## Next Steps to Complete Batched MSDF
+## Next Steps to Complete Batched MSDF (Updated 2025-10-28)
 
-### Priority 1: Fix Vertical Flip (5 minutes)
-Test which fix works:
-```javascript
-// Option A: Flip Y scale in calcMatrix
-const calcMatrix = {
-    a: 1,
-    b: 0,
-    c: 0,
-    d: -1,  // Negative Y scale
-    e: src.x,
-    f: src.y
-};
-```
-
-### Priority 2: Investigate GetCalcMatrix NaN (15 minutes)
-**Goal**: Understand WHY GetCalcMatrix produces NaN
+### Priority 1: Investigate GetCalcMatrix NaN (20 minutes) [NEXT SESSION]
+**Goal**: Understand WHY GetCalcMatrix produces NaN and restore full transform support
 
 **Steps**:
 1. Read Phaser source: `node_modules/phaser/src/gameobjects/GetCalcMatrix.js`
 2. Find which property access returns `undefined`
-3. Add all missing properties to MSDFTextBatched
+3. Add all missing properties to `MSDFTextBatched`:
+   - `scaleX`, `scaleY` (scale transform)
+   - `rotation` (rotation transform)
+   - `originX`, `originY` (origin calculation)
+   - `displayOriginX`, `displayOriginY` (display origin)
+   - `width`, `height` (bounding box for origin offset)
 4. Re-enable GetCalcMatrix for full transform support
+5. Test rotation, scale, camera transforms
+6. Test with parent Containers
 
 **Likely culprits**:
 - Accessing `src.displayOriginX/Y` instead of `src.originX/Y`
 - Accessing `src.scaleX/Y` but expecting getter functions
 - Checking for transform component that doesn't exist
 
-### Priority 3: Fix Character Rendering Issues (10 minutes)
-1. Take screenshot of rendered text
-2. Compare with expected text
-3. Identify which characters look wrong
-4. Check if pattern (specific glyphs, or all)
-5. Debug UV or vertex issues for those cases
+**Expected Result**: Full transform support including rotation, scale, camera, and parent transforms
 
-### Priority 4: Restore Full Transform Support (20 minutes)
-Once GetCalcMatrix works:
-1. Remove temporary identity matrix hack
-2. Test rotation, scale, camera transforms
-3. Test with parent Containers
-4. Verify all features work
+---
 
-### Priority 5: Restore Original MSDFBatchHandler (10 minutes)
-Currently using SimpleBatchHandler as MSDFBatchHandler. Should:
-1. Compare broken MSDFBatchHandler.js.BROKEN with working SimpleBatchHandler
-2. Apply any missing fixes (uMainSampler uniform, etc.)
-3. Test original implementation works
-4. Delete .BROKEN backup
+### Priority 2: Performance Testing (10 minutes) [OPTIONAL]
+**Goal**: Verify batching performance improvement
+
+**Steps**:
+1. Create test scene with 100+ characters
+2. Compare draw calls: batched vs non-batched
+3. Measure FPS improvement
+4. Document performance gains
+
+**Expected Result**: Single draw call per text object (vs N draw calls for N characters)
+
+---
+
+### Priority 3: Code Cleanup (15 minutes) [OPTIONAL]
+**Goal**: Remove debug logging and temporary files
+
+**Steps**:
+1. Remove console.log statements from:
+   - `MSDFTextWebGLRenderer.js`
+   - `BatchMSDFChar.js`
+   - `MSDFTextBatched.ts`
+   - `SimpleBatchHandler.js`
+2. Consider keeping or removing debug files:
+   - `src/debug/SimpleBatchHandler.js` (useful reference)
+   - `src/debug/SimpleQuad.ts` (useful for testing)
+   - `examples/phase*.ts` (document the debugging approach)
+3. Update comments to reflect final implementation
+
+**Expected Result**: Clean, production-ready code
 
 ---
 
@@ -627,6 +751,24 @@ Adding one `console.log(calcMatrix)` immediately revealed the NaN issue. Without
 
 ### 5. Sometimes the Simplest Fix Is Best
 Bypassing GetCalcMatrix with identity matrix got us 95% of the way there in 2 minutes. Perfect is the enemy of good - ship the simple fix, iterate later.
+
+### 6. Understand Coordinate System Differences (2025-10-28)
+Different rendering paths may require different coordinate handling:
+- Non-batched `MSDFText` uses Phaser's Shader GameObject (auto-handles transforms)
+- Batched `MSDFTextBatched` uses manual transforms (needs different UV handling)
+- Same font data requires different processing depending on rendering path
+
+### 7. Test Incrementally with Each Fix (2025-10-28)
+When fixing coordinate issues:
+- First fix revealed new issue (baseline correct, but letters upside-down)
+- This is expected - coordinate transforms interact in complex ways
+- Each fix should be tested independently before applying the next
+
+### 8. Swap vs Arithmetic Operations (2025-10-28)
+When flipping texture coordinates:
+- ✅ **Swap**: `v0 ↔ v1` keeps same texture region, flips orientation
+- ❌ **Arithmetic**: `1 - v` selects different texture region entirely
+- Swapping is almost always the correct choice for orientation fixes
 
 ---
 

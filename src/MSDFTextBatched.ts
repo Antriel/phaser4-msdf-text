@@ -385,15 +385,17 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
             }
 
             // Store character layout data (no GameObject creation!)
+            // NOTE: UV coordinates in MSDFFont are pre-flipped for Phaser's Shader GameObject.
+            // For batched rendering we need to swap v0 and v1 to correct the orientation.
             this._characters.push({
                 x: charX,
                 y: charY,
                 w: charWidth,
                 h: charHeight,
                 u0: char.u0,
-                v0: char.v0,
+                v0: char.v1,  // Swap v0 and v1 to flip orientation
                 u1: char.u1,
-                v1: char.v1
+                v1: char.v0   // Swap v0 and v1 to flip orientation
             });
 
             // Advance cursor

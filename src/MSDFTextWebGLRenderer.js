@@ -69,11 +69,11 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
         a: 1,   // scaleX
         b: 0,   // rotation
         c: 0,   // rotation
-        d: -1,  // scaleY (NEGATIVE to flip Y-axis for Phaser's coordinate system)
+        d: 1,   // scaleY (NO FLIP - yOffset already applied in text layout)
         e: src.x,  // translateX
         f: src.y   // translateY
     };
-    console.log('[MSDFTextWebGLRenderer] Using simple transform (with Y-flip):', calcMatrix);
+    console.log('[MSDFTextWebGLRenderer] Using simple identity transform:', calcMatrix);
 
     // Setup MSDF-specific parameters on batch handler
     if (batchHandler.setPxRange) {
