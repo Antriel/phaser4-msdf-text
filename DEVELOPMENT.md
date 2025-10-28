@@ -291,5 +291,6 @@ Potential improvements for Phase 3:
 ## Resources
 
 - [Phaser 4 Shader Guide](./Phaser%204%20Shader%20Guide.md)
-- [Implementation Plan](./MSDF-Font-Implementation-Plan.md)
+- [Phase 4 Migration Guide](./PHASE-4-MIGRATION-GUIDE.md)
+- [Archived Working Documents](./docs/archive/)
 - [Ceramic Reference](https://github.com/ceramic-engine/ceramic)

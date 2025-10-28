@@ -13,6 +13,7 @@ import Phaser from 'phaser';
 import { loadMSDFFont, getMSDFFont } from '../src/MSDFLoader';
 import { MSDFText } from '../src/MSDFTextBatched';  // NEW batched version
 import { registerMSDFBatchHandler } from '../src/registerMSDFBatchHandler';
+import * as SPECTOR from "phaser3spectorjs";
 
 class BatchedTestScene extends Phaser.Scene {
   private text1?: MSDFText;
@@ -135,6 +136,13 @@ const config: Phaser.Types.Core.GameConfig = {
   scale: {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
+  },
+  callbacks: {
+    postBoot: (game) => {
+      // Initialize Spector.js for WebGL debugging
+      const spector = new SPECTOR.Spector();
+      spector.displayUI();
+    },
   },
 };
 

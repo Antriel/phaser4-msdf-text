@@ -269,9 +269,9 @@ After migrating to batched rendering:
 ## Questions?
 
 Check the documentation:
-- `MSDF-Batching-Design.md` - Architecture details
-- `MSDF-Text-Refactor-Plan.md` - Implementation details
-- `README.md` - General usage
+- `docs/archive/MSDF-Batching-Design.md` - Architecture details
+- `docs/archive/MSDF-Text-Refactor-Plan.md` - Implementation details
+- `README.md` - General usage and API reference
 
 ## Summary
 

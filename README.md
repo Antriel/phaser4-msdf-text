@@ -42,16 +42,20 @@ High-quality scalable text rendering for Phaser 4 using Multi-channel Signed Dis
 - Word wrapping and text flow
 - Rich text (inline colors/formatting)
 - Text effects (shadow, outline, gradient)
-
-See [MSDF-Font-Implementation-Plan.md](MSDF-Font-Implementation-Plan.md) for detailed progress.
+- Phaser Loader integration (this.load.msdfFont())
 
 ## 📁 Project Structure
 
 ```
 phaser4-msdf-font/
-├── CLAUDE.md                          # Project context and architecture notes
-├── MSDF-Font-Implementation-Plan.md   # Detailed implementation plan and progress
 ├── README.md                          # This file
+├── CLAUDE.md                          # Project context and architecture notes
+├── DEVELOPMENT.md                     # Development workflow
+├── FONTS.md                           # Font generation guide
+├── PHASE-4-MIGRATION-GUIDE.md         # Migration guide for batched rendering
+├── Phaser 4 Shader Guide.md           # Phaser 4 shader reference
+├── docs/
+│   └── archive/                       # Archived working documents
 ├── ceramic/                           # Git submodule - Ceramic engine reference
 │   └── git/msdf-atlas-gen-binary/    # Font generation tools
 ├── shaders/
@@ -62,10 +66,12 @@ phaser4-msdf-font/
 │   ├── MSDFShader.ts                 # TypeScript helpers for MSDF shaders
 │   ├── MSDFFontParser.ts             # JSON parser for msdf-atlas-gen format
 │   ├── MSDFFont.ts                   # Font data management class
-│   ├── MSDFText.ts                   # Text rendering GameObject
-│   └── MSDFLoader.ts                 # Simplified loader API (NEW!)
+│   ├── MSDFText.ts                   # Text rendering GameObject (Phase 3)
+│   ├── MSDFTextBatched.ts            # Batched text rendering (Phase 4)
+│   └── MSDFLoader.ts                 # Simplified loader API
 └── examples/
-    ├── loader-test.ts                # New loader API example
+    ├── batched-test.ts               # Batched rendering example
+    ├── loader-test.ts                # Loader API example
     └── msdf-text-test.ts             # Full text rendering example
 ```
 
@@ -345,8 +351,11 @@ Based on the [Ceramic Engine](https://github.com/ceramic-engine/ceramic) (MIT li
 
 ## 📖 Documentation
 
+- **[README.md](README.md)** - This file - main documentation and API reference
 - **[CLAUDE.md](CLAUDE.md)** - High-level project context and architecture
-- **[MSDF-Font-Implementation-Plan.md](MSDF-Font-Implementation-Plan.md)** - Detailed implementation guide
+- **[DEVELOPMENT.md](DEVELOPMENT.md)** - Development workflow and testing
+- **[FONTS.md](FONTS.md)** - Font generation guide
+- **[PHASE-4-MIGRATION-GUIDE.md](PHASE-4-MIGRATION-GUIDE.md)** - Migration guide from Phase 3 to Phase 4
 - **[Phaser 4 Shader Guide.md](Phaser%204%20Shader%20Guide.md)** - Phaser 4 shader system documentation
 
 ## 🗺️ Roadmap
