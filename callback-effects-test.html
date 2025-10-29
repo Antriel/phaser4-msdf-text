@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MSDF Callback Effects Test - Phase 5.2</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #0a0a0a;
+            font-family: Arial, sans-serif;
+            color: #ffffff;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 15px;
+            border-radius: 5px;
+            max-width: 300px;
+            font-size: 12px;
+            line-height: 1.5;
+            border: 1px solid #00ff00;
+        }
+        #info h3 {
+            margin-top: 0;
+            color: #00ff00;
+            text-shadow: 0 0 10px #00ff00;
+        }
+        #info code {
+            background: #1a1a1a;
+            padding: 2px 4px;
+            border-radius: 3px;
+            color: #ffff00;
+        }
+        #info ul {
+            margin: 5px 0;
+            padding-left: 20px;
+        }
+        #info li {
+            margin: 3px 0;
+        }
+        #game-container {
+            box-shadow: 0 0 30px rgba(0, 255, 0, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <h3>Phase 5.2: Display Callbacks</h3>
+        <p><strong>Effects Demonstrated:</strong></p>
+        <ul>
+            <li><code>Wave</code> - Sine wave motion</li>
+            <li><code>Rainbow</code> - Color gradient</li>
+            <li><code>Breathing</code> - Scale pulsing</li>
+            <li><code>Jiggle</code> - Random offsets</li>
+            <li><code>Spinning</code> - Rotation</li>
+            <li><code>Combined</code> - All effects!</li>
+        </ul>
+        <p><strong>Performance:</strong></p>
+        <ul>
+            <li>Callbacks run per-frame</li>
+            <li>Still using batched rendering</li>
+            <li>Smooth 60 FPS expected</li>
+        </ul>
+    </div>
+    <div id="game-container"></div>
+    <script type="module" src="/examples/callback-effects-test.ts"></script>
+</body>
+</html>

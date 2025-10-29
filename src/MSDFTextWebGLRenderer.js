@@ -22,6 +22,25 @@ const tempTintData = {
 };
 
 /**
+ * Temporary character data object for callbacks (reused to avoid allocations)
+ */
+const tempCharData = {
+    x: 0,
+    y: 0,
+    w: 0,
+    h: 0,
+    u0: 0,
+    v0: 0,
+    u1: 0,
+    v1: 0
+};
+
+/**
+ * Temporary matrix for per-character transforms (reused to avoid allocations)
+ */
+const tempCharMatrix = new Phaser.GameObjects.Components.TransformMatrix();
+
+/**
  * Render MSDF Text to WebGL
  *
  * @param {Phaser.Renderer.WebGL.WebGLRenderer} renderer - The WebGL renderer
@@ -90,6 +109,9 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
     tempTintData.tintBottomLeft = tintValue;
     tempTintData.tintBottomRight = tintValue;
 
+    // Check if we have a display callback
+    const hasCallback = src.displayCallback && typeof src.displayCallback === 'function';
+
     // Batch all characters
     let batchedCount = 0;
     for (let i = 0; i < characterCount; i++) {
@@ -100,14 +122,112 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
             continue;
         }
 
+        // Prepare character data for rendering
+        let charData = char;
+        let charMatrix = calcMatrix;
+        let charTint = tempTintData;
+
+        // Invoke display callback if present
+        if (hasCallback) {
+            // Populate callback data
+            const callbackData = src.callbackData;
+            callbackData.index = i;
+            callbackData.charCode = char.charCode || 0;
+            const originalX = char.originalX !== undefined ? char.originalX : char.x;
+            const originalY = char.originalY !== undefined ? char.originalY : char.y;
+            callbackData.x = originalX;
+            callbackData.y = originalY;
+            callbackData.scale = char.scale || 1;
+            callbackData.rotation = char.rotation || 0;
+            callbackData.data = char.data;
+
+            // Set default tint values
+            callbackData.tint.topLeft = tintValue;
+            callbackData.tint.topRight = tintValue;
+            callbackData.tint.bottomLeft = tintValue;
+            callbackData.tint.bottomRight = tintValue;
+
+            // Invoke callback
+            const result = src.displayCallback(callbackData);
+
+            // Apply callback modifications
+            if (result) {
+                // Check if position, scale, or rotation changed (compare to ORIGINAL values)
+                const posChanged = result.x !== originalX || result.y !== originalY;
+                const scaleChanged = result.scale !== 1;
+                const rotationChanged = result.rotation !== 0;
+
+                if (posChanged || scaleChanged || rotationChanged) {
+                    // Copy character data
+                    tempCharData.w = char.w;
+                    tempCharData.h = char.h;
+                    tempCharData.u0 = char.u0;
+                    tempCharData.v0 = char.v0;
+                    tempCharData.u1 = char.u1;
+                    tempCharData.v1 = char.v1;
+
+                    // Apply scale and rotation via matrix
+                    if (scaleChanged || rotationChanged) {
+                        // Calculate character center offset
+                        const centerX = char.w / 2;
+                        const centerY = char.h / 2;
+
+                        // Start with parent transform
+                        tempCharMatrix.copyFrom(calcMatrix);
+
+                        // Translate to character position + center
+                        tempCharMatrix.translate(result.x + centerX, result.y + centerY);
+
+                        // Apply rotation (around center)
+                        if (rotationChanged) {
+                            tempCharMatrix.rotate(result.rotation);
+                        }
+
+                        // Apply scale (from center)
+                        if (scaleChanged) {
+                            tempCharMatrix.scale(result.scale, result.scale);
+                        }
+
+                        charMatrix = tempCharMatrix;
+
+                        // Offset character quad so it draws centered on the transform
+                        tempCharData.x = -centerX;
+                        tempCharData.y = -centerY;
+                    } else {
+                        // Just position change, update directly
+                        tempCharData.x = result.x;
+                        tempCharData.y = result.y;
+                    }
+
+                    charData = tempCharData;
+                }
+
+                // Apply per-character tint if modified
+                const tintChanged =
+                    result.tint.topLeft !== tintValue ||
+                    result.tint.topRight !== tintValue ||
+                    result.tint.bottomLeft !== tintValue ||
+                    result.tint.bottomRight !== tintValue;
+
+                if (tintChanged) {
+                    charTint = {
+                        tintTopLeft: result.tint.topLeft,
+                        tintTopRight: result.tint.topRight,
+                        tintBottomLeft: result.tint.bottomLeft,
+                        tintBottomRight: result.tint.bottomRight
+                    };
+                }
+            }
+        }
+
         // Batch this character
         BatchMSDFChar(
             drawingContext,
             batchHandler,
             texture,
-            char,
-            calcMatrix,
-            tempTintData
+            charData,
+            charMatrix,
+            charTint
         );
         batchedCount++;
     }

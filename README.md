@@ -37,12 +37,25 @@ High-quality scalable text rendering for Phaser 4 using Multi-channel Signed Dis
 - ✅ 100% API compatibility with Phase 3
 - ✅ MSDFTextBatched GameObject
 
-**Phase 5: Advanced Features** - 🚧 Next
+**Phase 5: Advanced Features** - 🚧 **IN PROGRESS**
 
-- Word wrapping and text flow
-- Rich text (inline colors/formatting)
-- Text effects (shadow, outline, gradient)
-- Phaser Loader integration (this.load.msdfFont())
+- ✅ **Phase 5.1: Word Wrapping** - COMPLETE!
+  - Automatic word wrapping with `setMaxWidth()`
+  - Configurable wrap character
+  - Detailed text bounds with line information
+- ✅ **Phase 5.2: Per-Letter Callbacks** - COMPLETE!
+  - Display callbacks for per-character effects
+  - Dynamic position, scale, rotation, and tint
+  - Wave, rainbow, breathing, jiggle, and spin effects
+- 🚧 **Phase 5.3: Multi-Color Text** - Next
+  - Per-character color arrays
+  - Integration with callback system
+- 🚧 **Phase 5.4: Text Effects** - Planned
+  - Shadow effects (two-pass rendering)
+  - Shader-based outline
+  - Gradient effects via callbacks
+- 🚧 **Phase 5.5: Character Queries** - Planned
+  - Hit testing and character position queries
 
 ## 📁 Project Structure
 
@@ -90,7 +103,9 @@ npm run dev
 The dev server will open at http://localhost:3000 with the MSDF shader test scene.
 
 **Test the complete system:**
-- http://localhost:3000/batched-test.html - **NEW!** Phase 4 batched rendering (best performance)
+- http://localhost:3000/batched-test.html - Phase 4 batched rendering (best performance)
+- http://localhost:3000/word-wrap-test.html - **NEW!** Phase 5.1 word wrapping
+- http://localhost:3000/callback-effects-test.html - **NEW!** Phase 5.2 display callbacks
 - http://localhost:3000/loader-test.html - Phase 3 simplified loader API
 - http://localhost:3000/test-msdf-text.html - Phase 2 full text rendering demo
 
@@ -295,6 +310,143 @@ debugMSDFFonts(this);
 //   roboto: Font: Roboto | Base Size: 48px | ...
 ```
 
+## 🎨 Phase 5 API Reference
+
+### Word Wrapping (Phase 5.1)
+
+#### `setMaxWidth(width: number): this`
+
+Enable automatic word wrapping at specified width.
+
+```typescript
+const text = new MSDFText(this, 100, 100, font, 'Long text here...', 24);
+text.setMaxWidth(400); // Wrap at 400 pixels
+```
+
+#### `setWordWrapCharCode(charCode: number): this`
+
+Set the character to wrap on (default: 32 for space).
+
+```typescript
+text.setWordWrapCharCode(32); // Space
+text.setWordWrapCharCode(45); // Hyphen
+```
+
+#### `getTextBounds(): BoundsData`
+
+Get detailed text bounds including line information.
+
+```typescript
+const bounds = text.getTextBounds();
+console.log(bounds.width, bounds.height);
+console.log(bounds.lines.count);        // Number of lines
+console.log(bounds.lines.lengths);      // Width of each line
+console.log(bounds.lines.shortest);     // Shortest line width
+console.log(bounds.lines.longest);      // Longest line width
+```
+
+### Display Callbacks (Phase 5.2)
+
+#### `setDisplayCallback(callback: DisplayCallback): this`
+
+Set a per-character callback for dynamic effects.
+
+**Callback Signature:**
+```typescript
+type DisplayCallback = (data: DisplayCallbackData) => DisplayCallbackData;
+
+interface DisplayCallbackData {
+    parent: MSDFText;    // Reference to text object
+    index: number;       // Character index
+    charCode: number;    // Character code
+    x: number;           // Position (modifiable)
+    y: number;
+    scale: number;       // Scale (modifiable)
+    rotation: number;    // Rotation in radians (modifiable)
+    tint: {              // Per-corner tint (modifiable)
+        topLeft: number;
+        topRight: number;
+        bottomLeft: number;
+        bottomRight: number;
+    };
+    data: any;           // Custom user data
+}
+```
+
+**Examples:**
+
+**Wave Effect:**
+```typescript
+text.setDisplayCallback((data) => {
+    data.y += Math.sin(data.index * 0.5 + time * 0.003) * 15;
+    return data;
+});
+```
+
+**Rainbow Colors:**
+```typescript
+text.setDisplayCallback((data) => {
+    const hue = (data.index * 30 + time * 0.1) % 360;
+    const color = Phaser.Display.Color.HSVToRGB(hue / 360, 1, 1);
+    const tintValue = (255 << 24) | (color.b << 16) | (color.g << 8) | color.r;
+    data.tint.topLeft = tintValue;
+    data.tint.topRight = tintValue;
+    data.tint.bottomLeft = tintValue;
+    data.tint.bottomRight = tintValue;
+    return data;
+});
+```
+
+**Breathing/Pulsing:**
+```typescript
+text.setDisplayCallback((data) => {
+    data.scale = 1 + Math.sin(data.index * 0.2 + time * 0.002) * 0.3;
+    return data;
+});
+```
+
+**Rotation:**
+```typescript
+text.setDisplayCallback((data) => {
+    data.rotation = time * 0.002 + data.index * 0.2;
+    return data;
+});
+```
+
+**Combined Effects:**
+```typescript
+text.setDisplayCallback((data) => {
+    // Wave + rainbow + scale
+    data.y += Math.sin(data.index * 0.4 + time * 0.004) * 20;
+
+    const hue = (data.index * 25 + time * 0.15) % 360;
+    const color = Phaser.Display.Color.HSVToRGB(hue / 360, 1, 1);
+    const tintValue = (255 << 24) | (color.b << 16) | (color.g << 8) | color.r;
+    data.tint.topLeft = tintValue;
+    data.tint.topRight = tintValue;
+    data.tint.bottomLeft = tintValue;
+    data.tint.bottomRight = tintValue;
+
+    data.scale = 1 + Math.sin(data.index * 0.15 + time * 0.003) * 0.2;
+
+    return data;
+});
+```
+
+#### `clearDisplayCallback(): this`
+
+Remove the display callback.
+
+```typescript
+text.clearDisplayCallback();
+```
+
+**Performance Notes:**
+- Callbacks are invoked every frame during rendering
+- Keep callbacks fast and efficient
+- Still uses batched rendering (1-2 draw calls)
+- Objects are reused to avoid allocations
+
 ## 🛠️ Shader Details
 
 ### Fragment Shader (`MSDFFont.frag`)
@@ -452,6 +604,14 @@ This project is inspired by the MIT-licensed [Ceramic Engine](https://github.com
 - **Automatic parsing**: Lazy parsing on first `getMSDFFont()` call reduces preload overhead
 - **Clean API**: Two-function API (`loadMSDFFont` + `getMSDFFont`) covers 95% of use cases
 
+### Phase 5 Discoveries:
+- **Word wrapping algorithm**: Split by existing newlines, build words, measure with kerning, wrap when exceeding maxWidth
+- **Callback-based effects**: Per-character callbacks enable unlimited creative effects without API bloat
+- **Transform pivot handling**: Characters rotate/scale around their center by offsetting the quad and positioning the matrix at center
+- **Matrix composition order**: Must `copyFrom(parent)` then apply character transforms to maintain proper hierarchy
+- **Object reuse pattern**: Reusing `callbackData` and temp objects eliminates per-frame allocations for smooth 60 FPS
+- **Reference comparison bug**: Callbacks modify and return same object - must store original values before invoking callback
+
 ### What's Working:
 ✅ JSON parser (msdf-atlas-gen format)
 ✅ MSDFFont class (data management, measurements, kerning)
@@ -463,4 +623,6 @@ This project is inspired by the MIT-licensed [Ceramic Engine](https://github.com
 ✅ Automatic caching and parsing
 ✅ **Batched rendering** (MSDFTextBatched with 5-10x performance boost)
 ✅ Custom BatchHandler and RenderNode integration
+✅ **Word wrapping** (Phase 5.1: automatic text flow with detailed bounds)
+✅ **Display callbacks** (Phase 5.2: wave, rainbow, breathing, rotation, jiggle effects)
 ✅ Test scenes demonstrating all features

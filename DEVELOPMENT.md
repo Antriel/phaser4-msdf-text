@@ -103,10 +103,30 @@ npm run preview
 - Multiple font sizes and colors
 - Working test scenes
 
-🎯 **Next Phase:**
-- Phaser loader integration
-- Batching optimization (RenderNodes)
-- Advanced text features (wrapping, effects)
+✅ **Phase 3 COMPLETE:**
+- Simplified loader API (`loadMSDFFont()` and `getMSDFFont()`)
+- Automatic JSON + PNG loading
+- Font caching and parsing
+
+✅ **Phase 4 COMPLETE:**
+- Custom MSDFBatchHandler for batched rendering
+- 5-10x performance improvement (1-2 draw calls per text)
+- MSDFTextBatched GameObject
+
+✅ **Phase 5.1 COMPLETE: Word Wrapping**
+- Automatic word wrapping with `setMaxWidth()`
+- Detailed text bounds with line information
+- Test: http://localhost:3000/word-wrap-test.html
+
+✅ **Phase 5.2 COMPLETE: Display Callbacks**
+- Per-character callbacks for dynamic effects
+- Wave, rainbow, breathing, rotation, jiggle effects
+- Test: http://localhost:3000/callback-effects-test.html
+
+🎯 **Next Phase: Phase 5.3-5.5**
+- Multi-color text (per-character color arrays)
+- Text effects (shadow, shader-based outline)
+- Character queries and hit testing
 
 ### Generating Test Font
 
@@ -262,25 +282,224 @@ class MyScene extends Phaser.Scene {
 - **Automatic kerning**: Built into layout engine
 - **Scalable**: Sharp rendering at any font size
 
-## Next Steps
+## Testing Phase 5 Features
 
-Potential improvements for Phase 3:
+### Phase 5.1: Word Wrapping
 
-1. **Phaser Loader Integration**
-   - Custom loader: `this.load.msdfFont('arial', ...)`
-   - Automatic JSON + PNG loading
-   - Cache integration
+**Test Page:** http://localhost:3000/word-wrap-test.html
 
-2. **Batching Optimization**
-   - RenderNodes (Submitter, Texturer, Transformer)
-   - Single draw call for all characters
-   - Improved performance for large text blocks
+**Features to Test:**
+1. **Basic Wrapping**: Long text automatically wraps at maxWidth boundary
+2. **Dynamic maxWidth**: Use UP/DOWN arrow keys to adjust wrap width
+3. **Alignment Support**: Wrapping works with left, center, and right alignment
+4. **Existing Newlines**: Manual `\n` characters are preserved
+5. **Bounds Information**: Check console for detailed line data
 
-3. **Advanced Features**
-   - Word wrapping
-   - Multi-color text (inline color tags)
-   - Text effects (shadow, outline, gradient)
-   - Rich text formatting
+**API:**
+```typescript
+text.setMaxWidth(400);              // Enable wrapping at 400px
+text.setWordWrapCharCode(32);       // Wrap on space (default)
+const bounds = text.getTextBounds(); // Get line information
+```
+
+**Expected Behavior:**
+- Text should reflow smoothly as maxWidth changes
+- FPS should remain 60 (wrapping only recalculates when text/width changes)
+- Bounds data should accurately reflect line counts and widths
+
+### Phase 5.2: Display Callbacks
+
+**Test Page:** http://localhost:3000/callback-effects-test.html
+
+**Features to Test:**
+1. **Wave Effect**: Characters move in vertical sine wave
+2. **Rainbow Colors**: Gradient color animation across characters
+3. **Breathing Effect**: Characters pulse in scale
+4. **Jiggle Effect**: Smooth random position offsets
+5. **Rotation Effect**: Characters spin around their centers
+6. **Combined Effects**: Multiple effects working together
+
+**API:**
+```typescript
+text.setDisplayCallback((data) => {
+    // Modify per-character properties
+    data.y += Math.sin(data.index * 0.5 + time * 0.003) * 15;
+    data.scale = 1.2;
+    data.rotation = Math.PI / 4;
+    data.tint.topLeft = 0xFFFF00FF;  // ABGR format
+    return data;
+});
+
+text.clearDisplayCallback();  // Remove callback
+```
+
+**Expected Behavior:**
+- All effects should animate smoothly at 60 FPS
+- Characters should rotate around their center points (not top-left)
+- Position offsets should work independently and combined with rotation/scale
+- Rainbow colors should cycle continuously
+- Batched rendering should still work (1-2 draw calls per text object)
+
+**Performance Testing:**
+- Open browser DevTools Performance tab
+- Record for 5 seconds while effects are running
+- Check for:
+  - Consistent 16.67ms frame time (60 FPS)
+  - No memory leaks (memory should stabilize)
+  - Minimal garbage collection (objects are reused)
+
+**Debug Tips:**
+```typescript
+// Check callback is being invoked
+text.setDisplayCallback((data) => {
+    console.log(`Character ${data.index}: ${String.fromCharCode(data.charCode)}`);
+    return data;
+});
+
+// Test transform matrix application
+text.setDisplayCallback((data) => {
+    if (data.index === 0) {
+        console.log('First char position:', data.x, data.y);
+        console.log('Rotation:', data.rotation);
+    }
+    data.rotation = 0.5;  // 45 degrees should rotate around center
+    return data;
+});
+```
+
+### Common Issues
+
+**Word Wrapping:**
+- **Issue**: Text doesn't wrap
+  - Check: Is `maxWidth` set? (0 = no wrapping)
+  - Check: Is text longer than maxWidth?
+- **Issue**: Wrapping at wrong points
+  - Check: `wordWrapCharCode` setting (32 = space)
+  - Check: Text contains wrap characters
+
+**Display Callbacks:**
+- **Issue**: Position changes don't work
+  - Fixed: Compare against original values (not callback data reference)
+- **Issue**: Rotation around wrong pivot
+  - Fixed: Matrix positioned at character center with quad offset
+- **Issue**: Low FPS with callbacks
+  - Check: Callback doing expensive operations?
+  - Check: Creating new objects in callback? (should reuse)
+- **Issue**: Tint not applying
+  - Check: Using ABGR format? `(A << 24) | (B << 16) | (G << 8) | R`
+  - Check: Setting all four corner values?
+
+## Next Steps (Phase 5.3-5.5)
+
+### Phase 5.3: Multi-Color Text (Next Session)
+
+**Goal**: Per-character color arrays for static multi-color text.
+
+**Implementation Plan:**
+1. Add `_characterColors?: number[]` property to MSDFTextBatched
+2. Add `setCharacterColors(colors: number[])` and `clearCharacterColors()` methods
+3. Modify MSDFTextWebGLRenderer to check `_characterColors[i]` for each character
+4. Priority: Callback tint > character colors > global tint
+5. Create `multi-color-test.ts` example with rainbow text, alternating colors, etc.
+
+**API Design:**
+```typescript
+// Static per-character colors
+const colors = text.getText().split('').map((_, i) => {
+    const hue = (i * 30) % 360;
+    const color = Phaser.Display.Color.HSVToRGB(hue / 360, 1, 1);
+    return (255 << 24) | (color.b << 16) | (color.g << 8) | color.r;
+});
+text.setCharacterColors(colors);
+
+// Callbacks can override for dynamic effects
+text.setDisplayCallback((data) => {
+    // This takes precedence over characterColors
+    data.tint.topLeft = 0xFFFFFFFF;
+    return data;
+});
+```
+
+### Phase 5.4: Text Effects (Shadow & Outline)
+
+**Goal**: Shadow and shader-based outline effects.
+
+**Shadow Implementation (Simple - Two Pass):**
+1. Add shadow properties: `_shadowOffset: {x, y}`, `_shadowColor`, `_shadowAlpha`
+2. Add `setShadow()` and `clearShadow()` methods
+3. Modify MSDFTextWebGLRenderer to render twice when shadow enabled:
+   - First pass: Shadow (offset + shadow color)
+   - Second pass: Main text (normal rendering)
+4. Cost: 2x draw calls (acceptable for shadow effect)
+
+**Outline Implementation (Complex - Shader Based):**
+1. Modify `shaders/msdf/MSDFFont.frag`:
+   - Add uniforms: `uOutlineThickness` (float), `uOutlineColor` (vec4)
+   - Dual-layer rendering: Inner text + outer outline in single pass
+   - Sample distance at text edge, create outline band
+2. Add outline properties to MSDFTextBatched
+3. Update MSDFShader.ts to include outline uniforms
+4. Modify MSDFTextWebGLRenderer to pass outline uniforms to batch handler
+5. Update batch handler to set outline uniforms on shader
+
+**Shader Outline Algorithm:**
+```glsl
+// In fragment shader
+float dist = median(msdfSample.r, msdfSample.g, msdfSample.b);
+float screenPxDistance = pxRange * (dist - 0.5);
+
+// Text layer
+float textAlpha = smoothstep(-0.5, 0.5, screenPxDistance);
+
+// Outline layer
+float outlineAlpha = 0.0;
+if (uOutlineThickness > 0.0) {
+    float outlineEdge = screenPxDistance + uOutlineThickness;
+    outlineAlpha = smoothstep(-0.5, 0.5, outlineEdge);
+}
+
+// Composite: outline behind text
+vec4 outlineColor = uOutlineColor * outlineAlpha;
+vec4 textColor = uTextColor * textAlpha;
+vec4 finalColor = mix(outlineColor, textColor, textAlpha);
+
+// Premultiply alpha
+gl_FragColor = vec4(finalColor.rgb * finalColor.a, finalColor.a);
+```
+
+### Phase 5.5: Character Queries & Hit Testing
+
+**Goal**: Query character positions and implement hit testing.
+
+**Implementation Plan:**
+1. Add query methods to MSDFTextBatched:
+   - `getCharacterAt(index: number): CharacterData | undefined`
+   - `getCharacterBounds(index: number): {x, y, w, h} | undefined`
+   - `getCharacterIndexAt(worldX: number, worldY: number): number`
+2. Implement hit testing with inverse transform
+3. Create `hit-testing-test.ts` example with:
+   - Click on character to highlight it
+   - Hover effects per character
+   - Character selection
+
+**Hit Testing Algorithm:**
+```typescript
+getCharacterIndexAt(worldX: number, worldY: number): number {
+    // Convert world to local coordinates (inverse transform)
+    const localX = worldX - this.x;
+    const localY = worldY - this.y;
+
+    // Check each character
+    for (let i = 0; i < this._characters.length; i++) {
+        const char = this._characters[i];
+        if (localX >= char.x && localX <= char.x + char.w &&
+            localY >= char.y && localY <= char.y + char.h) {
+            return i;
+        }
+    }
+    return -1;  // No character hit
+}
+```
 
 ## Scripts
 

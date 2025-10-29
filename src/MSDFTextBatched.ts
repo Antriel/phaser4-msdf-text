@@ -20,6 +20,36 @@ import MSDFTextWebGLRenderer from './MSDFTextWebGLRenderer.js';
 export type TextAlign = 'left' | 'center' | 'right';
 
 /**
+ * Per-corner tint data for display callbacks
+ */
+export interface DisplayCallbackTint {
+    topLeft: number;
+    topRight: number;
+    bottomLeft: number;
+    bottomRight: number;
+}
+
+/**
+ * Data passed to display callback for each character
+ */
+export interface DisplayCallbackData {
+    parent: MSDFText;      // Reference to the text object
+    index: number;         // Character index in the text string
+    charCode: number;      // Character code
+    x: number;             // Character X position (can be modified)
+    y: number;             // Character Y position (can be modified)
+    scale: number;         // Character scale (can be modified)
+    rotation: number;      // Character rotation in radians (can be modified)
+    tint: DisplayCallbackTint;  // Per-corner tint values (can be modified)
+    data: any;             // Custom user data
+}
+
+/**
+ * Display callback function signature
+ */
+export type DisplayCallback = (data: DisplayCallbackData) => DisplayCallbackData;
+
+/**
  * Character layout data
  */
 interface CharacterData {
@@ -31,6 +61,15 @@ interface CharacterData {
     v0: number;      // UV top
     u1: number;      // UV right
     v1: number;      // UV bottom
+
+    // Optional callback data
+    originalX?: number;     // Original X (before callback modifications)
+    originalY?: number;     // Original Y (before callback modifications)
+    scale?: number;         // Per-character scale
+    rotation?: number;      // Per-character rotation
+    tint?: number;          // Per-character tint override
+    data?: any;             // Custom user data
+    charCode?: number;      // Character code (for callbacks)
 }
 
 /**
@@ -64,6 +103,10 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
     public _characters: CharacterData[] = [];
     private needsRebuild: boolean = true;
 
+    // Display callback (Phase 5.2)
+    public displayCallback?: DisplayCallback;
+    public callbackData: DisplayCallbackData;
+
     // Texture and rendering
     public _texture: any = null; // WebGLTextureWrapper
     public _pxRange: number = 4;
@@ -95,6 +138,24 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
         // Set position
         this.x = x;
         this.y = y;
+
+        // Initialize callback data (reused to avoid allocations)
+        this.callbackData = {
+            parent: this,
+            index: 0,
+            charCode: 0,
+            x: 0,
+            y: 0,
+            scale: 1,
+            rotation: 0,
+            tint: {
+                topLeft: 0xffffffff,
+                topRight: 0xffffffff,
+                bottomLeft: 0xffffffff,
+                bottomRight: 0xffffffff
+            },
+            data: undefined
+        };
 
         // Get texture wrapper from Phaser's texture cache
         const frame = scene.sys.textures.getFrame(font.textureKey);
@@ -306,6 +367,23 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
      */
     getWordWrapCharCode(): number {
         return this._wordWrapCharCode;
+    }
+
+    /**
+     * Set display callback for per-character effects
+     * @param callback Function called for each character during rendering
+     */
+    setDisplayCallback(callback: DisplayCallback | undefined): this {
+        this.displayCallback = callback;
+        return this;
+    }
+
+    /**
+     * Clear display callback
+     */
+    clearDisplayCallback(): this {
+        this.displayCallback = undefined;
+        return this;
     }
 
     // ========================================================================
@@ -533,7 +611,10 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
                 u0: char.u0,
                 v0: char.v1,  // Swap v0 and v1 to flip orientation
                 u1: char.u1,
-                v1: char.v0   // Swap v0 and v1 to flip orientation
+                v1: char.v0,   // Swap v0 and v1 to flip orientation
+                charCode: charCode,  // Store for callback access
+                originalX: charX,    // Store original position
+                originalY: charY
             });
 
             // Advance cursor
