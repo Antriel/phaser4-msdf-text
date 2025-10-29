@@ -83,6 +83,43 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
         batchHandler.setPxRange(src._pxRange || 4);
     }
 
+    // Setup outline parameters on batch handler
+    if (batchHandler.setOutline) {
+        if (src.hasOutline()) {
+            const outline = src._outlineColor;
+            const width = src._outlineWidth;
+
+            // Validate outline data
+            if (isNaN(width) || isNaN(outline.r) || isNaN(outline.g) || isNaN(outline.b) || isNaN(outline.a)) {
+                console.error('MSDFText: Invalid outline data (NaN detected)', {
+                    width,
+                    r: outline.r,
+                    g: outline.g,
+                    b: outline.b,
+                    a: outline.a
+                });
+                // Flush if settings changed
+                if (batchHandler.hasOutlineChanged && batchHandler.hasOutlineChanged(0, 0, 0, 0, 0)) {
+                    batchHandler.run(drawingContext);
+                }
+                batchHandler.setOutline(0, 0, 0, 0, 0);
+            } else {
+                // Flush batch if outline settings changed
+                if (batchHandler.hasOutlineChanged && batchHandler.hasOutlineChanged(width, outline.r, outline.g, outline.b, outline.a)) {
+                    batchHandler.run(drawingContext);
+                }
+
+                batchHandler.setOutline(width, outline.r, outline.g, outline.b, outline.a);
+            }
+        } else {
+            // Flush if settings changed
+            if (batchHandler.hasOutlineChanged && batchHandler.hasOutlineChanged(0, 0, 0, 0, 0)) {
+                batchHandler.run(drawingContext);
+            }
+            batchHandler.setOutline(0, 0, 0, 0, 0);
+        }
+    }
+
     // Combine text color and tint into final tint value
     // Text color comes from MSDFText (setColor/setColorHex)
     // GameObject tint/alpha comes from Phaser properties
@@ -111,6 +148,131 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
 
     // Check if we have a display callback
     const hasCallback = src.displayCallback && typeof src.displayCallback === 'function';
+
+    // ========================================================================
+    // SHADOW PASS - Render shadow first (behind text)
+    // ========================================================================
+    if (src.hasShadow()) {
+        const shadowOffset = src._shadowOffset;
+        const shadowColor = src._shadowColor;
+        const shadowAlpha = src._shadowAlpha;
+
+        // Calculate shadow tint (same format as main tint)
+        const shadowR = Math.floor(shadowColor.r * 255);
+        const shadowG = Math.floor(shadowColor.g * 255);
+        const shadowB = Math.floor(shadowColor.b * 255);
+        const shadowA = Math.floor(shadowAlpha * 255);
+        const shadowTintValue = (shadowA << 24) | (shadowB << 16) | (shadowG << 8) | shadowR;
+
+        const shadowTintData = {
+            tintTopLeft: shadowTintValue,
+            tintTopRight: shadowTintValue,
+            tintBottomLeft: shadowTintValue,
+            tintBottomRight: shadowTintValue
+        };
+
+        // Render each character as shadow
+        for (let i = 0; i < characterCount; i++) {
+            const char = characters[i];
+
+            // Skip zero-width characters
+            if (!char || char.w === 0 || char.h === 0) {
+                continue;
+            }
+
+            // Apply shadow offset to character position
+            tempCharData.x = char.x + shadowOffset.x;
+            tempCharData.y = char.y + shadowOffset.y;
+            tempCharData.w = char.w;
+            tempCharData.h = char.h;
+            tempCharData.u0 = char.u0;
+            tempCharData.v0 = char.v0;
+            tempCharData.u1 = char.u1;
+            tempCharData.v1 = char.v1;
+
+            let shadowCharData = tempCharData;
+            let shadowMatrix = calcMatrix;
+            let shadowTint = shadowTintData;
+
+            // Apply display callback to shadow if present
+            if (hasCallback) {
+                const callbackData = src.callbackData;
+                callbackData.index = i;
+                callbackData.charCode = char.charCode || 0;
+                const originalX = char.originalX !== undefined ? char.originalX : char.x;
+                const originalY = char.originalY !== undefined ? char.originalY : char.y;
+
+                // Apply shadow offset to callback position
+                callbackData.x = originalX + shadowOffset.x;
+                callbackData.y = originalY + shadowOffset.y;
+                callbackData.scale = char.scale || 1;
+                callbackData.rotation = char.rotation || 0;
+                callbackData.data = char.data;
+
+                // Use shadow tint by default
+                callbackData.tint.topLeft = shadowTintValue;
+                callbackData.tint.topRight = shadowTintValue;
+                callbackData.tint.bottomLeft = shadowTintValue;
+                callbackData.tint.bottomRight = shadowTintValue;
+
+                // Invoke callback
+                const result = src.displayCallback(callbackData);
+
+                // Check if position changed (compare against original + offset)
+                const posChanged = result.x !== (originalX + shadowOffset.x) || result.y !== (originalY + shadowOffset.y);
+                const scaleChanged = result.scale !== 1;
+                const rotationChanged = result.rotation !== 0;
+
+                // If transforms changed, apply via matrix
+                if (posChanged || scaleChanged || rotationChanged) {
+                    const centerX = char.w / 2;
+                    const centerY = char.h / 2;
+
+                    tempCharMatrix.copyFrom(calcMatrix);
+                    tempCharMatrix.translate(result.x + centerX, result.y + centerY);
+
+                    if (rotationChanged) {
+                        tempCharMatrix.rotate(result.rotation);
+                    }
+
+                    if (scaleChanged) {
+                        tempCharMatrix.scale(result.scale, result.scale);
+                    }
+
+                    shadowCharData = { ...tempCharData };
+                    shadowCharData.x = -centerX;
+                    shadowCharData.y = -centerY;
+                    shadowMatrix = tempCharMatrix;
+                } else if (posChanged) {
+                    shadowCharData = { ...tempCharData };
+                    shadowCharData.x = result.x;
+                    shadowCharData.y = result.y;
+                }
+
+                // Check if tint changed
+                const tintChanged = result.tint.topLeft !== shadowTintValue ||
+                                   result.tint.topRight !== shadowTintValue ||
+                                   result.tint.bottomLeft !== shadowTintValue ||
+                                   result.tint.bottomRight !== shadowTintValue;
+
+                if (tintChanged) {
+                    shadowTint = {
+                        tintTopLeft: result.tint.topLeft,
+                        tintTopRight: result.tint.topRight,
+                        tintBottomLeft: result.tint.bottomLeft,
+                        tintBottomRight: result.tint.bottomRight
+                    };
+                }
+            }
+
+            // Batch the shadow character
+            BatchMSDFChar(drawingContext, batchHandler, texture, shadowCharData, shadowMatrix, shadowTint);
+        }
+    }
+
+    // ========================================================================
+    // MAIN TEXT PASS - Render text on top of shadow
+    // ========================================================================
 
     // Batch all characters
     let batchedCount = 0;

@@ -38,6 +38,8 @@ const SimpleVertexShader = [
  * Uses median() to extract signed distance from RGB channels and smoothstep()
  * for anti-aliasing. Color comes from vertex tints (text color is pre-multiplied
  * into tints by the renderer).
+ *
+ * Supports outline rendering via uOutlineWidth and uOutlineColor uniforms.
  */
 const SimpleFragmentShader = [
     '#ifdef GL_FRAGMENT_PRECISION_HIGH',
@@ -48,6 +50,8 @@ const SimpleFragmentShader = [
     '',
     'uniform sampler2D uMainSampler;',
     'uniform float uPxRange;',
+    'uniform float uOutlineWidth;',
+    'uniform vec4 uOutlineColor;',
     '',
     'varying vec2 outTexCoord;',
     'varying vec4 outTint;',
@@ -66,14 +70,58 @@ const SimpleFragmentShader = [
     '    // Get median distance',
     '    float dist = median(textureSample.r, textureSample.g, textureSample.b);',
     '    ',
-    '    // Apply smoothstep for anti-aliasing',
-    '    float alpha = smoothstep(0.4, 0.6, dist);',
-    '    ',
-    '    // Use vertex tint (text color is already baked into tint in renderer)',
-    '    vec4 color = outTint;',
-    '    ',
-    '    // Output premultiplied alpha',
-    '    gl_FragColor = vec4(color.rgb * alpha, alpha * color.a);',
+    '    // Check if outline is enabled',
+    '    if (uOutlineWidth > 0.0)',
+    '    {',
+    '        // Calculate edges',
+    '        float outlineCalc = 0.5 - (uOutlineWidth / uPxRange);',
+    '        float outlineEdge = outlineCalc;',
+    '        float textEdge = 0.5;',
+    '        ',
+    '        // Smoothing based on pixel range for crisp edges',
+    '        float smoothing = 0.05;',
+    '        ',
+    '        // Alpha for text (inside textEdge)',
+    '        float textAlpha = smoothstep(textEdge - smoothing, textEdge + smoothing, dist);',
+    '        ',
+    '        // Outline alpha: only visible in the ring between outlineEdge and textEdge',
+    '        // Use 1-smoothstep to create a mask that is 1 outside outlineEdge, 0 inside',
+    '        float outsideOutline = smoothstep(outlineEdge - smoothing, outlineEdge + smoothing, dist);',
+    '        // And 0 inside text, 1 outside (inverted textAlpha)',
+    '        float outsideText = 1.0 - textAlpha;',
+    '        ',
+    '        // Fade out outline in far background (where dist approaches 0)',
+    '        // This prevents the "black square" artifact',
+    '        float backgroundFade = smoothstep(0.0, 0.2, dist);',
+    '        ',
+    '        // Outline is visible where: outside outline boundary AND outside text AND not far background',
+    '        float outlineAlpha = outsideOutline * outsideText * backgroundFade;',
+    '        ',
+    '        // Apply colors',
+    '        vec3 textRGB = outTint.rgb;',
+    '        float textA = outTint.a * textAlpha;',
+    '        ',
+    '        vec3 outlineRGB = uOutlineColor.rgb;',
+    '        float outlineA = uOutlineColor.a * outlineAlpha;',
+    '        ',
+    '        // Composite text over outline',
+    '        float finalAlpha = textA + outlineA * (1.0 - textA);',
+    '        vec3 finalRGB = vec3(0.0);',
+    '        if (finalAlpha > 0.001)',
+    '        {',
+    '            finalRGB = (textRGB * textA + outlineRGB * outlineA * (1.0 - textA)) / finalAlpha;',
+    '        }',
+    '        ',
+    '        // Output premultiplied alpha',
+    '        gl_FragColor = vec4(finalRGB * finalAlpha, finalAlpha);',
+    '    }',
+    '    else',
+    '    {',
+    '        // No outline - standard MSDF rendering',
+    '        float alpha = smoothstep(0.4, 0.6, dist);',
+    '        vec4 color = outTint;',
+    '        gl_FragColor = vec4(color.rgb * alpha, alpha * color.a);',
+    '    }',
     '}'
 ].join('\n');
 
@@ -98,6 +146,20 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
          * @default 4
          */
         this._pxRange = 4;
+
+        /**
+         * Outline width in distance field units
+         * @type {number}
+         * @default 0
+         */
+        this._outlineWidth = 0;
+
+        /**
+         * Outline color as RGBA array (0-1 range)
+         * @type {number[]}
+         * @default [0, 0, 0, 0]
+         */
+        this._outlineColor = [0, 0, 0, 0];
     }
 
     /**
@@ -106,6 +168,44 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
      */
     setPxRange(pxRange) {
         this._pxRange = pxRange;
+    }
+
+    /**
+     * Set outline parameters for text rendering
+     * @param {number} width - Outline width (0 = no outline)
+     * @param {number} r - Red component (0-1)
+     * @param {number} g - Green component (0-1)
+     * @param {number} b - Blue component (0-1)
+     * @param {number} a - Alpha component (0-1)
+     */
+    setOutline(width, r, g, b, a) {
+        // Validate inputs
+        if (isNaN(width) || isNaN(r) || isNaN(g) || isNaN(b) || isNaN(a)) {
+            console.error('[MSDFBatchHandler] Invalid outline parameters (NaN)', { width, r, g, b, a });
+            this._outlineWidth = 0;
+            this._outlineColor = [0, 0, 0, 0];
+            return;
+        }
+
+        this._outlineWidth = width;
+        this._outlineColor = [r, g, b, a];
+    }
+
+    /**
+     * Check if outline settings have changed (for batch flushing)
+     * @param {number} width
+     * @param {number} r
+     * @param {number} g
+     * @param {number} b
+     * @param {number} a
+     * @returns {boolean}
+     */
+    hasOutlineChanged(width, r, g, b, a) {
+        return this._outlineWidth !== width ||
+               this._outlineColor[0] !== r ||
+               this._outlineColor[1] !== g ||
+               this._outlineColor[2] !== b ||
+               this._outlineColor[3] !== a;
     }
 
     /**
@@ -148,6 +248,10 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
 
         // Set MSDF-specific uniforms
         programManager.setUniform('uPxRange', this._pxRange);
+
+        // Set outline uniforms
+        programManager.setUniform('uOutlineWidth', this._outlineWidth);
+        programManager.setUniform('uOutlineColor', this._outlineColor);
 
         // Set projection matrix
         drawingContext.renderer.setProjectionMatrixFromDrawingContext(drawingContext);

@@ -99,6 +99,15 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
     private _maxWidth: number = 0; // 0 = no word wrapping
     private _wordWrapCharCode: number = 32; // space character
 
+    // Outline properties (Phase 5.4)
+    private _outlineWidth: number = 0;
+    private _outlineColor: { r: number; g: number; b: number; a: number } = { r: 0, g: 0, b: 0, a: 0 };
+
+    // Shadow properties (Phase 5.4)
+    private _shadowOffset: { x: number; y: number } = { x: 0, y: 0 };
+    private _shadowColor: { r: number; g: number; b: number } = { r: 0, g: 0, b: 0 };
+    private _shadowAlpha: number = 0.5;
+
     // Character layout data (not GameObjects!)
     public _characters: CharacterData[] = [];
     private needsRebuild: boolean = true;
@@ -384,6 +393,68 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
     clearDisplayCallback(): this {
         this.displayCallback = undefined;
         return this;
+    }
+
+    /**
+     * Set outline for the text
+     * @param width Outline width in distance field units
+     * @param color Outline color as 0xRRGGBB
+     * @param alpha Outline alpha (0-1)
+     */
+    setOutline(width: number, color: number, alpha: number = 1): this {
+        this._outlineWidth = width;
+        const r = ((color >> 16) & 0xFF) / 255;
+        const g = ((color >> 8) & 0xFF) / 255;
+        const b = (color & 0xFF) / 255;
+        this._outlineColor = { r, g, b, a: alpha };
+        return this;
+    }
+
+    /**
+     * Clear outline effect
+     */
+    clearOutline(): this {
+        this._outlineWidth = 0;
+        return this;
+    }
+
+    /**
+     * Check if outline is enabled
+     */
+    hasOutline(): boolean {
+        return this._outlineWidth > 0;
+    }
+
+    /**
+     * Set shadow for the text
+     * @param offsetX Shadow X offset in pixels
+     * @param offsetY Shadow Y offset in pixels
+     * @param color Shadow color as 0xRRGGBB
+     * @param alpha Shadow alpha (0-1)
+     */
+    setShadow(offsetX: number, offsetY: number, color: number = 0x000000, alpha: number = 0.5): this {
+        this._shadowOffset = { x: offsetX, y: offsetY };
+        const r = ((color >> 16) & 0xFF) / 255;
+        const g = ((color >> 8) & 0xFF) / 255;
+        const b = (color & 0xFF) / 255;
+        this._shadowColor = { r, g, b };
+        this._shadowAlpha = alpha;
+        return this;
+    }
+
+    /**
+     * Clear shadow effect
+     */
+    clearShadow(): this {
+        this._shadowOffset = { x: 0, y: 0 };
+        return this;
+    }
+
+    /**
+     * Check if shadow is enabled
+     */
+    hasShadow(): boolean {
+        return this._shadowOffset.x !== 0 || this._shadowOffset.y !== 0;
     }
 
     // ========================================================================

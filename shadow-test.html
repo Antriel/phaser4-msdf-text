@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MSDF Shadow Effect Test - Phase 5.4</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #0a0a0a;
+            font-family: Arial, sans-serif;
+            color: #ffffff;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 15px;
+            border-radius: 5px;
+            max-width: 300px;
+            font-size: 12px;
+            line-height: 1.5;
+            border: 1px solid #00ffff;
+        }
+        #info h3 {
+            margin-top: 0;
+            color: #00ffff;
+            text-shadow: 0 0 10px #00ffff;
+        }
+        #info code {
+            background: #1a1a1a;
+            padding: 2px 4px;
+            border-radius: 3px;
+            color: #ffff00;
+        }
+        #info ul {
+            margin: 5px 0;
+            padding-left: 20px;
+        }
+        #info li {
+            margin: 3px 0;
+        }
+        #info .key {
+            display: inline-block;
+            background: #333;
+            padding: 2px 6px;
+            border-radius: 3px;
+            margin: 2px;
+            font-weight: bold;
+            color: #00ffff;
+        }
+        #game-container {
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <h3>Phase 5.4: Shadow Effect</h3>
+        <p><strong>Features:</strong></p>
+        <ul>
+            <li>Two-pass rendering</li>
+            <li>Callback-aware shadows</li>
+            <li>Dynamic offset control</li>
+            <li>Adjustable color & alpha</li>
+        </ul>
+        <p><strong>Controls:</strong></p>
+        <ul>
+            <li><span class="key">↑↓←→</span> Offset</li>
+            <li><span class="key">1-5</span> Color</li>
+            <li><span class="key">+/-</span> Alpha</li>
+            <li><span class="key">0</span> Remove</li>
+        </ul>
+        <p><strong>Performance:</strong></p>
+        <ul>
+            <li>2x draw calls per text</li>
+            <li>Shadow + text passes</li>
+            <li>Watch FPS with wave effect!</li>
+        </ul>
+    </div>
+    <div id="game-container"></div>
+    <script type="module" src="/examples/shadow-test.ts"></script>
+</body>
+</html>
