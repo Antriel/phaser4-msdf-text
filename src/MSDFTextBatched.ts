@@ -57,6 +57,8 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
     public _color: { r: number; g: number; b: number; a: number } = { r: 1, g: 1, b: 1, a: 1 };
     private _align: TextAlign = 'left';
     private _lineSpacing: number = 0;
+    private _maxWidth: number = 0; // 0 = no word wrapping
+    private _wordWrapCharCode: number = 32; // space character
 
     // Character layout data (not GameObjects!)
     public _characters: CharacterData[] = [];
@@ -268,6 +270,44 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
         return this;
     }
 
+    /**
+     * Set maximum text width for word wrapping
+     * @param width Maximum width in pixels (0 = no wrapping)
+     */
+    setMaxWidth(width: number): this {
+        if (this._maxWidth !== width) {
+            this._maxWidth = width;
+            this.needsRebuild = true;
+        }
+        return this;
+    }
+
+    /**
+     * Get maximum text width for word wrapping
+     */
+    getMaxWidth(): number {
+        return this._maxWidth;
+    }
+
+    /**
+     * Set word wrap character code
+     * @param charCode Character code to wrap on (default: 32 for space)
+     */
+    setWordWrapCharCode(charCode: number): this {
+        if (this._wordWrapCharCode !== charCode) {
+            this._wordWrapCharCode = charCode;
+            this.needsRebuild = true;
+        }
+        return this;
+    }
+
+    /**
+     * Get word wrap character code
+     */
+    getWordWrapCharCode(): number {
+        return this._wordWrapCharCode;
+    }
+
     // ========================================================================
     // Measurement
     // ========================================================================
@@ -289,10 +329,36 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
     }
 
     /**
-     * Get text bounds
+     * Get detailed text bounds including line information
      */
-    getTextBounds(): { width: number; height: number } {
-        return this.font.measureText(this._text, this._fontSize);
+    getTextBounds(): {
+        width: number;
+        height: number;
+        lines: {
+            count: number;
+            lengths: number[];
+            shortest: number;
+            longest: number;
+        };
+    } {
+        // Get text to measure (with word wrapping if enabled)
+        let textToMeasure = this._text;
+        if (this._maxWidth > 0) {
+            textToMeasure = this.wrapText(this._text, this._maxWidth);
+        }
+
+        const lineData = this.font.measureLines(textToMeasure, this._fontSize, this._lineSpacing);
+
+        return {
+            width: lineData.totalWidth,
+            height: lineData.totalHeight,
+            lines: {
+                count: lineData.lines.length,
+                lengths: lineData.widths,
+                shortest: lineData.shortest,
+                longest: lineData.longest
+            }
+        };
     }
 
     // ========================================================================
@@ -316,6 +382,81 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
     }
 
     /**
+     * Word wrap text to fit within maxWidth
+     * @param text The text to wrap
+     * @param maxWidth Maximum width in pixels
+     * @returns Wrapped text with newlines inserted
+     */
+    private wrapText(text: string, maxWidth: number): string {
+        if (maxWidth <= 0 || !text || text.length === 0) {
+            return text;
+        }
+
+        // Split by existing newlines first
+        const existingLines = text.split('\n');
+        const wrappedLines: string[] = [];
+
+        for (const line of existingLines) {
+            if (line.length === 0) {
+                wrappedLines.push('');
+                continue;
+            }
+
+            // Build words and measure
+            let currentLine = '';
+            let currentWord = '';
+            let prevCharCode = 0;
+
+            for (let i = 0; i < line.length; i++) {
+                const charCode = line.charCodeAt(i);
+                const char = String.fromCharCode(charCode);
+
+                // Check if this is a wrap character
+                if (charCode === this._wordWrapCharCode) {
+                    // Try adding the current word (including the wrap character)
+                    const testLine = currentLine + currentWord + char;
+                    const { width } = this.font.measureText(testLine, this._fontSize);
+
+                    if (width > maxWidth && currentLine.length > 0) {
+                        // Word doesn't fit, wrap to new line
+                        wrappedLines.push(currentLine.trim());
+                        currentLine = currentWord + char;
+                    } else {
+                        // Word fits, add it
+                        currentLine += currentWord + char;
+                    }
+
+                    currentWord = '';
+                    prevCharCode = charCode;
+                } else {
+                    // Add character to current word
+                    currentWord += char;
+                }
+            }
+
+            // Handle remaining word
+            if (currentWord.length > 0) {
+                const testLine = currentLine + currentWord;
+                const { width } = this.font.measureText(testLine, this._fontSize);
+
+                if (width > maxWidth && currentLine.length > 0) {
+                    // Last word doesn't fit, wrap it
+                    wrappedLines.push(currentLine.trim());
+                    wrappedLines.push(currentWord);
+                } else {
+                    // Last word fits
+                    currentLine += currentWord;
+                    wrappedLines.push(currentLine);
+                }
+            } else if (currentLine.length > 0) {
+                wrappedLines.push(currentLine);
+            }
+        }
+
+        return wrappedLines.join('\n');
+    }
+
+    /**
      * Rebuild character layout data
      * This calculates positions and UVs for all characters but doesn't create GameObjects
      */
@@ -327,13 +468,19 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
             return;
         }
 
+        // Apply word wrapping if maxWidth is set
+        let textToRender = this._text;
+        if (this._maxWidth > 0) {
+            textToRender = this.wrapText(this._text, this._maxWidth);
+        }
+
         // Layout characters
         let cursorX = 0;
         let cursorY = 0;
         let prevCharCode = 0;
 
-        for (let i = 0; i < this._text.length; i++) {
-            const charCode = this._text.charCodeAt(i);
+        for (let i = 0; i < textToRender.length; i++) {
+            const charCode = textToRender.charCodeAt(i);
 
             // Handle newlines
             if (charCode === 10) { // '\n'

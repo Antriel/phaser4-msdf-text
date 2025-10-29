@@ -1,0 +1,170 @@
+/**
+ * Word Wrap Test (Phase 5.1)
+ *
+ * This example demonstrates the new word wrapping feature for MSDF text.
+ *
+ * Features demonstrated:
+ * - Basic word wrapping with maxWidth
+ * - Dynamic maxWidth changes
+ * - Word wrapping with different alignments
+ * - Detailed text bounds with line information
+ */
+
+import Phaser from 'phaser';
+import { loadMSDFFont, getMSDFFont } from '../src/MSDFLoader';
+import { MSDFText } from '../src/MSDFTextBatched';
+import { registerMSDFBatchHandler } from '../src/registerMSDFBatchHandler';
+import * as SPECTOR from "phaser3spectorjs";
+
+class WordWrapTestScene extends Phaser.Scene {
+  private text1?: MSDFText;
+  private text2?: MSDFText;
+  private text3?: MSDFText;
+  private boundsText?: MSDFText;
+  private maxWidthValue: number = 400;
+
+  constructor() {
+    super({ key: "WordWrapTestScene" });
+  }
+
+  preload() {
+    console.log("Loading MSDF font...");
+    loadMSDFFont(this, "arial", "assets/fonts/Arial");
+  }
+
+  create() {
+    console.log("Creating word wrap tests...");
+
+    const font = getMSDFFont(this, "arial");
+    if (!font) {
+      console.error("Failed to load font!");
+      return;
+    }
+
+    // Test 1: Basic word wrapping
+    const longText = "This is a very long line of text that will automatically wrap when it exceeds the maximum width. Word wrapping makes text much more readable in constrained spaces!";
+
+    this.text1 = new MSDFText(this, 50, 50, font, longText, 24);
+    this.text1.setColorHex("#00ff00");
+    this.text1.setAlign("left");
+    this.text1.setMaxWidth(this.maxWidthValue);
+
+    // Test 2: Word wrapping with center alignment
+    const mediumText = "Centered text with word wrapping. This demonstrates how alignment works with wrapped text.";
+
+    this.text2 = new MSDFText(this, 400, 200, font, mediumText, 28);
+    this.text2.setColorHex("#ffff00");
+    this.text2.setAlign("center");
+    this.text2.setMaxWidth(350);
+
+    // Test 3: Word wrapping with existing newlines
+    const mixedText = "First paragraph with manual line break.\nSecond paragraph that will wrap because it contains a very long line that exceeds the maximum width constraint.";
+
+    this.text3 = new MSDFText(this, 50, 350, font, mixedText, 22);
+    this.text3.setColorHex("#ff00ff");
+    this.text3.setAlign("left");
+    this.text3.setMaxWidth(500);
+    this.text3.setLineSpacing(3);
+
+    // Display text bounds information
+    this.boundsText = new MSDFText(this, 550, 50, font, "", 16);
+    this.boundsText.setColorHex("#ffffff");
+    this.boundsText.setAlign("left");
+    this.updateBoundsInfo();
+
+    // Instructions
+    this.add.text(
+      10,
+      10,
+      "Word Wrap Test - Use UP/DOWN arrows to adjust maxWidth",
+      {
+        fontSize: "14px",
+        color: "#aaaaaa",
+        fontFamily: "Arial",
+      }
+    );
+
+    // Keyboard controls
+    const cursors = this.input.keyboard!.createCursorKeys();
+
+    cursors.up!.on('down', () => {
+      this.maxWidthValue += 50;
+      this.text1!.setMaxWidth(this.maxWidthValue);
+      this.updateBoundsInfo();
+      console.log(`MaxWidth: ${this.maxWidthValue}`);
+    });
+
+    cursors.down!.on('down', () => {
+      this.maxWidthValue = Math.max(100, this.maxWidthValue - 50);
+      this.text1!.setMaxWidth(this.maxWidthValue);
+      this.updateBoundsInfo();
+      console.log(`MaxWidth: ${this.maxWidthValue}`);
+    });
+
+    // Print debug info
+    console.log("=== Text 1 Bounds ===");
+    console.log(this.text1.getTextBounds());
+
+    console.log("\n=== Text 2 Bounds ===");
+    console.log(this.text2.getTextBounds());
+
+    console.log("\n=== Text 3 Bounds ===");
+    console.log(this.text3.getTextBounds());
+  }
+
+  updateBoundsInfo() {
+    if (!this.text1 || !this.boundsText) return;
+
+    const bounds = this.text1.getTextBounds();
+    const info = [
+      `MaxWidth: ${this.maxWidthValue}px`,
+      ``,
+      `Text Bounds:`,
+      `Width: ${bounds.width.toFixed(1)}px`,
+      `Height: ${bounds.height.toFixed(1)}px`,
+      ``,
+      `Lines:`,
+      `Count: ${bounds.lines.count}`,
+      `Shortest: ${bounds.lines.shortest.toFixed(1)}px`,
+      `Longest: ${bounds.lines.longest.toFixed(1)}px`
+    ].join('\n');
+
+    this.boundsText.setText(info);
+  }
+
+  update(time: number, delta: number) {
+    // Animate text2 by pulsing scale
+    if (this.text2) {
+      const scale = 1 + Math.sin(time / 500) * 0.1;
+      this.text2.scaleX = scale;
+      this.text2.scaleY = scale;
+    }
+  }
+}
+
+// Game configuration
+const config: Phaser.Types.Core.GameConfig = {
+  type: Phaser.WEBGL,
+  width: 800,
+  height: 600,
+  backgroundColor: "#2d2d2d",
+  scene: WordWrapTestScene,
+  scale: {
+    mode: Phaser.Scale.RESIZE,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+  },
+  callbacks: {
+    postBoot: (game) => {
+      // Initialize Spector.js for WebGL debugging
+      const spector = new SPECTOR.Spector();
+      spector.displayUI();
+    },
+  },
+};
+
+// Create game
+const game = new Phaser.Game(config);
+
+// Register MSDF batch handler
+registerMSDFBatchHandler(game);
+console.log('Word wrap test initialized! Use UP/DOWN arrows to adjust maxWidth.');

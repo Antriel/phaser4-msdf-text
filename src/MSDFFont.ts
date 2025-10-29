@@ -138,6 +138,53 @@ export class MSDFFont {
         return { width: maxWidth, height: totalHeight };
     }
 
+    /**
+     * Measure lines with detailed information
+     * @returns Detailed line measurement data
+     */
+    measureLines(
+        text: string,
+        fontSize: number,
+        lineSpacing: number = 0
+    ): {
+        lines: string[];
+        widths: number[];
+        totalWidth: number;
+        totalHeight: number;
+        shortest: number;
+        longest: number;
+    } {
+        const lines = text.split('\n');
+        const widths: number[] = [];
+        let maxWidth = 0;
+        let minWidth = Infinity;
+
+        for (const line of lines) {
+            const { width } = this.measureText(line, fontSize);
+            widths.push(width);
+            maxWidth = Math.max(maxWidth, width);
+            if (line.length > 0) {
+                minWidth = Math.min(minWidth, width);
+            }
+        }
+
+        if (minWidth === Infinity) {
+            minWidth = 0;
+        }
+
+        const lineHeight = fontSize * this.data.lineHeight;
+        const totalHeight = lineHeight * lines.length + lineSpacing * (lines.length - 1);
+
+        return {
+            lines,
+            widths,
+            totalWidth: maxWidth,
+            totalHeight,
+            shortest: minWidth,
+            longest: maxWidth
+        };
+    }
+
     // ========================================================================
     // Layout Utilities
     // ========================================================================
