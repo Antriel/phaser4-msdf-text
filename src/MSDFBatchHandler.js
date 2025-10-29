@@ -36,7 +36,8 @@ const SimpleVertexShader = [
  * MSDF fragment shader
  *
  * Uses median() to extract signed distance from RGB channels and smoothstep()
- * for anti-aliasing. Supports text color and tint modulation.
+ * for anti-aliasing. Color comes from vertex tints (text color is pre-multiplied
+ * into tints by the renderer).
  */
 const SimpleFragmentShader = [
     '#ifdef GL_FRAGMENT_PRECISION_HIGH',
@@ -47,7 +48,6 @@ const SimpleFragmentShader = [
     '',
     'uniform sampler2D uMainSampler;',
     'uniform float uPxRange;',
-    'uniform vec4 uTextColor;',
     '',
     'varying vec2 outTexCoord;',
     'varying vec4 outTint;',
@@ -69,8 +69,8 @@ const SimpleFragmentShader = [
     '    // Apply smoothstep for anti-aliasing',
     '    float alpha = smoothstep(0.4, 0.6, dist);',
     '    ',
-    '    // Apply text color AND tint (like MSDFBatchHandler)',
-    '    vec4 color = uTextColor * outTint;',
+    '    // Use vertex tint (text color is already baked into tint in renderer)',
+    '    vec4 color = outTint;',
     '    ',
     '    // Output premultiplied alpha',
     '    gl_FragColor = vec4(color.rgb * alpha, alpha * color.a);',
@@ -98,13 +98,6 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
          * @default 4
          */
         this._pxRange = 4;
-
-        /**
-         * Text color [r, g, b, a] (0-1 range)
-         * @type {number[]}
-         * @default [1, 1, 1, 1]
-         */
-        this._textColor = [1, 1, 1, 1];
     }
 
     /**
@@ -113,17 +106,6 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
      */
     setPxRange(pxRange) {
         this._pxRange = pxRange;
-    }
-
-    /**
-     * Set the text color for rendering
-     * @param {number} r - Red (0-1)
-     * @param {number} g - Green (0-1)
-     * @param {number} b - Blue (0-1)
-     * @param {number} a - Alpha (0-1)
-     */
-    setTextColor(r, g, b, a) {
-        this._textColor = [r, g, b, a || 1];
     }
 
     /**
@@ -166,7 +148,6 @@ class MSDFBatchHandler extends Phaser.Renderer.WebGL.RenderNodes.BatchHandler {
 
         // Set MSDF-specific uniforms
         programManager.setUniform('uPxRange', this._pxRange);
-        programManager.setUniform('uTextColor', this._textColor);
 
         // Set projection matrix
         drawingContext.renderer.setProjectionMatrixFromDrawingContext(drawingContext);

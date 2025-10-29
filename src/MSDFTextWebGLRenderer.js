@@ -63,15 +63,27 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
     if (batchHandler.setPxRange) {
         batchHandler.setPxRange(src._pxRange || 4);
     }
-    if (batchHandler.setTextColor) {
-        const color = src._color;
-        batchHandler.setTextColor(color.r, color.g, color.b, color.a);
-    }
 
-    // Get tint color (default to white if not set)
+    // Combine text color and tint into final tint value
+    // Text color comes from MSDFText (setColor/setColorHex)
+    // GameObject tint/alpha comes from Phaser properties
+    const textColor = src._color;
     const alpha = src.alpha !== undefined ? src.alpha : 1.0;
     const tint = src.tint !== undefined ? src.tint : 0xFFFFFF;
-    const tintValue = ((tint & 0xFF) << 16) | (tint & 0xFF00) | ((tint >> 16) & 0xFF) | (Math.floor(alpha * 255) << 24);
+
+    // Extract RGB from tint (note: Phaser stores as 0xRRGGBB)
+    const tintR = ((tint >> 16) & 0xFF) / 255;
+    const tintG = ((tint >> 8) & 0xFF) / 255;
+    const tintB = (tint & 0xFF) / 255;
+
+    // Multiply text color by tint (both in 0-1 range)
+    const finalR = Math.floor(textColor.r * tintR * 255);
+    const finalG = Math.floor(textColor.g * tintG * 255);
+    const finalB = Math.floor(textColor.b * tintB * 255);
+    const finalA = Math.floor(textColor.a * alpha * 255);
+
+    // Pack into ABGR format for WebGL (little-endian U32)
+    const tintValue = (finalA << 24) | (finalB << 16) | (finalG << 8) | finalR;
 
     tempTintData.tintTopLeft = tintValue;
     tempTintData.tintTopRight = tintValue;
@@ -100,17 +112,6 @@ function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
         batchedCount++;
     }
 
-    // Flush the batch for this text object
-    // NOTE: This flushes per-text-object, not across all text objects.
-    // Trade-off:
-    //   - WITH flush: Each text object = 1 draw call (characters batched within object)
-    //   - WITHOUT flush: Nothing renders (Phaser doesn't auto-flush custom BatchHandlers)
-    //
-    // This is still a HUGE win vs Phase 3 (1 draw call per character).
-    // Future optimization: Participate in Phaser's render pass to batch across all text.
-    if (batchedCount > 0) {
-        batchHandler.run(drawingContext);
-    }
 }
 
 export default MSDFTextWebGLRenderer;
