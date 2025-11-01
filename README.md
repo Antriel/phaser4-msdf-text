@@ -47,13 +47,14 @@ High-quality scalable text rendering for Phaser 4 using Multi-channel Signed Dis
   - Display callbacks for per-character effects
   - Dynamic position, scale, rotation, and tint
   - Wave, rainbow, breathing, jiggle, and spin effects
-- 🚧 **Phase 5.3: Multi-Color Text** - Next
+- ✅ **Phase 5.4: Text Effects** - COMPLETE!
+  - Shader-based outline (single-pass, no extra draw calls)
+  - Shadow effects (two-pass rendering, callback-aware)
+  - Dynamic width, offset, color, and alpha control
+  - Background fade prevention for clean rendering
+- 🚧 **Phase 5.3: Multi-Color Text** - Planned
   - Per-character color arrays
   - Integration with callback system
-- 🚧 **Phase 5.4: Text Effects** - Planned
-  - Shadow effects (two-pass rendering)
-  - Shader-based outline
-  - Gradient effects via callbacks
 - 🚧 **Phase 5.5: Character Queries** - Planned
   - Hit testing and character position queries
 
@@ -446,6 +447,161 @@ text.clearDisplayCallback();
 - Keep callbacks fast and efficient
 - Still uses batched rendering (1-2 draw calls)
 - Objects are reused to avoid allocations
+
+### Text Effects (Phase 5.4)
+
+#### Outline Effects
+
+Shader-based outline rendering with no extra draw calls.
+
+##### `setOutline(width: number, color: number, alpha: number = 1): this`
+
+Add an outline around text characters.
+
+**Parameters:**
+- `width: number` - Outline width in distance field units (typically 0.5-3.0)
+- `color: number` - Outline color as 0xRRGGBB hex value
+- `alpha: number` - Outline opacity (0-1, default: 1)
+
+**Examples:**
+
+**Black outline:**
+```typescript
+const text = new MSDFText(this, 400, 300, font, 'OUTLINED', 64);
+text.setColorHex('#ffffff');
+text.setOutline(1.5, 0x000000, 1.0);
+```
+
+**Colored outline:**
+```typescript
+text.setColorHex('#ffff00');  // Yellow text
+text.setOutline(2.0, 0xff0000, 0.8);  // Red semi-transparent outline
+```
+
+**Dynamic outline:**
+```typescript
+// Change outline width on the fly
+text.setOutline(Math.sin(time * 0.001) * 2 + 1, 0x0000ff);
+```
+
+##### `clearOutline(): this`
+
+Remove the outline effect.
+
+```typescript
+text.clearOutline();
+```
+
+##### `hasOutline(): boolean`
+
+Check if outline is enabled.
+
+```typescript
+if (text.hasOutline()) {
+    console.log('Text has outline');
+}
+```
+
+**Technical Notes:**
+- **Single-pass rendering** - Outline is rendered in the same pass as text
+- **No extra draw calls** - Efficient shader-based implementation
+- **Batch flushing** - Different outline settings trigger batch flush
+- **Background fade** - Automatic fade prevents artifacts on far background
+- **Width range** - Values beyond ~3.0 may cause visual artifacts
+
+#### Shadow Effects
+
+Two-pass shadow rendering with callback awareness.
+
+##### `setShadow(offsetX: number, offsetY: number, color: number = 0x000000, alpha: number = 0.5): this`
+
+Add a drop shadow to text.
+
+**Parameters:**
+- `offsetX: number` - Shadow horizontal offset in pixels
+- `offsetY: number` - Shadow vertical offset in pixels
+- `color: number` - Shadow color as 0xRRGGBB hex value (default: black)
+- `alpha: number` - Shadow opacity (0-1, default: 0.5)
+
+**Examples:**
+
+**Classic drop shadow:**
+```typescript
+const text = new MSDFText(this, 400, 300, font, 'SHADOWED', 56);
+text.setColorHex('#ffffff');
+text.setShadow(4, 4, 0x000000, 0.7);
+```
+
+**Colored shadow:**
+```typescript
+text.setColorHex('#ffffff');
+text.setShadow(3, 3, 0x0000ff, 0.5);  // Blue shadow
+```
+
+**Dynamic shadow:**
+```typescript
+// Animated shadow offset
+const offset = Math.sin(time * 0.002) * 10;
+text.setShadow(offset, offset, 0x000000, 0.6);
+```
+
+**Callback-aware shadow:**
+```typescript
+// Shadow follows wave animation
+text.setShadow(3, 3, 0x000000, 0.5);
+text.setDisplayCallback((data) => {
+    data.y += Math.sin(data.index * 0.5 + time * 0.003) * 15;
+    return data;
+});
+// Shadow automatically follows the wave motion!
+```
+
+##### `clearShadow(): this`
+
+Remove the shadow effect.
+
+```typescript
+text.clearShadow();
+```
+
+##### `hasShadow(): boolean`
+
+Check if shadow is enabled.
+
+```typescript
+if (text.hasShadow()) {
+    console.log('Text has shadow');
+}
+```
+
+**Technical Notes:**
+- **Two-pass rendering** - Shadow pass renders first, text renders on top
+- **2x draw calls** - Each text with shadow renders twice per frame
+- **Callback-aware** - Shadows automatically follow display callback transforms
+- **Batching preserved** - Characters still batch together within each pass
+- **Transform support** - Shadows respect rotation, scale, and position changes
+
+#### Combined Effects
+
+Outline and shadow can be used together:
+
+```typescript
+const text = new MSDFText(this, 400, 300, font, 'STYLED TEXT', 72);
+text.setColorHex('#ffff00');
+text.setOutline(1.5, 0x000000, 1.0);  // Black outline
+text.setShadow(4, 4, 0x000000, 0.6);   // Black shadow
+text.setDisplayCallback((data) => {
+    // Wave effect with outline and shadow
+    data.y += Math.sin(data.index * 0.5 + time * 0.003) * 20;
+    return data;
+});
+```
+
+**Performance Impact:**
+- Outline only: No extra draw calls
+- Shadow only: 2x draw calls per text object
+- Both together: 2x draw calls (outline is free in shader)
+- With callbacks: Same performance, transforms apply to both
 
 ## 🛠️ Shader Details
 

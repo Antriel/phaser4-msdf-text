@@ -6,15 +6,15 @@ Phase 5 adds advanced text rendering features to the MSDF font system, focusing 
 
 ## Status Summary
 
-### ✅ Completed (Phase 5.1 & 5.2)
+### ✅ Completed (Phase 5.1, 5.2 & 5.4)
 
 - **Phase 5.1: Word Wrapping** - Automatic text flow with detailed bounds
 - **Phase 5.2: Display Callbacks** - Per-character effects (wave, rainbow, rotation, etc.)
+- **Phase 5.4: Text Effects** - Shader-based outline and two-pass shadow rendering
 
-### 🚧 Remaining (Phase 5.3-5.5)
+### 🚧 Remaining (Phase 5.3 & 5.5)
 
 - **Phase 5.3: Multi-Color Text** - Per-character color arrays
-- **Phase 5.4: Text Effects** - Shadow and shader-based outline
 - **Phase 5.5: Character Queries** - Hit testing and character position queries
 
 ---
@@ -414,120 +414,231 @@ text.clearCharacterColors();
 
 ---
 
-## Phase 5.4: Text Effects 🚧 PLANNED
+## Phase 5.4: Text Effects ✅
 
-### Shadow Effect (Two-Pass Rendering)
+### What Was Built
 
-**Complexity**: Low
-**Performance**: 2x draw calls per text object
+Shader-based outline (single-pass) and two-pass shadow rendering with full callback support. Both effects work independently or combined, with automatic batching optimization.
 
-**Implementation:**
+### Files Modified
 
-1. **Add to MSDFTextBatched.ts:**
-   ```typescript
-   private _shadowOffset: { x: number; y: number } = { x: 0, y: 0 };
-   private _shadowColor: number = 0x000000;
-   private _shadowAlpha: number = 0.5;
+1. **src/MSDFBatchHandler.js**
+   - Modified: Fragment shader to add outline support
+   - Added: `uOutlineWidth` and `uOutlineColor` uniforms
+   - Added: Background fade to prevent artifacts
+   - Added: `_outlineWidth`, `_outlineColor` properties
+   - Added: `setOutline()` method with NaN validation
+   - Added: `hasOutlineChanged()` for batch flushing detection
+   - Enhanced: `setupUniforms()` to pass outline parameters to shader
 
-   setShadow(offsetX: number, offsetY: number, color: number, alpha: number): this {
-       this._shadowOffset = { x: offsetX, y: offsetY };
-       this._shadowColor = color;
-       this._shadowAlpha = alpha;
-       return this;
-   }
+2. **src/MSDFTextBatched.ts**
+   - Added: Outline properties (`_outlineWidth`, `_outlineColor`)
+   - Added: Shadow properties (`_shadowOffset`, `_shadowColor`, `_shadowAlpha`)
+   - Added: `setOutline()`, `clearOutline()`, `hasOutline()` methods
+   - Added: `setShadow()`, `clearShadow()`, `hasShadow()` methods
 
-   clearShadow(): this {
-       this._shadowOffset = { x: 0, y: 0 };
-       return this;
-   }
+3. **src/MSDFTextWebGLRenderer.js**
+   - Added: Outline batch flushing logic (before character rendering)
+   - Added: Shadow pass rendering (before main text pass)
+   - Enhanced: Shadow pass respects display callbacks
+   - Fixed: NaN validation for outline parameters
 
-   hasShadow(): boolean {
-       return this._shadowOffset.x !== 0 || this._shadowOffset.y !== 0;
-   }
-   ```
+4. **examples/outline-test.ts** + **outline-test.html**
+   - 5 text samples with different outline styles
+   - Interactive controls (UP/DOWN for width, 1-5 for colors)
+   - Real-time outline parameter adjustment
 
-2. **Modify MSDFTextWebGLRenderer.js:**
-   ```javascript
-   function MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix) {
-       // ... existing setup ...
+5. **examples/shadow-test.ts** + **shadow-test.html**
+   - 5 text samples including callback-aware shadow
+   - Interactive controls (arrows for offset, +/- for alpha)
+   - Wave effect with shadow following the animation
 
-       if (src.hasShadow()) {
-           // First pass: Render shadow
-           const shadowMatrix = calcMatrix.clone();
-           shadowMatrix.translate(src._shadowOffset.x, src._shadowOffset.y);
+### Key Implementation Details
 
-           const shadowTint = calculateShadowTint(src._shadowColor, src._shadowAlpha);
+#### Outline Effect (Shader-Based)
 
-           // Batch all characters with shadow matrix and tint
-           for (let i = 0; i < characterCount; i++) {
-               BatchMSDFChar(drawingContext, batchHandler, texture,
-                            characters[i], shadowMatrix, shadowTint);
-           }
-       }
+**Fragment Shader Algorithm:**
+```glsl
+// Calculate edges
+float outlineEdge = 0.5 - (uOutlineWidth / uPxRange);
+float textEdge = 0.5;
 
-       // Second pass: Render main text (existing code)
-       for (let i = 0; i < characterCount; i++) {
-           // ... existing character batching ...
-       }
-   }
-   ```
+// Alpha for text and outline region
+float textAlpha = smoothstep(textEdge - 0.05, textEdge + 0.05, dist);
+float outsideOutline = smoothstep(outlineEdge - 0.05, outlineEdge + 0.05, dist);
+float outsideText = 1.0 - textAlpha;
 
-### Shader-Based Outline
+// Background fade prevents artifacts
+float backgroundFade = smoothstep(0.0, 0.2, dist);
 
-**Complexity**: High (shader modification)
-**Performance**: Single pass, no extra draw calls
+// Outline visible in ring: outside outline boundary AND outside text AND not far background
+float outlineAlpha = outsideOutline * outsideText * backgroundFade;
 
-**Implementation:**
+// Composite text over outline
+vec4 outlineResult = uOutlineColor * outlineAlpha;
+vec4 textResult = outTint * textAlpha;
+float finalAlpha = textA + outlineA * (1.0 - textA);
+vec3 finalRGB = (textRGB * textA + outlineRGB * outlineA * (1.0 - textA)) / finalAlpha;
 
-1. **Modify shaders/msdf/MSDFFont.frag:**
-   ```glsl
-   uniform float uOutlineThickness;  // 0 = no outline
-   uniform vec4 uOutlineColor;
+// Output premultiplied alpha
+gl_FragColor = vec4(finalRGB * finalAlpha, finalAlpha);
+```
 
-   void main() {
-       vec3 msdfSample = texture2D(iChannel0, vTextureCoord).rgb;
-       float dist = median(msdfSample.r, msdfSample.g, msdfSample.b);
+**Key Insights:**
+1. **Ring Creation**: `outsideOutline * outsideText` creates the ring between boundaries
+2. **Background Fade**: `smoothstep(0.0, 0.2, dist)` prevents black squares on far background
+3. **Batch Flushing**: Different outline settings trigger batch flush via `hasOutlineChanged()`
+4. **No Extra Draw Calls**: Outline rendered in same pass as text
 
-       float pxRange = uPxRange;
-       vec2 unitRange = vec2(pxRange) / uTexSize;
-       vec2 screenTexSize = vec2(1.0) / fwidth(vTextureCoord);
-       float screenPxRange = max(0.5 * dot(unitRange, screenTexSize), 1.0);
-       float screenPxDistance = screenPxRange * (dist - 0.5);
+**Debugging Journey:**
+- Initial attempt had full black squares behind letters (outline alpha covered entire quad)
+- Fixed by multiplying `outsideOutline * outsideText * backgroundFade` to create proper ring mask
+- NaN validation added after debugging showed invalid data propagation
 
-       // Text layer
-       float textAlpha = clamp(screenPxDistance + 0.5, 0.0, 1.0);
+#### Shadow Effect (Two-Pass Rendering)
 
-       // Outline layer
-       float outlineAlpha = 0.0;
-       if (uOutlineThickness > 0.0) {
-           float outlineEdge = screenPxDistance + uOutlineThickness;
-           outlineAlpha = clamp(outlineEdge + 0.5, 0.0, 1.0);
-       }
+**Render Pass Algorithm:**
+```javascript
+// SHADOW PASS (renders first, behind text)
+if (src.hasShadow()) {
+    const shadowOffset = src._shadowOffset;
+    const shadowColor = src._shadowColor;
+    const shadowAlpha = src._shadowAlpha;
 
-       // Composite: outline behind text
-       vec4 outlineResult = uOutlineColor * outlineAlpha;
-       vec4 textResult = uTextColor * textAlpha;
-       vec4 finalColor = mix(outlineResult, textResult, textAlpha);
+    // Calculate shadow tint (ABGR format)
+    const shadowTintValue = (shadowA << 24) | (shadowB << 16) | (shadowG << 8) | shadowR;
 
-       // Premultiply alpha
-       gl_FragColor = vec4(finalColor.rgb * finalColor.a, finalColor.a);
-   }
-   ```
+    // Render each character with shadow offset
+    for (let i = 0; i < characterCount; i++) {
+        const char = characters[i];
 
-2. **Update src/MSDFShader.ts:**
-   - Add `uOutlineThickness` and `uOutlineColor` to shader config
+        // Apply offset
+        tempCharData.x = char.x + shadowOffset.x;
+        tempCharData.y = char.y + shadowOffset.y;
+        // ... copy other char data ...
 
-3. **Add to MSDFTextBatched.ts:**
-   ```typescript
-   private _outlineThickness: number = 0;
-   private _outlineColor: number = 0x000000;
+        // Apply display callback to shadow if present
+        if (hasCallback) {
+            callbackData.x = originalX + shadowOffset.x;
+            callbackData.y = originalY + shadowOffset.y;
+            const result = src.displayCallback(callbackData);
 
-   setOutline(thickness: number, color: number): this;
-   clearOutline(): this;
-   ```
+            // Apply transforms to shadow (rotation, scale, position)
+            if (scaleChanged || rotationChanged) {
+                // Build matrix with shadow transforms
+                tempCharMatrix.copyFrom(calcMatrix);
+                tempCharMatrix.translate(result.x + centerX, result.y + centerY);
+                // ... apply rotation/scale ...
+            }
+        }
 
-4. **Update MSDFBatchHandler:**
-   - Pass outline uniforms to shader during rendering
+        // Batch shadow character
+        BatchMSDFChar(drawingContext, batchHandler, texture, shadowCharData, shadowMatrix, shadowTint);
+    }
+}
+
+// MAIN TEXT PASS (existing code continues)
+```
+
+**Key Insights:**
+1. **Shadow First**: Shadow pass renders before text pass, so text appears on top
+2. **Callback-Aware**: Shadows receive same callback as text, follow wave/rotation/scale
+3. **Offset Application**: Shadow offset added to callback position (`originalX + shadowOffset.x`)
+4. **Performance**: 2x draw calls per text object (shadow batch + text batch)
+
+### API Reference
+
+```typescript
+// Outline API
+text.setOutline(width: number, color: number, alpha?: number): this
+text.clearOutline(): this
+text.hasOutline(): boolean
+
+// Examples
+text.setOutline(1.5, 0x000000, 1.0);  // Black outline
+text.setOutline(2.0, 0xff0000, 0.8);  // Red semi-transparent
+text.clearOutline();
+
+// Shadow API
+text.setShadow(offsetX: number, offsetY: number, color?: number, alpha?: number): this
+text.clearShadow(): this
+text.hasShadow(): boolean
+
+// Examples
+text.setShadow(4, 4, 0x000000, 0.7);  // Classic drop shadow
+text.setShadow(3, 3, 0x0000ff, 0.5);  // Blue shadow
+text.clearShadow();
+
+// Combined
+text.setOutline(1.5, 0x000000, 1.0);
+text.setShadow(4, 4, 0x000000, 0.6);
+text.setDisplayCallback((data) => {
+    // Wave effect - both outline and shadow follow
+    data.y += Math.sin(data.index * 0.5 + time * 0.003) * 20;
+    return data;
+});
+```
+
+### Critical Bugs Fixed
+
+**1. Black Squares Issue (Outline)**
+- **Problem**: Outline alpha covered entire character quad, creating black squares
+- **Root Cause**: `outlineAlpha = smoothstep(outlineEdge, ...)` was 1.0 across most of background
+- **Solution**: Ring masking: `outsideOutline * outsideText * backgroundFade`
+- **Result**: Clean outline ring, no background artifacts
+
+**2. NaN Propagation**
+- **Problem**: Invalid outline data (NaN) caused rendering failures
+- **Solution**: Added validation in `setOutline()` and renderer
+- **Prevention**: All color/width values checked before use
+
+**3. Batch Flushing**
+- **Problem**: Multiple text objects shared batch handler, last outline settings won
+- **Solution**: `hasOutlineChanged()` detects setting changes, flushes batch before applying new values
+- **Trade-off**: More draw calls when outline settings differ, but correct per-text rendering
+
+### Performance Characteristics
+
+**Outline Effect:**
+- **Draw Calls**: Same as no outline (single pass)
+- **Batch Behavior**: Flushes when outline settings change between texts
+- **Shader Cost**: Minimal (one if-branch, simple arithmetic)
+
+**Shadow Effect:**
+- **Draw Calls**: 2x per text object (shadow pass + text pass)
+- **Batch Behavior**: Characters batch within each pass
+- **CPU Cost**: 2x character loop iterations
+- **Callback Impact**: Shadow follows callback transforms (same cost)
+
+**Combined (Outline + Shadow):**
+- **Draw Calls**: 2x (shadow pass + text pass with outline)
+- **Outline**: Free in shader, no extra passes
+- **Total Overhead**: Only shadow pass adds cost
+
+### Testing
+
+**Test Pages:**
+- http://localhost:3000/outline-test.html
+- http://localhost:3000/shadow-test.html
+
+**Outline Test - What to Test:**
+1. UP/DOWN arrows change outline width (0-5 range)
+2. Keys 1-5 change outline color (black, white, red, blue, yellow)
+3. All 5 text samples update in real-time
+4. No black squares or background artifacts
+5. 60 FPS maintained
+
+**Shadow Test - What to Test:**
+1. Arrow keys adjust shadow offset (-20 to +20)
+2. Keys 1-5 change shadow color
+3. +/- keys adjust shadow alpha (transparency)
+4. Wave effect text has shadow following the wave motion
+5. 60 FPS with all shadows rendering
+
+**Performance Check:**
+- Outline test: ~5-10 draw calls (one batch per text with different settings)
+- Shadow test: ~10 draw calls (2x per text object)
+- Combined: 2x draw calls per text, outline is free in shader
 
 ---
 
@@ -614,18 +725,23 @@ Enable interaction with individual characters through position queries and hit t
 **Completed:**
 - ✅ Phase 5.1: Word Wrapping (automatic text flow, detailed bounds)
 - ✅ Phase 5.2: Display Callbacks (wave, rainbow, breathing, rotation effects)
+- ✅ Phase 5.4: Text Effects (shader-based outline + two-pass shadow)
 
-**Next Session:**
+**Remaining:**
 - 🚧 Phase 5.3: Multi-Color Text (per-character color arrays)
-- 🚧 Phase 5.4: Text Effects (shadow + shader outline)
 - 🚧 Phase 5.5: Character Queries (hit testing)
 
 **Key Achievements:**
 - Flexible callback system enabling unlimited effects
 - Center-pivot rotation and scaling
-- Optimal performance through object reuse
+- Shader-based outline (no extra draw calls)
+- Callback-aware shadows (follow wave/rotation/scale)
+- Background fade prevention for clean rendering
+- Optimal performance through object reuse and batching
 - Clean API that builds on Phase 4 batching
 
 **All test pages working:**
 - http://localhost:3000/word-wrap-test.html
 - http://localhost:3000/callback-effects-test.html
+- http://localhost:3000/outline-test.html
+- http://localhost:3000/shadow-test.html
