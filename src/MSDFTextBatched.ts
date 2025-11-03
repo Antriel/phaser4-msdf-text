@@ -5,17 +5,27 @@
  * efficient batched rendering. All characters are rendered in 1-2 draw calls
  * instead of one draw call per character.
  *
- * This replaces the Container-based approach with a standalone GameObject
- * that uses custom WebGL batching via MSDFBatchHandler.
+ * This uses Phaser's idiomatic Class system with component mixins for
+ * proper integration with Phaser's GameObject ecosystem.
  *
  * Usage:
- *   const text = new MSDFText(scene, x, y, font, 'Hello World', fontSize);
- *   scene.add.existing(text);
+ *   const text = scene.add.msdfTextBatched(x, y, font, 'Hello World', fontSize);
+ *   // or
+ *   const text = scene.make.msdfTextBatched({ font, text: 'Hello', fontSize: 42, x: 100, y: 100 });
  */
 
 import Phaser from 'phaser';
 import { MSDFFont } from './MSDFFont';
 import MSDFTextWebGLRenderer from './MSDFTextWebGLRenderer.js';
+
+// @ts-ignore - Phaser internals not fully typed
+const Class = Phaser.Class;
+// @ts-ignore - Phaser internals not fully typed
+const Components = Phaser.GameObjects.Components;
+// @ts-ignore - Phaser internals not fully typed
+const GameObject = Phaser.GameObjects.GameObject;
+// @ts-ignore - Phaser internals not fully typed
+const PhaserMap = Phaser.Structs.Map;
 
 export type TextAlign = 'left' | 'center' | 'right';
 
@@ -33,7 +43,7 @@ export interface DisplayCallbackTint {
  * Data passed to display callback for each character
  */
 export interface DisplayCallbackData {
-    parent: MSDFText;      // Reference to the text object
+    parent: any;           // Reference to the text object
     index: number;         // Character index in the text string
     charCode: number;      // Character code
     x: number;             // Character X position (can be modified)
@@ -52,7 +62,7 @@ export type DisplayCallback = (data: DisplayCallbackData) => DisplayCallbackData
 /**
  * Character layout data
  */
-interface CharacterData {
+export interface CharacterData {
     x: number;       // X position in text space
     y: number;       // Y position in text space
     w: number;       // Width
@@ -73,64 +83,130 @@ interface CharacterData {
 }
 
 /**
- * MSDFText GameObject with batched rendering
+ * Type interface for MSDFText instances
+ * Use this for type annotations instead of the Class constructor
  */
-export class MSDFText extends Phaser.GameObjects.GameObject {
-    // Transform properties (required by GetCalcMatrix)
-    public x: number = 0;
-    public y: number = 0;
-    public scaleX: number = 1;
-    public scaleY: number = 1;
-    public rotation: number = 0;
-    public originX: number = 0;
-    public originY: number = 0;
-    public width: number = 0;
-    public height: number = 0;
-    public scrollFactorX: number = 1;
-    public scrollFactorY: number = 1;
+export interface MSDFTextInstance extends Phaser.GameObjects.GameObject {
+    // Properties from components
+    x: number;
+    y: number;
+    scaleX: number;
+    scaleY: number;
+    rotation: number;
+    originX: number;
+    originY: number;
+    alpha: number;
+    visible: boolean;
+    blendMode: number;
+    depth: number;
+    scrollFactorX: number;
+    scrollFactorY: number;
 
-    // Font and text properties
-    private font: MSDFFont;
-    public _text: string = '';
-    public _fontSize: number = 42;
-    public _color: { r: number; g: number; b: number; a: number } = { r: 1, g: 1, b: 1, a: 1 };
-    private _align: TextAlign = 'left';
-    private _lineSpacing: number = 0;
-    private _maxWidth: number = 0; // 0 = no word wrapping
-    private _wordWrapCharCode: number = 32; // space character
+    // Custom properties
+    font: MSDFFont;
+    _text: string;
+    _fontSize: number;
+    _color: { r: number; g: number; b: number; a: number };
+    _align: TextAlign;
+    _lineSpacing: number;
+    _maxWidth: number;
+    _wordWrapCharCode: number;
+    _outlineWidth: number;
+    _outlineColor: { r: number; g: number; b: number; a: number };
+    _shadowOffset: { x: number; y: number };
+    _shadowColor: { r: number; g: number; b: number };
+    _shadowAlpha: number;
+    _characters: CharacterData[];
+    needsRebuild: boolean;
+    displayCallback?: DisplayCallback;
+    callbackData: DisplayCallbackData;
+    _texture: any;
+    _pxRange: number;
 
-    // Outline properties (Phase 5.4)
-    private _outlineWidth: number = 0;
-    private _outlineColor: { r: number; g: number; b: number; a: number } = { r: 0, g: 0, b: 0, a: 0 };
+    // Methods
+    setText(text: string): this;
+    getText(): string;
+    setFontSize(size: number): this;
+    getFontSize(): number;
+    setColor(r: number, g: number, b: number, a?: number): this;
+    setColorHex(hex: string, alpha?: number): this;
+    setAlign(align: TextAlign): this;
+    setLineSpacing(spacing: number): this;
+    setMaxWidth(width: number): this;
+    getMaxWidth(): number;
+    setWordWrapCharCode(charCode: number): this;
+    getWordWrapCharCode(): number;
+    setDisplayCallback(callback: DisplayCallback | undefined): this;
+    clearDisplayCallback(): this;
+    setOutline(width: number, color: number, alpha?: number): this;
+    clearOutline(): this;
+    hasOutline(): boolean;
+    setShadow(offsetX: number, offsetY: number, color?: number, alpha?: number): this;
+    clearShadow(): this;
+    hasShadow(): boolean;
+    getTextWidth(): number;
+    getTextHeight(): number;
+    getTextBounds(): {
+        width: number;
+        height: number;
+        lines: {
+            count: number;
+            lengths: number[];
+            shortest: number;
+            longest: number;
+        };
+    };
+    getDebugInfo(): string;
+    printDebugInfo(): void;
+}
 
-    // Shadow properties (Phase 5.4)
-    private _shadowOffset: { x: number; y: number } = { x: 0, y: 0 };
-    private _shadowColor: { r: number; g: number; b: number } = { r: 0, g: 0, b: 0 };
-    private _shadowAlpha: number = 0.5;
+/**
+ * Default render nodes map for MSDF text
+ * Must be a Phaser.Structs.Map, not a plain object
+ */
+const DefaultMSDFNodes = new PhaserMap([
+    ['Submitter', 'SubmitterQuad'],
+    ['BatchHandler', 'BatchHandlerMSDF']
+]);
 
-    // Character layout data (not GameObjects!)
-    public _characters: CharacterData[] = [];
-    private needsRebuild: boolean = true;
+/**
+ * Render function for MSDF text (mixin)
+ */
+const MSDFTextRender = {
+    renderWebGL: function (renderer: any, src: any, drawingContext: any, parentMatrix: any): void {
+        // Rebuild if needed
+        if (src.needsRebuild) {
+            src.rebuildText();
+            src.needsRebuild = false;
+        }
 
-    // Display callback (Phase 5.2)
-    public displayCallback?: DisplayCallback;
-    public callbackData: DisplayCallbackData;
+        // Delegate to MSDFTextWebGLRenderer
+        MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix);
+    }
+};
 
-    // Texture and rendering
-    public _texture: any = null; // WebGLTextureWrapper
-    public _pxRange: number = 4;
+/**
+ * MSDFText GameObject with batched rendering using Phaser's Class system
+ */
+export const MSDFText = new Class({
 
-    // Rendering properties (required by Phaser's renderer)
-    public blendMode: number = 0; // NORMAL blend mode
-    public alpha: number = 1.0;
-    public tint: number = 0xffffff;
-    public visible: boolean = true;
+    Extends: GameObject,
 
-    // Render nodes for batched rendering (following Phaser's RenderNodes pattern)
-    public customRenderNodes: any;
-    public defaultRenderNodes: any;
+    Mixins: [
+        Components.Alpha,
+        Components.BlendMode,
+        Components.Depth,
+        Components.Origin,
+        Components.RenderNodes,
+        Components.ScrollFactor,
+        Components.Transform,
+        Components.Visible,
+        MSDFTextRender
+    ],
 
-    constructor(
+    initialize:
+
+    function MSDFText(
         scene: Phaser.Scene,
         x: number,
         y: number,
@@ -138,17 +214,33 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
         text: string = '',
         fontSize: number = 42
     ) {
-        super(scene, 'MSDFText');
+        GameObject.call(this, scene, 'MSDFText');
 
+        // Font and text properties
         this.font = font;
         this._text = text;
         this._fontSize = fontSize;
+        this._color = { r: 1, g: 1, b: 1, a: 1 };
+        this._align = 'left';
+        this._lineSpacing = 0;
+        this._maxWidth = 0; // 0 = no word wrapping
+        this._wordWrapCharCode = 32; // space character
 
-        // Set position
-        this.x = x;
-        this.y = y;
+        // Outline properties (Phase 5.4)
+        this._outlineWidth = 0;
+        this._outlineColor = { r: 0, g: 0, b: 0, a: 0 };
 
-        // Initialize callback data (reused to avoid allocations)
+        // Shadow properties (Phase 5.4)
+        this._shadowOffset = { x: 0, y: 0 };
+        this._shadowColor = { r: 0, g: 0, b: 0 };
+        this._shadowAlpha = 0.5;
+
+        // Character layout data (not GameObjects!)
+        this._characters = [];
+        this.needsRebuild = true;
+
+        // Display callback (Phase 5.2)
+        this.displayCallback = undefined;
         this.callbackData = {
             parent: this,
             index: 0,
@@ -166,6 +258,10 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
             data: undefined
         };
 
+        // Texture and rendering
+        this._texture = null; // WebGLTextureWrapper
+        this._pxRange = 4;
+
         // Get texture wrapper from Phaser's texture cache
         const frame = scene.sys.textures.getFrame(font.textureKey);
         if (frame && frame.glTexture) {
@@ -177,78 +273,24 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
         // Get MSDF distance range parameter
         this._pxRange = font.distanceField.distanceRange;
 
-        // Configure render nodes for batching
-        // Note: MSDFBatchHandler must be registered with RenderNodeManager first
-        this.customRenderNodes = {};
-        this.defaultRenderNodes = {};
+        // Set initial position using Transform component
+        this.setPosition(x, y);
 
-        // Initialize render nodes (similar to Components.RenderNodes.initRenderNodes)
-        const renderer = scene.sys.renderer;
-        if (renderer && renderer.renderNodes) {
-            const manager = renderer.renderNodes;
-            // Get the actual BatchHandler instance from the manager
-            this.defaultRenderNodes['BatchHandler'] = manager.getNode('BatchHandlerMSDF');
-            // Also set up a Submitter (we can reuse SubmitterQuad)
-            this.defaultRenderNodes['Submitter'] = manager.getNode('SubmitterQuad');
-        } else {
-            console.warn('[MSDFText] Renderer or renderNodes not available!');
-        }
-
-        // Add to scene
-        scene.add.existing(this);
+        // Initialize render nodes using RenderNodes component
+        this.initRenderNodes(this._defaultRenderNodesMap);
 
         // Initial build
         this.rebuildText();
-    }
-
-    // ========================================================================
-    // Position
-    // ========================================================================
+    },
 
     /**
-     * Set position
+     * The default render nodes for this Game Object.
      */
-    setPosition(x: number, y: number): this {
-        this.x = x;
-        this.y = y;
-        return this;
-    }
-
-    // ========================================================================
-    // Rendering Properties
-    // ========================================================================
-
-    /**
-     * Set alpha/opacity (0-1)
-     */
-    setAlpha(value: number): this {
-        this.alpha = value;
-        return this;
-    }
-
-    /**
-     * Set tint color (0xRRGGBB format)
-     */
-    setTint(value: number): this {
-        this.tint = value;
-        return this;
-    }
-
-    /**
-     * Set blend mode
-     */
-    setBlendMode(value: number): this {
-        this.blendMode = value;
-        return this;
-    }
-
-    /**
-     * Set visibility
-     */
-    setVisible(value: boolean): this {
-        this.visible = value;
-        return this;
-    }
+    _defaultRenderNodesMap: {
+        get: function () {
+            return DefaultMSDFNodes;
+        }
+    },
 
     // ========================================================================
     // Text Properties
@@ -257,57 +299,56 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
     /**
      * Set the text content
      */
-    setText(text: string): this {
+    setText: function (text: string) {
         if (this._text !== text) {
             this._text = text;
             this.needsRebuild = true;
         }
         return this;
-    }
+    },
 
     /**
      * Get the text content
      */
-    getText(): string {
+    getText: function (): string {
         return this._text;
-    }
+    },
 
     /**
      * Set font size
      */
-    setFontSize(size: number): this {
+    setFontSize: function (size: number) {
         if (this._fontSize !== size) {
             this._fontSize = size;
             this.needsRebuild = true;
         }
         return this;
-    }
+    },
 
     /**
      * Get font size
      */
-    getFontSize(): number {
+    getFontSize: function (): number {
         return this._fontSize;
-    }
+    },
 
     /**
      * Set text color (0-255 range)
      */
-    setColor(r: number, g: number, b: number, a: number = 255): this {
+    setColor: function (r: number, g: number, b: number, a: number = 255) {
         this._color = {
             r: r / 255,
             g: g / 255,
             b: b / 255,
             a: a / 255
         };
-        // Color will be applied during rendering (no need to update individual shaders)
         return this;
-    }
+    },
 
     /**
      * Set text color from hex string
      */
-    setColorHex(hex: string, alpha: number = 1): this {
+    setColorHex: function (hex: string, alpha: number = 1) {
         const rgb = Phaser.Display.Color.HexStringToColor(hex);
         this._color = {
             r: rgb.r / 255,
@@ -316,84 +357,84 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
             a: alpha
         };
         return this;
-    }
+    },
 
     /**
      * Set text alignment
      */
-    setAlign(align: TextAlign): this {
+    setAlign: function (align: TextAlign) {
         if (this._align !== align) {
             this._align = align;
             this.needsRebuild = true;
         }
         return this;
-    }
+    },
 
     /**
      * Set line spacing
      */
-    setLineSpacing(spacing: number): this {
+    setLineSpacing: function (spacing: number) {
         if (this._lineSpacing !== spacing) {
             this._lineSpacing = spacing;
             this.needsRebuild = true;
         }
         return this;
-    }
+    },
 
     /**
      * Set maximum text width for word wrapping
      * @param width Maximum width in pixels (0 = no wrapping)
      */
-    setMaxWidth(width: number): this {
+    setMaxWidth: function (width: number) {
         if (this._maxWidth !== width) {
             this._maxWidth = width;
             this.needsRebuild = true;
         }
         return this;
-    }
+    },
 
     /**
      * Get maximum text width for word wrapping
      */
-    getMaxWidth(): number {
+    getMaxWidth: function (): number {
         return this._maxWidth;
-    }
+    },
 
     /**
      * Set word wrap character code
      * @param charCode Character code to wrap on (default: 32 for space)
      */
-    setWordWrapCharCode(charCode: number): this {
+    setWordWrapCharCode: function (charCode: number) {
         if (this._wordWrapCharCode !== charCode) {
             this._wordWrapCharCode = charCode;
             this.needsRebuild = true;
         }
         return this;
-    }
+    },
 
     /**
      * Get word wrap character code
      */
-    getWordWrapCharCode(): number {
+    getWordWrapCharCode: function (): number {
         return this._wordWrapCharCode;
-    }
+    },
 
     /**
      * Set display callback for per-character effects
      * @param callback Function called for each character during rendering
      */
-    setDisplayCallback(callback: DisplayCallback | undefined): this {
+    setDisplayCallback: function (callback: DisplayCallback | undefined) {
         this.displayCallback = callback;
         return this;
-    }
+    },
 
     /**
      * Clear display callback
      */
-    clearDisplayCallback(): this {
+    clearDisplayCallback: function () {
         this.displayCallback = undefined;
         return this;
-    }
+    },
 
     /**
      * Set outline for the text
@@ -401,29 +442,29 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
      * @param color Outline color as 0xRRGGBB
      * @param alpha Outline alpha (0-1)
      */
-    setOutline(width: number, color: number, alpha: number = 1): this {
+    setOutline: function (width: number, color: number, alpha: number = 1) {
         this._outlineWidth = width;
         const r = ((color >> 16) & 0xFF) / 255;
         const g = ((color >> 8) & 0xFF) / 255;
         const b = (color & 0xFF) / 255;
         this._outlineColor = { r, g, b, a: alpha };
         return this;
-    }
+    },
 
     /**
      * Clear outline effect
      */
-    clearOutline(): this {
+    clearOutline: function () {
         this._outlineWidth = 0;
         return this;
-    }
+    },
 
     /**
      * Check if outline is enabled
      */
-    hasOutline(): boolean {
+    hasOutline: function (): boolean {
         return this._outlineWidth > 0;
-    }
+    },
 
     /**
      * Set shadow for the text
@@ -432,7 +473,7 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
      * @param color Shadow color as 0xRRGGBB
      * @param alpha Shadow alpha (0-1)
      */
-    setShadow(offsetX: number, offsetY: number, color: number = 0x000000, alpha: number = 0.5): this {
+    setShadow: function (offsetX: number, offsetY: number, color: number = 0x000000, alpha: number = 0.5) {
         this._shadowOffset = { x: offsetX, y: offsetY };
         const r = ((color >> 16) & 0xFF) / 255;
         const g = ((color >> 8) & 0xFF) / 255;
@@ -440,22 +481,22 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
         this._shadowColor = { r, g, b };
         this._shadowAlpha = alpha;
         return this;
-    }
+    },
 
     /**
      * Clear shadow effect
      */
-    clearShadow(): this {
+    clearShadow: function () {
         this._shadowOffset = { x: 0, y: 0 };
         return this;
-    }
+    },
 
     /**
      * Check if shadow is enabled
      */
-    hasShadow(): boolean {
+    hasShadow: function (): boolean {
         return this._shadowOffset.x !== 0 || this._shadowOffset.y !== 0;
-    }
+    },
 
     // ========================================================================
     // Measurement
@@ -464,32 +505,23 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
     /**
      * Get the width of the rendered text
      */
-    getTextWidth(): number {
+    getTextWidth: function (): number {
         const { width } = this.font.measureText(this._text, this._fontSize);
         return width;
-    }
+    },
 
     /**
      * Get the height of the rendered text
      */
-    getTextHeight(): number {
+    getTextHeight: function (): number {
         const { height } = this.font.measureText(this._text, this._fontSize);
         return height;
-    }
+    },
 
     /**
      * Get detailed text bounds including line information
      */
-    getTextBounds(): {
-        width: number;
-        height: number;
-        lines: {
-            count: number;
-            lengths: number[];
-            shortest: number;
-            longest: number;
-        };
-    } {
+    getTextBounds: function () {
         // Get text to measure (with word wrapping if enabled)
         let textToMeasure = this._text;
         if (this._maxWidth > 0) {
@@ -508,27 +540,11 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
                 longest: lineData.longest
             }
         };
-    }
+    },
 
     // ========================================================================
     // Rendering
     // ========================================================================
-
-    /**
-     * WebGL rendering method
-     * Called by Phaser's renderer when this GameObject needs to be drawn
-     * Note: In Phaser's rendering pipeline, 'this' is NOT the GameObject - use 'src' instead
-     */
-    renderWebGL(renderer: any, src: this, drawingContext: any, parentMatrix: any): void {
-        // Rebuild if needed (use src, not this!)
-        if (src.needsRebuild) {
-            src.rebuildText();
-            src.needsRebuild = false;
-        }
-
-        // Delegate to MSDFTextWebGLRenderer
-        MSDFTextWebGLRenderer(renderer, src, drawingContext, parentMatrix);
-    }
 
     /**
      * Word wrap text to fit within maxWidth
@@ -536,7 +552,7 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
      * @param maxWidth Maximum width in pixels
      * @returns Wrapped text with newlines inserted
      */
-    private wrapText(text: string, maxWidth: number): string {
+    wrapText: function (text: string, maxWidth: number): string {
         if (maxWidth <= 0 || !text || text.length === 0) {
             return text;
         }
@@ -554,7 +570,6 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
             // Build words and measure
             let currentLine = '';
             let currentWord = '';
-            let prevCharCode = 0;
 
             for (let i = 0; i < line.length; i++) {
                 const charCode = line.charCodeAt(i);
@@ -576,7 +591,6 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
                     }
 
                     currentWord = '';
-                    prevCharCode = charCode;
                 } else {
                     // Add character to current word
                     currentWord += char;
@@ -603,13 +617,13 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
         }
 
         return wrappedLines.join('\n');
-    }
+    },
 
     /**
      * Rebuild character layout data
      * This calculates positions and UVs for all characters but doesn't create GameObjects
      */
-    private rebuildText(): void {
+    rebuildText: function () {
         // Clear existing character data
         this.clearCharacters();
 
@@ -695,12 +709,12 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
 
         // Apply alignment
         this.applyAlignment();
-    }
+    },
 
     /**
      * Apply text alignment to character positions
      */
-    private applyAlignment(): void {
+    applyAlignment: function () {
         if (this._align === 'left' || this._characters.length === 0) {
             return;
         }
@@ -718,14 +732,14 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
         for (const char of this._characters) {
             char.x += offset;
         }
-    }
+    },
 
     /**
      * Clear all character data
      */
-    private clearCharacters(): void {
+    clearCharacters: function () {
         this._characters = [];
-    }
+    },
 
     // ========================================================================
     // Cleanup
@@ -734,10 +748,9 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
     /**
      * Destroy the text object
      */
-    destroy(fromScene?: boolean): void {
+    preDestroy: function () {
         this.clearCharacters();
-        super.destroy(fromScene);
-    }
+    },
 
     // ========================================================================
     // Debug
@@ -746,7 +759,7 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
     /**
      * Get debug information
      */
-    getDebugInfo(): string {
+    getDebugInfo: function (): string {
         return [
             `Text: "${this._text}"`,
             `Font: ${this.font.face}`,
@@ -756,12 +769,13 @@ export class MSDFText extends Phaser.GameObjects.GameObject {
             `Align: ${this._align}`,
             `Color: rgba(${(this._color.r * 255).toFixed(0)}, ${(this._color.g * 255).toFixed(0)}, ${(this._color.b * 255).toFixed(0)}, ${this._color.a.toFixed(2)})`
         ].join('\n');
-    }
+    },
 
     /**
      * Print debug info to console
      */
-    printDebugInfo(): void {
+    printDebugInfo: function () {
         // Debug method intentionally left empty - use getDebugInfo() instead
     }
-}
+
+});

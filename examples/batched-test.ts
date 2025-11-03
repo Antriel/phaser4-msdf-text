@@ -11,15 +11,15 @@
 
 import Phaser from 'phaser';
 import { loadMSDFFont, getMSDFFont } from '../src/MSDFLoader';
-import { MSDFText } from '../src/MSDFTextBatched';  // NEW batched version
+import type { MSDFTextInstance } from '../src/MSDFTextBatched';
 import { registerMSDFBatchHandler } from '../src/registerMSDFBatchHandler';
 import * as SPECTOR from "phaser3spectorjs";
 
 class BatchedTestScene extends Phaser.Scene {
-  private text1?: MSDFText;
-  private text2?: MSDFText;
-  private text3?: MSDFText;
-  private fpsText?: MSDFText;
+  private text1?: MSDFTextInstance;
+  private text2?: MSDFTextInstance;
+  private text3?: MSDFTextInstance;
+  private fpsText?: MSDFTextInstance;
 
   constructor() {
     super({ key: "BatchedTestScene" });
@@ -39,8 +39,8 @@ class BatchedTestScene extends Phaser.Scene {
       return;
     }
 
-    // Test 1: Simple text with rotation
-    this.text1 = new MSDFText(this, 400, 100, font, "Batched MSDF Text!", 48);
+    // Test 1: Simple text with rotation (using factory pattern)
+    this.text1 = this.add.msdfTextBatched(400, 100, font, "Batched MSDF Text!", 48);
     this.text1.setColorHex("#00ff00");
     this.text1.setAlign("center");
     // Add rotation animation to test transform support
@@ -52,9 +52,8 @@ class BatchedTestScene extends Phaser.Scene {
       ease: "Linear",
     });
 
-    // Test 2: Multi-line text
-    this.text2 = new MSDFText(
-      this,
+    // Test 2: Multi-line text (using factory pattern)
+    this.text2 = this.add.msdfTextBatched(
       400,
       200,
       font,
@@ -72,7 +71,7 @@ class BatchedTestScene extends Phaser.Scene {
       "Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.\n" +
       "Duis aute irure dolor in reprehenderit in voluptate velit esse.";
 
-    this.text3 = new MSDFText(this, 50, 350, font, loremIpsum, 24);
+    this.text3 = this.add.msdfTextBatched(50, 350, font, loremIpsum, 24);
     this.text3.setColorHex("#ffff00");
     this.text3.setAlign("left");
     this.text3.scaleX = 10;
@@ -86,8 +85,8 @@ class BatchedTestScene extends Phaser.Scene {
       ease: "Sine.easeInOut",
     });
 
-    // FPS counter (updates every frame to test dynamic text)
-    this.fpsText = new MSDFText(this, 10, 10, font, "FPS: --", 20);
+    // FPS counter (updates every frame to test dynamic text, using factory pattern)
+    this.fpsText = this.add.msdfTextBatched(10, 10, font, "FPS: --", 20);
     this.fpsText.setColorHex("#ff0000");
 
     // Print debug info
