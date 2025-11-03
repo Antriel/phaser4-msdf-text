@@ -203,16 +203,20 @@ const config: Phaser.Types.Core.GameConfig = {
   height: 600,
   backgroundColor: "#1a1a2e",
   scene: OutlineTestScene,
-  parent: "game-container",
+  scale: {
+    mode: Phaser.Scale.RESIZE,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+  },
+  callbacks: {
+    postBoot: (game) => {
+      // Initialize Spector.js for WebGL debugging
+      const spector = new SPECTOR.Spector();
+      spector.displayUI();
+    },
+  },
 };
 
 const game = new Phaser.Game(config);
 
 // Register MSDF batch handler
 registerMSDFBatchHandler(game);
-
-// Enable Spector.js for WebGL debugging
-if ((window as any).SPECTOR) {
-  const spector = new SPECTOR.Spector();
-  spector.displayUI();
-}
