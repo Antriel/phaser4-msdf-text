@@ -10,7 +10,7 @@
  */
 
 import Phaser from 'phaser';
-import { loadMSDFFont, getMSDFFont } from '../src/MSDFLoader';
+import { installMSDFPlugin } from '../src/MSDFPlugin';
 import type { MSDFTextInstance } from '../src/MSDFTextBatched';
 import { registerMSDFBatchHandler } from '../src/registerMSDFBatchHandler';
 import * as SPECTOR from "phaser3spectorjs";
@@ -27,13 +27,15 @@ class BatchedTestScene extends Phaser.Scene {
 
   preload() {
     console.log("Loading MSDF font...");
-    loadMSDFFont(this, "arial", "assets/fonts/Arial");
+    // Load MSDF font using Phaser's loader plugin
+    this.load.msdfFont("arial", "assets/fonts/Arial");
   }
 
   create() {
     console.log("Creating batched MSDF text...");
 
-    const font = getMSDFFont(this, "arial");
+    // Get font from MSDF cache
+    const font = this.cache.custom.msdfFont.get("arial");
     if (!font) {
       console.error("Failed to load font!");
       return;
@@ -138,6 +140,9 @@ const config: Phaser.Types.Core.GameConfig = {
   },
   callbacks: {
     postBoot: (game) => {
+      // Install MSDF plugin (adds custom font cache)
+      installMSDFPlugin(game);
+
       // Initialize Spector.js for WebGL debugging
       const spector = new SPECTOR.Spector();
       spector.displayUI();
