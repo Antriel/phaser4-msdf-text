@@ -161,10 +161,15 @@ export interface MSDFFontData {
 // ============================================================================
 
 /**
- * Convert normalized coordinates to UV coordinates
+ * Convert atlas pixel bounds to OpenGL UV coordinates.
+ *
+ * Output is always semantically (v0 = bottom of glyph in texture, v1 = top of glyph),
+ * with v0 < v1, regardless of the source yOrigin.
+ *
+ * - yOrigin "top": atlas pixel Y grows downward, so we flip with `1 - y/H`.
+ * - yOrigin "bottom": atlas pixel Y already matches OpenGL UV (Y up); no flip.
  */
-function planeBoundsToUV(
-    planeBounds: MSDFPlaneBounds,
+function atlasBoundsToUV(
     atlasBounds: MSDFAtlasBounds,
     atlasWidth: number,
     atlasHeight: number,
@@ -173,10 +178,15 @@ function planeBoundsToUV(
     const u0 = atlasBounds.left / atlasWidth;
     const u1 = atlasBounds.right / atlasWidth;
 
-    // IMPORTANT: Phaser's texture coordinates are always bottom-up (OpenGL convention)
-    // regardless of what yOrigin says in the JSON. We need to flip V coordinates.
-    const v0 = 1 - (atlasBounds.bottom / atlasHeight);
-    const v1 = 1 - (atlasBounds.top / atlasHeight);
+    let v0: number;
+    let v1: number;
+    if (yOrigin === 'top') {
+        v0 = 1 - (atlasBounds.bottom / atlasHeight);
+        v1 = 1 - (atlasBounds.top / atlasHeight);
+    } else {
+        v0 = atlasBounds.bottom / atlasHeight;
+        v1 = atlasBounds.top / atlasHeight;
+    }
 
     return { u0, v0, u1, v1 };
 }
@@ -190,6 +200,7 @@ function planeBoundsToUV(
  */
 export function parseMSDFFont(json: MSDFFontJSON, fontName: string = 'MSDF Font'): MSDFFontData {
     const { atlas, metrics, glyphs, kerning = [] } = json;
+    const isYUp = atlas.yOrigin === 'bottom';
 
     // Initialize character map
     const chars = new Map<number, MSDFCharacter>();
@@ -221,32 +232,39 @@ export function parseMSDFFont(json: MSDFFontJSON, fontName: string = 'MSDF Font'
         }
 
         // Calculate texture coordinates
-        const uvs = planeBoundsToUV(
-            planeBounds,
+        const uvs = atlasBoundsToUV(
             atlasBounds,
             atlas.width,
             atlas.height,
             atlas.yOrigin
         );
 
-        // Calculate pixel dimensions (atlas)
-        const width = atlasBounds.right - atlasBounds.left;
-        const height = atlasBounds.bottom - atlasBounds.top;
+        // Calculate pixel dimensions (atlas).
+        // With yOrigin=bottom, atlasBounds.top > atlasBounds.bottom, so swap order to stay positive.
+        const width = Math.abs(atlasBounds.right - atlasBounds.left);
+        const height = Math.abs(atlasBounds.bottom - atlasBounds.top);
 
-        // Calculate normalized dimensions (from planeBounds)
+        // Calculate normalized dimensions and yOffset, normalized to Y-down convention.
+        // Y-down (yOrigin=top): planeBounds.top is negative for above-baseline glyphs,
+        //   normalizedHeight = bottom - top.
+        // Y-up (yOrigin=bottom): planeBounds.top is positive for above-baseline glyphs,
+        //   normalizedHeight = top - bottom; negate top to convert to Y-down.
         const normalizedWidth = planeBounds.right - planeBounds.left;
-        const normalizedHeight = planeBounds.bottom - planeBounds.top;
+        const normalizedHeight = isYUp
+            ? planeBounds.top - planeBounds.bottom
+            : planeBounds.bottom - planeBounds.top;
+        const yOffset = isYUp ? -planeBounds.top : planeBounds.top;
 
         chars.set(unicode, {
             id: unicode,
-            x: atlasBounds.left,
-            y: atlasBounds.top,
+            x: Math.min(atlasBounds.left, atlasBounds.right),
+            y: Math.min(atlasBounds.top, atlasBounds.bottom),
             width: width,
             height: height,
             normalizedWidth: normalizedWidth,
             normalizedHeight: normalizedHeight,
             xOffset: planeBounds.left,
-            yOffset: planeBounds.top,
+            yOffset: yOffset,
             xAdvance: advance,
             u0: uvs.u0,
             v0: uvs.v0,
@@ -264,15 +282,19 @@ export function parseMSDFFont(json: MSDFFontJSON, fontName: string = 'MSDF Font'
         }
     }
 
+    // Normalize vertical metrics to Y-down convention so consumers can treat all fonts uniformly.
+    // In Y-down: ascender is negative (above baseline), descender/underlineY are positive (below baseline).
+    const verticalSign = isYUp ? -1 : 1;
+
     // Build font data
     const fontData: MSDFFontData = {
         face: fontName,
         pointSize: atlas.size,
         lineHeight: metrics.lineHeight,
         emSize: metrics.emSize,
-        ascender: metrics.ascender,
-        descender: metrics.descender,
-        underlineY: metrics.underlineY,
+        ascender: verticalSign * metrics.ascender,
+        descender: verticalSign * metrics.descender,
+        underlineY: verticalSign * metrics.underlineY,
         underlineThickness: metrics.underlineThickness,
         atlasWidth: atlas.width,
         atlasHeight: atlas.height,

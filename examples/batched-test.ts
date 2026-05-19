@@ -28,7 +28,13 @@ class BatchedTestScene extends Phaser.Scene {
   preload() {
     console.log("Loading MSDF font...");
     // Load MSDF font using Phaser's loader plugin
-    this.load.msdfFont("arial", "assets/fonts/Arial");
+    this.load.msdfFont(
+      "arial",
+      // "assets/fonts/Arial.png",
+      // "assets/fonts/Arial.json",
+      "assets/fonts/Chubby_Thumbs.png",
+      "assets/fonts/Chubby_Thumbs.json",
+    );
   }
 
   create() {
@@ -133,6 +139,9 @@ const config: Phaser.Types.Core.GameConfig = {
   width: 800,
   height: 600,
   backgroundColor: "#2d2d2d",
+  // Enables the OES_standard_derivatives WebGL extension that MSDF AA needs.
+  // The flag name is misleading — Phaser only exposes the extension when this is true.
+  smoothPixelArt: true,
   scene: BatchedTestScene,
   scale: {
     mode: Phaser.Scale.RESIZE,

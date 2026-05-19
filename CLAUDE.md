@@ -19,16 +19,21 @@ Based on [Ceramic Engine](https://github.com/ceramic-engine/ceramic) (MIT licens
 **MSDF Rendering**:
 - Distance field data stored in RGB channels of texture atlas
 - Fragment shader uses `median()` function to extract signed distance
-- Simple `smoothstep()` provides clean anti-aliasing without derivatives
+- Anti-aliasing uses screen-space derivatives (`fwidth(dist)`) so AA quality is
+  independent of the atlas's `pxRange` and stays crisp at any zoom level
 - **Premultiplied alpha required** for Phaser 4 Shader GameObject
 - LINEAR texture filtering is mandatory (not NEAREST)
-- Critical parameter: `pxRange` (distance range) must match between generation and runtime
+- `pxRange` (distance range) is read from the font JSON and only matters for the
+  outline shader path; AA itself no longer depends on it
 
 **Shader Requirements**:
 - Fragment shader calculates opacity based on signed distance field
 - Premultiplied alpha: `rgb = color.rgb * alpha`
 - Uniforms: `iChannel0` (texture), `uTexSize`, `uPxRange`, `uTextColor`
-- No derivatives needed - simplified approach works perfectly
+- Requires the `OES_standard_derivatives` WebGL extension. Phaser 4 only enables
+  it when the game config sets `smoothPixelArt: true` (misleading flag name —
+  it's the same extension used elsewhere by Phaser's SmoothPixelArt addition).
+  Consumers of this plugin must set that flag in their Phaser game config.
 
 **Font Data Structure**:
 - BMFont format with custom `distanceField` metadata line
@@ -87,7 +92,9 @@ MSDF fonts **MUST** use LINEAR filtering. NEAREST filtering will break the dista
 
 ### Phaser 4 Shader Discoveries
 - **Premultiplied alpha is mandatory**: Phaser's Shader GameObject expects `vec4(color.rgb * alpha, alpha)`
-- **Derivatives not required**: Simple `smoothstep(0.4, 0.6, median)` works perfectly
+- **Derivatives are required**: AA uses `fwidth(dist)` so it scales correctly
+  with `pxRange` and zoom. Game config must set `smoothPixelArt: true` to make
+  Phaser enable the `OES_standard_derivatives` extension.
 - **Default vertex shader sufficient**: No custom vertex shader needed
 - **Texture binding**: Use `iChannel0` for texture sampler (texture unit 0)
 
@@ -102,10 +109,9 @@ MSDF fonts **MUST** use LINEAR filtering. NEAREST filtering will break the dista
 **All core phases complete!** The MSDF font rendering system is fully functional with batched rendering.
 
 ### ✅ Phase 1: Shader Implementation - COMPLETE
-- Fragment shader with median() and smoothstep()
+- Fragment shader with median() and derivative-based AA
 - Premultiplied alpha implementation
 - TypeScript helper (MSDFShader.ts)
-- Clean, simplified approach (no derivatives needed)
 
 ### ✅ Phase 2: MSDFText GameObject - COMPLETE
 - JSON Parser (msdf-atlas-gen format)
