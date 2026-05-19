@@ -21,12 +21,13 @@ const GetAdvancedValue = Phaser.Utils.Objects.GetAdvancedValue;
 export interface MSDFTextConfig extends Phaser.Types.GameObjects.GameObjectConfig {
     /** Key of the MSDF font in the `msdfFont` cache. */
     font: string;
-    text?: string;
+    text?: string | string[];
     fontSize?: number;
     color?: ColorValue;
     colorAlpha?: number;
     align?: 'left' | 'center' | 'right';
     lineSpacing?: number;
+    letterSpacing?: number;
     maxWidth?: number;
 }
 
@@ -50,7 +51,8 @@ GameObjectCreator.register('msdfText', function (
 
     // Get MSDF-specific config values
     const font = GetAdvancedValue(config, 'font', '');
-    const text = GetAdvancedValue(config, 'text', '');
+    const rawText = GetAdvancedValue(config, 'text', '');
+    const text = Array.isArray(rawText) ? rawText.join('\n') : rawText;
     const fontSize = GetAdvancedValue(config, 'fontSize', 42);
 
     // Create the text object (MSDFText will warn if the font key is invalid)
@@ -81,6 +83,11 @@ GameObjectCreator.register('msdfText', function (
     const lineSpacing = GetAdvancedValue(config, 'lineSpacing', null);
     if (lineSpacing !== null) {
         msdfText.setLineSpacing(lineSpacing);
+    }
+
+    const letterSpacing = GetAdvancedValue(config, 'letterSpacing', null);
+    if (letterSpacing !== null) {
+        msdfText.setLetterSpacing(letterSpacing);
     }
 
     const maxWidth = GetAdvancedValue(config, 'maxWidth', null);

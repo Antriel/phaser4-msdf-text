@@ -28,11 +28,12 @@ GameObjectFactory.register('msdfText', function (
     x: number,
     y: number,
     font: string,
-    text: string = '',
+    text: string | string[] = '',
     fontSize: number = 42
 ) {
+    const normalized = Array.isArray(text) ? text.join('\n') : text;
     // @ts-ignore - 'this' context is GameObjectFactory
-    return this.displayList.add(new MSDFText(this.scene, x, y, font, text, fontSize));
+    return this.displayList.add(new MSDFText(this.scene, x, y, font, normalized, fontSize));
 });
 
 //  When registering a factory function 'this' refers to the GameObjectFactory context.

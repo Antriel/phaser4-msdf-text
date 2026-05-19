@@ -76,15 +76,17 @@ export class MSDFFont {
     // ========================================================================
 
     /**
-     * Measure the width of a text string at a given font size
+     * Measure the width of a text string at a given font size.
+     * @param letterSpacing Extra pixels added after every character (in pixel units, not scaled).
      */
-    measureText(text: string, fontSize: number): { width: number; height: number } {
+    measureText(text: string, fontSize: number, letterSpacing: number = 0): { width: number; height: number } {
         if (!text || text.length === 0) {
             return { width: 0, height: fontSize * this.data.lineHeight };
         }
 
         let width = 0;
         let prevCharCode = 0;
+        let count = 0;
 
         for (let i = 0; i < text.length; i++) {
             const charCode = text.charCodeAt(i);
@@ -105,6 +107,13 @@ export class MSDFFont {
             }
 
             prevCharCode = charCode;
+            count++;
+        }
+
+        // Letter spacing is added after every character's advance (matching
+        // BitmapText), so a measured width includes a trailing slot.
+        if (letterSpacing !== 0 && count > 0) {
+            width += letterSpacing * count;
         }
 
         return {
@@ -145,7 +154,8 @@ export class MSDFFont {
     measureLines(
         text: string,
         fontSize: number,
-        lineSpacing: number = 0
+        lineSpacing: number = 0,
+        letterSpacing: number = 0
     ): {
         lines: string[];
         widths: number[];
@@ -160,7 +170,7 @@ export class MSDFFont {
         let minWidth = Infinity;
 
         for (const line of lines) {
-            const { width } = this.measureText(line, fontSize);
+            const { width } = this.measureText(line, fontSize, letterSpacing);
             widths.push(width);
             maxWidth = Math.max(maxWidth, width);
             if (line.length > 0) {

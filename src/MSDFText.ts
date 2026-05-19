@@ -113,6 +113,7 @@ export interface MSDFTextInstance extends
     _color: { r: number; g: number; b: number; a: number };
     _align: TextAlign;
     _lineSpacing: number;
+    _letterSpacing: number;
     _maxWidth: number;
     wordWrapCharCode: number;
     _outlineWidth: number;
@@ -134,19 +135,23 @@ export interface MSDFTextInstance extends
     displayHeight: number;
 
     // Property accessors (with side effects — trigger rebuild on change)
-    text: string;
+    text: string | string[];
     fontSize: number;
     align: TextAlign;
     lineSpacing: number;
+    letterSpacing: number;
     maxWidth: number;
 
     // Chainable setters
     setText(text: string | string[]): this;
+    setFont(font: string, size?: number, align?: TextAlign): this;
     setFontSize(size: number): this;
     setColor(color: ColorValue, alpha?: number): this;
     setAlign(align: TextAlign): this;
     setLineSpacing(spacing: number): this;
+    setLetterSpacing(spacing: number): this;
     setMaxWidth(width: number): this;
+    setDisplaySize(width: number, height: number): this;
     setDisplayCallback(callback: DisplayCallback | undefined): this;
     clearDisplayCallback(): this;
     setOutline(width: number, color?: ColorValue, alpha?: number): this;
@@ -243,6 +248,7 @@ export const MSDFText = new Class({
         this._color = { r: 1, g: 1, b: 1, a: 1 };
         this._align = 'left';
         this._lineSpacing = 0;
+        this._letterSpacing = 0;
         this._maxWidth = 0; // 0 = no word wrapping
         this.wordWrapCharCode = 32; // space character
 
@@ -316,23 +322,42 @@ export const MSDFText = new Class({
     // ========================================================================
 
     /**
-     * The text content. Setting this triggers a rebuild on next render.
+     * The text content. Assigning routes through `setText`, so arrays are
+     * joined with newlines and falsy values become empty strings.
      */
     text: {
         get: function (this: any): string { return this._text; },
-        set: function (this: any, value: string) {
-            if (this._text !== value) {
-                this._text = value;
-                this._dirty = true;
-            }
+        set: function (this: any, value: string | string[]) {
+            this.setText(value);
         }
     },
 
     /**
-     * Set the text content (chainable)
+     * Set the text content (chainable).
+     *
+     * Arrays are joined with `'\n'`. Falsy values (other than 0) become the
+     * empty string. Width/height/displayOrigin are refreshed immediately so
+     * code that reads them right after `setText` sees current values.
      */
-    setText: function (text: string) {
-        this.text = text;
+    setText: function (value: string | string[]) {
+        // Permissive falsy handling matches BitmapText: 0 stays as "0", but
+        // null/undefined/'' become ''.
+        if (!value && (value as unknown) !== 0) {
+            value = '';
+        }
+
+        if (Array.isArray(value)) {
+            value = value.join('\n');
+        }
+
+        const str = String(value);
+        if (str !== this._text) {
+            this._text = str;
+            this._dirty = true;
+            // Force a rebuild now so width/height/displayOrigin are correct
+            // for any code that reads them between setText and the next render.
+            this.updateDisplayOrigin();
+        }
         return this;
     },
 
@@ -354,6 +379,43 @@ export const MSDFText = new Class({
      */
     setFontSize: function (size: number) {
         this.fontSize = size;
+        return this;
+    },
+
+    /**
+     * Swap the font used by this text. Existing text, size, and alignment are
+     * preserved unless overridden via the arguments.
+     *
+     * @param font  Key of the font in the `msdfFont` cache.
+     * @param size  Optional font size in pixels. Defaults to the current size.
+     * @param align Optional alignment. Defaults to the current alignment.
+     */
+    setFont: function (font: string, size?: number, align?: TextAlign) {
+        const msdfCache = this.scene.sys.cache.custom.msdfFont;
+        const fontData: MSDFFont | undefined = msdfCache ? msdfCache.get(font) : undefined;
+
+        if (!fontData) {
+            console.warn('Invalid MSDFText font key: ' + font);
+            return this;
+        }
+
+        this.font = font;
+        this.fontData = fontData;
+        if (size !== undefined) this._fontSize = size;
+        if (align !== undefined) this._align = align;
+
+        this.setTexture(fontData.textureKey, undefined, false, false);
+        this._dirty = true;
+        this.updateDisplayOrigin();
+        return this;
+    },
+
+    /**
+     * Set the display size of this text (in pixels) by adjusting its scale.
+     */
+    setDisplaySize: function (width: number, height: number) {
+        this.displayWidth = width;
+        this.displayHeight = height;
         return this;
     },
 
@@ -391,6 +453,29 @@ export const MSDFText = new Class({
      */
     setAlign: function (align: TextAlign) {
         this.align = align;
+        return this;
+    },
+
+    /**
+     * Extra horizontal space (in pixels) added between every character.
+     * Can be negative to tighten spacing. Setting this triggers a rebuild
+     * on next render.
+     */
+    letterSpacing: {
+        get: function (this: any): number { return this._letterSpacing; },
+        set: function (this: any, value: number) {
+            if (this._letterSpacing !== value) {
+                this._letterSpacing = value;
+                this._dirty = true;
+            }
+        }
+    },
+
+    /**
+     * Set letter spacing in pixels (chainable). Positive widens, negative tightens.
+     */
+    setLetterSpacing: function (spacing: number) {
+        this.letterSpacing = spacing;
         return this;
     },
 
@@ -601,7 +686,9 @@ export const MSDFText = new Class({
             textToMeasure = this.wrapText(this._text, this._maxWidth);
         }
 
-        const lineData = this.fontData.measureLines(textToMeasure, this._fontSize, this._lineSpacing);
+        const lineData = this.fontData.measureLines(
+            textToMeasure, this._fontSize, this._lineSpacing, this._letterSpacing
+        );
 
         return {
             width: lineData.totalWidth,
@@ -652,7 +739,7 @@ export const MSDFText = new Class({
                 if (charCode === this.wordWrapCharCode) {
                     // Try adding the current word (including the wrap character)
                     const testLine = currentLine + currentWord + char;
-                    const { width } = this.fontData.measureText(testLine, this._fontSize);
+                    const { width } = this.fontData.measureText(testLine, this._fontSize, this._letterSpacing);
 
                     if (width > maxWidth && currentLine.length > 0) {
                         // Word doesn't fit, wrap to new line
@@ -741,7 +828,7 @@ export const MSDFText = new Class({
 
             // Skip rendering for space (but still advance)
             if (charCode === 32) {
-                cursorX += char.xAdvance * this._fontSize;
+                cursorX += char.xAdvance * this._fontSize + this._letterSpacing;
                 prevCharCode = charCode;
                 continue;
             }
@@ -775,8 +862,8 @@ export const MSDFText = new Class({
                 originalY: charY
             });
 
-            // Advance cursor
-            cursorX += char.xAdvance * this._fontSize;
+            // Advance cursor (letter spacing applies after every character)
+            cursorX += char.xAdvance * this._fontSize + this._letterSpacing;
             prevCharCode = charCode;
         }
 
@@ -786,7 +873,9 @@ export const MSDFText = new Class({
         // Cache local bounds and refresh display origin so getBounds/origin work.
         // Clear dirty BEFORE updateDisplayOrigin so the width/height getters
         // it reads don't re-enter rebuildText.
-        const lineData = this.fontData.measureLines(textToRender, this._fontSize, this._lineSpacing);
+        const lineData = this.fontData.measureLines(
+            textToRender, this._fontSize, this._lineSpacing, this._letterSpacing
+        );
         this._width = lineData.totalWidth;
         this._height = lineData.totalHeight;
         this._dirty = false;
@@ -801,7 +890,7 @@ export const MSDFText = new Class({
             return;
         }
 
-        const textWidth = this.fontData.measureText(textToRender, this._fontSize).width;
+        const textWidth = this.fontData.measureText(textToRender, this._fontSize, this._letterSpacing).width;
         let offset = 0;
 
         if (this._align === 'center') {
