@@ -40,15 +40,8 @@ class BatchedTestScene extends Phaser.Scene {
   create() {
     console.log("Creating batched MSDF text...");
 
-    // Get font from MSDF cache
-    const font = this.cache.custom.msdfFont.get("arial");
-    if (!font) {
-      console.error("Failed to load font!");
-      return;
-    }
-
     // Test 1: Simple text with rotation (using factory pattern)
-    this.text1 = this.add.msdfText(400, 100, font, "Batched MSDF Text!", 48);
+    this.text1 = this.add.msdfText(400, 100, "arial", "Batched MSDF Text!", 48);
     this.text1.setColor("#00ff00");
     this.text1.setAlign("center");
     // Add rotation animation to test transform support
@@ -64,7 +57,7 @@ class BatchedTestScene extends Phaser.Scene {
     this.text2 = this.add.msdfText(
       400,
       200,
-      font,
+      "arial",
       "This is batched rendering!\nMultiple lines work too.\nMuch faster than Phase 3!",
       32
     );
@@ -79,7 +72,7 @@ class BatchedTestScene extends Phaser.Scene {
       "Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.\n" +
       "Duis aute irure dolor in reprehenderit in voluptate velit esse.";
 
-    this.text3 = this.add.msdfText(50, 350, font, loremIpsum, 24);
+    this.text3 = this.add.msdfText(50, 350, "arial", loremIpsum, 24);
     this.text3.setColor("#ffff00");
     this.text3.setAlign("left");
     this.text3.scaleX = 10;
@@ -94,7 +87,7 @@ class BatchedTestScene extends Phaser.Scene {
     });
 
     // FPS counter (updates every frame to test dynamic text, using factory pattern)
-    this.fpsText = this.add.msdfText(10, 10, font, "FPS: --", 20);
+    this.fpsText = this.add.msdfText(10, 10, "arial", "FPS: --", 20);
     this.fpsText.setColor("#ff0000");
 
     // Instructions

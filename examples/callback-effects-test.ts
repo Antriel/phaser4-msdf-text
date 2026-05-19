@@ -35,14 +35,8 @@ class CallbackEffectsTestScene extends Phaser.Scene {
   }
 
   create() {
-    const font = this.cache.custom.msdfFont?.get("arial");
-    if (!font) {
-      console.error("Failed to load font!");
-      return;
-    }
-
     // Effect 1: Wave (vertical sine wave)
-    this.waveText = this.add.msdfText(400, 60, font, "WAVE EFFECT", 36);
+    this.waveText = this.add.msdfText(400, 60, "arial", "WAVE EFFECT", 36);
     this.waveText.setColor("#00ff00");
     this.waveText.setAlign("center");
     this.waveText.setDisplayCallback((data: DisplayCallbackData) => {
@@ -51,7 +45,7 @@ class CallbackEffectsTestScene extends Phaser.Scene {
     });
 
     // Effect 2: Rainbow (gradient colors)
-    this.rainbowText = this.add.msdfText(400, 130, font, "RAINBOW COLORS", 36);
+    this.rainbowText = this.add.msdfText(400, 130, "arial", "RAINBOW COLORS", 36);
     this.rainbowText.setAlign("center");
     this.rainbowText.setDisplayCallback((data: DisplayCallbackData) => {
       const hue = (data.index * 30 + this.currentTime * 0.1) % 360;
@@ -65,7 +59,7 @@ class CallbackEffectsTestScene extends Phaser.Scene {
     });
 
     // Effect 3: Breathing (pulsing scale)
-    this.breathingText = this.add.msdfText(400, 200, font, "BREATHING", 36);
+    this.breathingText = this.add.msdfText(400, 200, "arial", "BREATHING", 36);
     this.breathingText.setColor("#ffff00");
     this.breathingText.setAlign("center");
     this.breathingText.setDisplayCallback((data: DisplayCallbackData) => {
@@ -75,7 +69,7 @@ class CallbackEffectsTestScene extends Phaser.Scene {
     });
 
     // Effect 4: Jiggle (random position offsets)
-    this.jiggleText = this.add.msdfText(400, 270, font, "JIGGLE!", 36);
+    this.jiggleText = this.add.msdfText(400, 270, "arial", "JIGGLE!", 36);
     this.jiggleText.setColor("#ff00ff");
     this.jiggleText.setAlign("center");
     this.jiggleText.setDisplayCallback((data: DisplayCallbackData) => {
@@ -88,7 +82,7 @@ class CallbackEffectsTestScene extends Phaser.Scene {
     });
 
     // Effect 5: Rotation (spinning characters)
-    this.rotationText = this.add.msdfText(400, 340, font, "SPINNING", 36);
+    this.rotationText = this.add.msdfText(400, 340, "arial", "SPINNING", 36);
     this.rotationText.setColor("#00ffff");
     this.rotationText.setAlign("center");
     this.rotationText.setDisplayCallback((data: DisplayCallbackData) => {
@@ -97,7 +91,7 @@ class CallbackEffectsTestScene extends Phaser.Scene {
     });
 
     // Effect 6: Combined (wave + rainbow + scale)
-    this.combinedText = this.add.msdfText(400, 450, font, "COMBINED EFFECTS!", 48);
+    this.combinedText = this.add.msdfText(400, 450, "arial", "COMBINED EFFECTS!", 48);
     this.combinedText.setAlign("center");
     this.combinedText.setDisplayCallback((data: DisplayCallbackData) => {
       // Wave

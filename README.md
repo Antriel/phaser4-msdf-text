@@ -63,9 +63,7 @@ class MyScene extends Phaser.Scene {
     }
 
     create() {
-        const font = this.cache.custom.msdfFont.get('arial');
-
-        const text = this.add.msdfText(400, 300, font, 'Hello, MSDF!', 48);
+        const text = this.add.msdfText(400, 300, 'arial', 'Hello, MSDF!', 48);
         text.setColor('#ffffff');
         text.setAlign('center');
         text.setOrigin(0.5);
@@ -78,7 +76,7 @@ Or via the creator API:
 ```ts
 const text = this.make.msdfText({
     x: 400, y: 300,
-    font,
+    font: 'arial',
     text: 'Hello, MSDF!',
     fontSize: 48,
     color: 0xffffff,
@@ -171,7 +169,9 @@ this.load.msdfFont({
 });
 ```
 
-Fonts land in `this.cache.custom.msdfFont` as parsed `MSDFFont` instances.
+Fonts land in `this.cache.custom.msdfFont` as parsed `MSDFFont` instances —
+`add.msdfText` looks them up by key automatically, but you can pull the
+`MSDFFont` directly if you need to inspect glyph metrics or measure text.
 
 > **Texture filtering:** MSDF rendering relies on linear interpolation across
 > the distance field. Phaser's default `LINEAR` filtering works correctly. If

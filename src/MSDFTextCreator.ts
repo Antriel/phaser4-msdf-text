@@ -7,7 +7,6 @@
 
 import Phaser from 'phaser';
 import { MSDFText, ColorValue } from './MSDFText';
-import { MSDFFont } from './MSDFFont';
 
 // @ts-ignore - Phaser internals not fully typed
 const GameObjectCreator = Phaser.GameObjects.GameObjectCreator;
@@ -20,7 +19,8 @@ const GetAdvancedValue = Phaser.Utils.Objects.GetAdvancedValue;
  * Configuration object for MSDFText
  */
 export interface MSDFTextConfig extends Phaser.Types.GameObjects.GameObjectConfig {
-    font: MSDFFont;
+    /** Key of the MSDF font in the `msdfFont` cache. */
+    font: string;
     text?: string;
     fontSize?: number;
     color?: ColorValue;
@@ -49,17 +49,11 @@ GameObjectCreator.register('msdfText', function (
     }
 
     // Get MSDF-specific config values
-    const font = GetAdvancedValue(config, 'font', null);
+    const font = GetAdvancedValue(config, 'font', '');
     const text = GetAdvancedValue(config, 'text', '');
     const fontSize = GetAdvancedValue(config, 'fontSize', 42);
 
-    if (!font) {
-        console.error('MSDFTextCreator: font is required in config');
-        // @ts-ignore - 'this' context is GameObjectCreator
-        return new MSDFText(this.scene, 0, 0, null as any, text, fontSize);
-    }
-
-    // Create the text object
+    // Create the text object (MSDFText will warn if the font key is invalid)
     // @ts-ignore - 'this' context is GameObjectCreator
     const msdfText = new MSDFText(this.scene, 0, 0, font, text, fontSize);
 

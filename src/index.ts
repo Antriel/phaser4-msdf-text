@@ -16,8 +16,7 @@
  *
  *   // In a scene:
  *   this.load.msdfFont('arial', 'assets/fonts/Arial.png', 'assets/fonts/Arial.json');
- *   const font = this.cache.custom.msdfFont.get('arial');
- *   const text = this.add.msdfText(100, 100, font, 'Hello World', 42);
+ *   const text = this.add.msdfText(100, 100, 'arial', 'Hello World', 42);
  */
 
 // Side-effect imports: register factory, creator, and loader, and apply

@@ -9,9 +9,9 @@
  * integration with Phaser's GameObject ecosystem.
  *
  * Usage:
- *   const text = scene.add.msdfText(x, y, font, 'Hello World', fontSize);
+ *   const text = scene.add.msdfText(x, y, 'arial', 'Hello World', fontSize);
  *   // or
- *   const text = scene.make.msdfText({ font, text: 'Hello', fontSize: 42, x: 100, y: 100 });
+ *   const text = scene.make.msdfText({ font: 'arial', text: 'Hello', fontSize: 42, x: 100, y: 100 });
  */
 
 import Phaser from 'phaser';
@@ -109,7 +109,8 @@ export interface MSDFTextInstance extends Phaser.GameObjects.GameObject {
     scrollFactorY: number;
 
     // Custom properties
-    font: MSDFFont;
+    font: string;
+    fontData: MSDFFont;
     _text: string;
     _fontSize: number;
     _color: { r: number; g: number; b: number; a: number };
@@ -214,7 +215,7 @@ export const MSDFText = new Class({
         scene: Phaser.Scene,
         x: number,
         y: number,
-        font: MSDFFont,
+        font: string,
         text: string = '',
         fontSize: number = 42
     ) {
@@ -222,6 +223,15 @@ export const MSDFText = new Class({
 
         // Font and text properties
         this.font = font;
+
+        const msdfCache = scene.sys.cache.custom.msdfFont;
+        const fontData: MSDFFont | undefined = msdfCache ? msdfCache.get(font) : undefined;
+
+        if (!fontData) {
+            console.warn('Invalid MSDFText font key: ' + font);
+        }
+
+        this.fontData = fontData as MSDFFont;
         this._text = text;
         this._fontSize = fontSize;
         this._color = { r: 1, g: 1, b: 1, a: 1 };
@@ -266,11 +276,13 @@ export const MSDFText = new Class({
         this._texture = null; // WebGLTextureWrapper
 
         // Get texture wrapper from Phaser's texture cache
-        const frame = scene.sys.textures.getFrame(font.textureKey);
-        if (frame && frame.glTexture) {
-            this._texture = frame.glTexture;
-        } else {
-            console.warn(`MSDFText: Could not get texture wrapper for '${font.textureKey}'`);
+        if (fontData) {
+            const frame = scene.sys.textures.getFrame(fontData.textureKey);
+            if (frame && frame.glTexture) {
+                this._texture = frame.glTexture;
+            } else {
+                console.warn(`MSDFText: Could not get texture wrapper for '${fontData.textureKey}'`);
+            }
         }
 
         // Set initial position using Transform component
@@ -502,7 +514,7 @@ export const MSDFText = new Class({
      * Get the width of the rendered text
      */
     getTextWidth: function (): number {
-        const { width } = this.font.measureText(this._text, this._fontSize);
+        const { width } = this.fontData.measureText(this._text, this._fontSize);
         return width;
     },
 
@@ -510,7 +522,7 @@ export const MSDFText = new Class({
      * Get the height of the rendered text
      */
     getTextHeight: function (): number {
-        const { height } = this.font.measureText(this._text, this._fontSize);
+        const { height } = this.fontData.measureText(this._text, this._fontSize);
         return height;
     },
 
@@ -524,7 +536,7 @@ export const MSDFText = new Class({
             textToMeasure = this.wrapText(this._text, this._maxWidth);
         }
 
-        const lineData = this.font.measureLines(textToMeasure, this._fontSize, this._lineSpacing);
+        const lineData = this.fontData.measureLines(textToMeasure, this._fontSize, this._lineSpacing);
 
         return {
             width: lineData.totalWidth,
@@ -575,7 +587,7 @@ export const MSDFText = new Class({
                 if (charCode === this.wordWrapCharCode) {
                     // Try adding the current word (including the wrap character)
                     const testLine = currentLine + currentWord + char;
-                    const { width } = this.font.measureText(testLine, this._fontSize);
+                    const { width } = this.fontData.measureText(testLine, this._fontSize);
 
                     if (width > maxWidth && currentLine.length > 0) {
                         // Word doesn't fit, wrap to new line
@@ -596,7 +608,7 @@ export const MSDFText = new Class({
             // Handle remaining word
             if (currentWord.length > 0) {
                 const testLine = currentLine + currentWord;
-                const { width } = this.font.measureText(testLine, this._fontSize);
+                const { width } = this.fontData.measureText(testLine, this._fontSize);
 
                 if (width > maxWidth && currentLine.length > 0) {
                     // Last word doesn't fit, wrap it
@@ -644,12 +656,12 @@ export const MSDFText = new Class({
             // Handle newlines
             if (charCode === 10) { // '\n'
                 cursorX = 0;
-                cursorY += this.font.getLineHeight(this._fontSize) + this._lineSpacing;
+                cursorY += this.fontData.getLineHeight(this._fontSize) + this._lineSpacing;
                 prevCharCode = 0;
                 continue;
             }
 
-            const char = this.font.getChar(charCode);
+            const char = this.fontData.getChar(charCode);
             if (!char) {
                 // Character not in font
                 prevCharCode = 0;
@@ -658,7 +670,7 @@ export const MSDFText = new Class({
 
             // Apply kerning
             if (prevCharCode !== 0) {
-                const kerning = this.font.getKerning(prevCharCode, charCode);
+                const kerning = this.fontData.getKerning(prevCharCode, charCode);
                 cursorX += kerning * this._fontSize;
             }
 
@@ -674,8 +686,8 @@ export const MSDFText = new Class({
             const charY = cursorY + char.yOffset * this._fontSize;
 
             // Calculate character size (using normalized dimensions scaled by fontSize)
-            const charWidth = (char.normalizedWidth || (char.width / this.font.baseSize)) * this._fontSize;
-            const charHeight = (char.normalizedHeight || (char.height / this.font.baseSize)) * this._fontSize;
+            const charWidth = (char.normalizedWidth || (char.width / this.fontData.baseSize)) * this._fontSize;
+            const charHeight = (char.normalizedHeight || (char.height / this.fontData.baseSize)) * this._fontSize;
 
             if (!char.normalizedWidth) {
                 console.warn(`Character ${String.fromCharCode(charCode)} missing normalizedWidth! Font may need re-parsing.`);

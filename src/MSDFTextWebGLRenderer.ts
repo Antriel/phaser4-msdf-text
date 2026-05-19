@@ -64,7 +64,7 @@ function MSDFTextWebGLRenderer(
     const matrixResult = GetCalcMatrix(src, camera, parentMatrix);
     const calcMatrix = matrixResult.calc;
 
-    batchHandler.setPxRange(src.font.distanceField.distanceRange);
+    batchHandler.setPxRange(src.fontData.distanceField.distanceRange);
 
     // Outline state — flush if it changed since the last batch.
     if (src.hasOutline()) {

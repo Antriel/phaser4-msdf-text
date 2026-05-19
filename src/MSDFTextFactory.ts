@@ -2,12 +2,11 @@
  * Factory method for creating MSDFText GameObjects
  *
  * This registers the `msdfText` method on the GameObjectFactory,
- * making it available as `scene.add.msdfText(x, y, font, text, fontSize)`
+ * making it available as `scene.add.msdfText(x, y, fontKey, text, fontSize)`
  */
 
 import Phaser from 'phaser';
 import { MSDFText } from './MSDFText';
-import { MSDFFont } from './MSDFFont';
 
 // @ts-ignore - Phaser internals not fully typed
 const GameObjectFactory = Phaser.GameObjects.GameObjectFactory;
@@ -19,7 +18,7 @@ const GameObjectFactory = Phaser.GameObjects.GameObjectFactory;
  *
  * @param {number} x - The horizontal position of this Game Object in the world.
  * @param {number} y - The vertical position of this Game Object in the world.
- * @param {MSDFFont} font - The MSDF font to use for rendering.
+ * @param {string} font - The key of the MSDF font to use, from the `msdfFont` cache.
  * @param {string} [text=''] - The text content to display.
  * @param {number} [fontSize=42] - The font size in pixels.
  *
@@ -28,7 +27,7 @@ const GameObjectFactory = Phaser.GameObjects.GameObjectFactory;
 GameObjectFactory.register('msdfText', function (
     x: number,
     y: number,
-    font: MSDFFont,
+    font: string,
     text: string = '',
     fontSize: number = 42
 ) {
