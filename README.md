@@ -58,7 +58,9 @@ new Phaser.Game({
 ## Use
 
 Load fonts via the standard Phaser loader, then create text via the
-`add.msdfTextBatched` factory.
+`add.msdfText` factory. Rendering goes through a custom `BatchHandler`
+(extending `Phaser.Renderer.WebGL.RenderNodes.BatchHandler`), so a page full
+of text typically renders in 1–2 draw calls.
 
 ```ts
 class MyScene extends Phaser.Scene {
@@ -70,7 +72,7 @@ class MyScene extends Phaser.Scene {
     create() {
         const font = this.cache.custom.msdfFont.get('arial');
 
-        const text = this.add.msdfTextBatched(400, 300, font, 'Hello, MSDF!', 48);
+        const text = this.add.msdfText(400, 300, font, 'Hello, MSDF!', 48);
         text.setColorHex('#ffffff');
         text.setAlign('center');
         text.setOrigin(0.5);
@@ -81,7 +83,7 @@ class MyScene extends Phaser.Scene {
 Or via the creator API:
 
 ```ts
-const text = this.make.msdfTextBatched({
+const text = this.make.msdfText({
     x: 400, y: 300,
     font,
     text: 'Hello, MSDF!',
@@ -189,14 +191,6 @@ msdf-atlas-gen -font MyFont.ttf -type msdf -size 42 -pxrange 4 \
   on WebGL 1.0; Phaser 4 fetches it during renderer init)
 
 The plugin throws a clear error during `init()` if the extension is missing.
-
-## Why "Batched"?
-
-The factory is named `msdfTextBatched` because an earlier iteration created
-one `Shader` GameObject per character. The current implementation submits all
-characters of a text object through a custom `BatchHandler` (extending
-`Phaser.Renderer.WebGL.RenderNodes.BatchHandler`), so a page full of text
-typically renders in 1–2 draw calls.
 
 ## License
 

@@ -6,8 +6,8 @@
  */
 
 import type { MSDFFont } from './MSDFFont';
-import type { MSDFTextInstance } from './MSDFTextBatched';
-import type { MSDFTextConfig } from './MSDFTextBatchedCreator';
+import type { MSDFTextInstance } from './MSDFText';
+import type { MSDFTextConfig } from './MSDFTextCreator';
 import type { MSDFFontFileConfig } from './MSDFFontFile';
 
 // This file exists purely for its `declare module 'phaser'` side effect.
@@ -21,7 +21,7 @@ declare module 'phaser' {
             /**
              * Creates a new MSDFText Game Object and adds it to the Scene.
              */
-            msdfTextBatched(
+            msdfText(
                 x: number,
                 y: number,
                 font: MSDFFont,
@@ -34,7 +34,7 @@ declare module 'phaser' {
             /**
              * Creates a new MSDFText Game Object from a config object.
              */
-            msdfTextBatched(
+            msdfText(
                 config: MSDFTextConfig,
                 addToScene?: boolean
             ): MSDFTextInstance;

@@ -1,17 +1,17 @@
 /**
- * MSDFText GameObject (Batched Rendering)
+ * MSDFText GameObject
  *
- * Renders text using MSDF (Multi-channel Signed Distance Field) fonts with
- * efficient batched rendering. All characters are rendered in 1-2 draw calls
- * instead of one draw call per character.
+ * Renders text using MSDF (Multi-channel Signed Distance Field) fonts.
+ * Characters are submitted to a custom BatchHandler so a full text object
+ * typically renders in 1-2 draw calls.
  *
- * This uses Phaser's idiomatic Class system with component mixins for
- * proper integration with Phaser's GameObject ecosystem.
+ * Uses Phaser's idiomatic Class system with component mixins for proper
+ * integration with Phaser's GameObject ecosystem.
  *
  * Usage:
- *   const text = scene.add.msdfTextBatched(x, y, font, 'Hello World', fontSize);
+ *   const text = scene.add.msdfText(x, y, font, 'Hello World', fontSize);
  *   // or
- *   const text = scene.make.msdfTextBatched({ font, text: 'Hello', fontSize: 42, x: 100, y: 100 });
+ *   const text = scene.make.msdfText({ font, text: 'Hello', fontSize: 42, x: 100, y: 100 });
  */
 
 import Phaser from 'phaser';

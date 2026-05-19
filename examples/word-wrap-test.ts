@@ -13,7 +13,7 @@
 import Phaser from 'phaser';
 import '../src';
 import { installMSDFPlugin } from '../src/MSDFPlugin';
-import type { MSDFTextInstance } from '../src/MSDFTextBatched';
+import type { MSDFTextInstance } from '../src/MSDFText';
 import { registerMSDFBatchHandler } from '../src/registerMSDFBatchHandler';
 import * as SPECTOR from "phaser3spectorjs";
 
@@ -41,27 +41,27 @@ class WordWrapTestScene extends Phaser.Scene {
 
     const longText = "This is a very long line of text that will automatically wrap when it exceeds the maximum width. Word wrapping makes text much more readable in constrained spaces!";
 
-    this.text1 = this.add.msdfTextBatched(50, 50, font, longText, 24);
+    this.text1 = this.add.msdfText(50, 50, font, longText, 24);
     this.text1.setColorHex("#00ff00");
     this.text1.setAlign("left");
     this.text1.setMaxWidth(this.maxWidthValue);
 
     const mediumText = "Centered text with word wrapping. This demonstrates how alignment works with wrapped text.";
 
-    this.text2 = this.add.msdfTextBatched(400, 200, font, mediumText, 28);
+    this.text2 = this.add.msdfText(400, 200, font, mediumText, 28);
     this.text2.setColorHex("#ffff00");
     this.text2.setAlign("center");
     this.text2.setMaxWidth(350);
 
     const mixedText = "First paragraph with manual line break.\nSecond paragraph that will wrap because it contains a very long line that exceeds the maximum width constraint.";
 
-    this.text3 = this.add.msdfTextBatched(50, 350, font, mixedText, 22);
+    this.text3 = this.add.msdfText(50, 350, font, mixedText, 22);
     this.text3.setColorHex("#ff00ff");
     this.text3.setAlign("left");
     this.text3.setMaxWidth(500);
     this.text3.setLineSpacing(3);
 
-    this.boundsText = this.add.msdfTextBatched(550, 50, font, "", 16);
+    this.boundsText = this.add.msdfText(550, 50, font, "", 16);
     this.boundsText.setColorHex("#ffffff");
     this.boundsText.setAlign("left");
     this.updateBoundsInfo();

@@ -132,7 +132,7 @@ MSDF fonts **MUST** use LINEAR filtering. NEAREST filtering will break the dista
 - Batched character rendering (1-2 draw calls per text)
 - **5-10x performance improvement**
 - 100% API compatibility with Phase 3
-- MSDFTextBatched GameObject
+- MSDFText GameObject
 
 ### 🚧 Phase 5: Advanced Features - NEXT
 - Word wrapping and text flow

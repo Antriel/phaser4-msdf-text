@@ -2,8 +2,7 @@
  * Phaser 4 MSDF Font Rendering
  *
  * Public entry point. Importing this module also registers the `msdfFont`
- * loader and `msdfTextBatched` factory/creator on Phaser via side-effect
- * imports.
+ * loader and `msdfText` factory/creator on Phaser via side-effect imports.
  *
  * Usage (recommended, via game config):
  *
@@ -19,19 +18,19 @@
  *   // In a scene:
  *   this.load.msdfFont('arial', 'assets/fonts/Arial.png', 'assets/fonts/Arial.json');
  *   const font = this.cache.custom.msdfFont.get('arial');
- *   const text = this.add.msdfTextBatched(100, 100, font, 'Hello World', 42);
+ *   const text = this.add.msdfText(100, 100, font, 'Hello World', 42);
  */
 
 // Side-effect imports: register factory, creator, and loader, and apply
 // Phaser type augmentations.
 import './phaser-augmentations';
-import './MSDFTextBatchedFactory';
-import './MSDFTextBatchedCreator';
+import './MSDFTextFactory';
+import './MSDFTextCreator';
 import './MSDFFontFile';
 
 // Public API
 export { MSDFFont } from './MSDFFont';
-export { MSDFText } from './MSDFTextBatched';
+export { MSDFText } from './MSDFText';
 export { parseMSDFFont } from './MSDFFontParser';
 export {
     MSDFPlugin,
@@ -50,6 +49,6 @@ export type {
     DisplayCallbackTint,
     MSDFTextInstance,
     CharacterData
-} from './MSDFTextBatched';
+} from './MSDFText';
 export type { MSDFFontFileConfig } from './MSDFFontFile';
-export type { MSDFTextConfig } from './MSDFTextBatchedCreator';
+export type { MSDFTextConfig } from './MSDFTextCreator';

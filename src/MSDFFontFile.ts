@@ -170,7 +170,7 @@ export const MSDFFontFile = new Class({
  *
  * ```javascript
  * const font = this.cache.custom.msdfFont.get('arial');
- * const text = this.add.msdfTextBatched(100, 100, font, 'Hello World', 42);
+ * const text = this.add.msdfText(100, 100, font, 'Hello World', 42);
  * ```
  *
  * @method Phaser.Loader.LoaderPlugin#msdfFont

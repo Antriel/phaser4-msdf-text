@@ -23,8 +23,8 @@
     "./dist/phaser4-msdf-font.js",
     "./dist/phaser4-msdf-font.cjs",
     "./src/index.ts",
-    "./src/MSDFTextBatchedFactory.ts",
-    "./src/MSDFTextBatchedCreator.ts",
+    "./src/MSDFTextFactory.ts",
+    "./src/MSDFTextCreator.ts",
     "./src/MSDFFontFile.ts"
   ],
   "scripts": {

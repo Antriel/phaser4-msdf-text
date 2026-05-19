@@ -19,7 +19,7 @@
 import Phaser from 'phaser';
 import '../src';
 import { installMSDFPlugin } from '../src/MSDFPlugin';
-import type { MSDFTextInstance, DisplayCallbackData } from '../src/MSDFTextBatched';
+import type { MSDFTextInstance, DisplayCallbackData } from '../src/MSDFText';
 import { registerMSDFBatchHandler } from '../src/registerMSDFBatchHandler';
 import * as SPECTOR from "phaser3spectorjs";
 
@@ -60,27 +60,27 @@ class ShadowTestScene extends Phaser.Scene {
       return;
     }
 
-    this.text1 = this.add.msdfTextBatched(400, 80, font, "SHADOWED TEXT", 56);
+    this.text1 = this.add.msdfText(400, 80, font, "SHADOWED TEXT", 56);
     this.text1.setColorHex("#ffffff");
     this.text1.setAlign("center");
     this.text1.setShadow(this.currentShadowX, this.currentShadowY, this.shadowPresets[0].color, this.currentShadowAlpha);
 
-    this.text2 = this.add.msdfTextBatched(400, 160, font, "Colorful Shadow", 42);
+    this.text2 = this.add.msdfText(400, 160, font, "Colorful Shadow", 42);
     this.text2.setColorHex("#00ff00");
     this.text2.setAlign("center");
     this.text2.setShadow(this.currentShadowX, this.currentShadowY, this.shadowPresets[0].color, this.currentShadowAlpha);
 
-    this.text3 = this.add.msdfTextBatched(400, 230, font, "GAME OVER", 64);
+    this.text3 = this.add.msdfText(400, 230, font, "GAME OVER", 64);
     this.text3.setColorHex("#ffffff");
     this.text3.setAlign("center");
     this.text3.setShadow(4, 4, 0x000000, 0.9);
 
-    this.text4 = this.add.msdfTextBatched(400, 310, font, "Small text with subtle shadow", 24);
+    this.text4 = this.add.msdfText(400, 310, font, "Small text with subtle shadow", 24);
     this.text4.setColorHex("#ffff00");
     this.text4.setAlign("center");
     this.text4.setShadow(2, 2, 0x000000, 0.4);
 
-    this.text5 = this.add.msdfTextBatched(400, 370, font, "WAVE WITH SHADOW", 48);
+    this.text5 = this.add.msdfText(400, 370, font, "WAVE WITH SHADOW", 48);
     this.text5.setColorHex("#00ffff");
     this.text5.setAlign("center");
     this.text5.setShadow(3, 3, 0x000000, 0.6);

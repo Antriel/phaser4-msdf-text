@@ -1,12 +1,12 @@
 /**
  * Creator method for creating MSDFText GameObjects from config
  *
- * This registers the `msdfTextBatched` method on the GameObjectCreator,
- * making it available as `scene.make.msdfTextBatched(config)`
+ * This registers the `msdfText` method on the GameObjectCreator,
+ * making it available as `scene.make.msdfText(config)`
  */
 
 import Phaser from 'phaser';
-import { MSDFText } from './MSDFTextBatched';
+import { MSDFText } from './MSDFText';
 import { MSDFFont } from './MSDFFont';
 
 // @ts-ignore - Phaser internals not fully typed
@@ -32,14 +32,14 @@ export interface MSDFTextConfig extends Phaser.Types.GameObjects.GameObjectConfi
 /**
  * Creates a new MSDFText Game Object and returns it.
  *
- * @method Phaser.GameObjects.GameObjectCreator#msdfTextBatched
+ * @method Phaser.GameObjects.GameObjectCreator#msdfText
  *
  * @param {MSDFTextConfig} config - The configuration object this Game Object will use to create itself.
  * @param {boolean} [addToScene=true] - Add this Game Object to the Scene after creating it? If set this argument overrides the `add` property in the config object.
  *
  * @return {MSDFText} The Game Object that was created.
  */
-GameObjectCreator.register('msdfTextBatched', function (
+GameObjectCreator.register('msdfText', function (
     config: MSDFTextConfig,
     addToScene?: boolean
 ) {
@@ -53,7 +53,7 @@ GameObjectCreator.register('msdfTextBatched', function (
     const fontSize = GetAdvancedValue(config, 'fontSize', 42);
 
     if (!font) {
-        console.error('MSDFTextBatchedCreator: font is required in config');
+        console.error('MSDFTextCreator: font is required in config');
         // @ts-ignore - 'this' context is GameObjectCreator
         return new MSDFText(this.scene, 0, 0, null as any, text, fontSize);
     }
