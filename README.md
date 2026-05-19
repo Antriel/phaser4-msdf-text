@@ -126,8 +126,12 @@ text.clearOutline();
 text.hasOutline();                    // boolean
 ```
 
-Practical outline widths are roughly 0.5–3.0 — values much larger than your
-font's `distanceRange` produce artifacts.
+Practical outline widths are roughly 0.5–3.0. The shader can only represent
+outlines up to about `distanceRange / 2` distance-field units — beyond that,
+the texture's distance field is saturated and the outline stops growing,
+showing flat edges around the glyph's atlas cell instead. If you need thicker
+outlines, regenerate the atlas with a larger `-pxrange` in `msdf-atlas-gen`
+(and matching glyph padding) rather than pushing the width higher at runtime.
 
 ### Shadow (extra pass, still batched)
 

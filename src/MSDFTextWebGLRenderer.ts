@@ -4,6 +4,10 @@
  * Iterates each character of an MSDFText and submits it to the MSDF batch
  * handler, optionally running a per-character display callback. Renders shadow
  * pass first (if enabled), then main text pass on top.
+ *
+ * Per-corner tint comes from `Components.Tint` (`tintTopLeft`, etc.) multiplied
+ * by `_color` and per-corner alpha (`_alphaTL` etc.). Only `tintMode === MULTIPLY`
+ * is honored — the MSDF shader doesn't implement FILL/ADD/SCREEN/OVERLAY/HARD_LIGHT.
  */
 
 import Phaser from 'phaser';
@@ -33,6 +37,26 @@ const tempCharData = {
 
 const tempCharMatrix = new TransformMatrix();
 
+/**
+ * Pack a corner: 0xRRGGBB tint × float color (0-1) × float alpha (0-1) → ABGR u32.
+ */
+function packCornerTint(
+    cornerTint: number,
+    colorR: number, colorG: number, colorB: number, colorA: number,
+    cornerAlpha: number
+): number {
+    const tintR = ((cornerTint >> 16) & 0xff) / 255;
+    const tintG = ((cornerTint >> 8) & 0xff) / 255;
+    const tintB = (cornerTint & 0xff) / 255;
+
+    const r = Math.floor(colorR * tintR * 255);
+    const g = Math.floor(colorG * tintG * 255);
+    const b = Math.floor(colorB * tintB * 255);
+    const a = Math.floor(colorA * cornerAlpha * 255);
+
+    return ((a << 24) | (b << 16) | (g << 8) | r) >>> 0;
+}
+
 function MSDFTextWebGLRenderer(
     _renderer: any,
     src: any,
@@ -56,13 +80,17 @@ function MSDFTextWebGLRenderer(
         return;
     }
 
-    const texture = src._texture;
+    const texture = src.frame ? src.frame.glTexture : null;
     if (!texture) {
         return;
     }
 
     const matrixResult = GetCalcMatrix(src, camera, parentMatrix);
     const calcMatrix = matrixResult.calc;
+
+    // Subtract displayOrigin so origin maps to the text's bounding box.
+    const originOffsetX = -src.displayOriginX;
+    const originOffsetY = -src.displayOriginY;
 
     batchHandler.setPxRange(src.fontData.distanceField.distanceRange);
 
@@ -81,26 +109,23 @@ function MSDFTextWebGLRenderer(
         batchHandler.setOutline(0, 0, 0, 0, 0);
     }
 
-    // Combine text color, GameObject tint, and alpha into a packed ABGR u32.
+    // Combine per-corner tint (Components.Tint), per-corner alpha (Components.Alpha),
+    // and the base text color (_color) into four packed ABGR u32 corner values.
     const textColor = src._color;
-    const alpha = src.alpha !== undefined ? src.alpha : 1.0;
-    const tint = src.tint !== undefined ? src.tint : 0xFFFFFF;
+    const cR = textColor.r;
+    const cG = textColor.g;
+    const cB = textColor.b;
+    const cA = textColor.a;
 
-    const tintR = ((tint >> 16) & 0xFF) / 255;
-    const tintG = ((tint >> 8) & 0xFF) / 255;
-    const tintB = (tint & 0xFF) / 255;
+    const tintTL = packCornerTint(src.tintTopLeft,     cR, cG, cB, cA, src._alphaTL);
+    const tintTR = packCornerTint(src.tintTopRight,    cR, cG, cB, cA, src._alphaTR);
+    const tintBL = packCornerTint(src.tintBottomLeft,  cR, cG, cB, cA, src._alphaBL);
+    const tintBR = packCornerTint(src.tintBottomRight, cR, cG, cB, cA, src._alphaBR);
 
-    const finalR = Math.floor(textColor.r * tintR * 255);
-    const finalG = Math.floor(textColor.g * tintG * 255);
-    const finalB = Math.floor(textColor.b * tintB * 255);
-    const finalA = Math.floor(textColor.a * alpha * 255);
-
-    const tintValue = (finalA << 24) | (finalB << 16) | (finalG << 8) | finalR;
-
-    tempTintData.tintTopLeft = tintValue;
-    tempTintData.tintTopRight = tintValue;
-    tempTintData.tintBottomLeft = tintValue;
-    tempTintData.tintBottomRight = tintValue;
+    tempTintData.tintTopLeft = tintTL;
+    tempTintData.tintTopRight = tintTR;
+    tempTintData.tintBottomLeft = tintBL;
+    tempTintData.tintBottomRight = tintBR;
 
     const hasCallback = src.displayCallback && typeof src.displayCallback === 'function';
 
@@ -110,17 +135,16 @@ function MSDFTextWebGLRenderer(
         const shadowColor = src._shadowColor;
         const shadowAlpha = src._shadowAlpha;
 
-        const shadowR = Math.floor(shadowColor.r * 255);
-        const shadowG = Math.floor(shadowColor.g * 255);
-        const shadowB = Math.floor(shadowColor.b * 255);
-        const shadowA = Math.floor(shadowAlpha * 255);
-        const shadowTintValue = (shadowA << 24) | (shadowB << 16) | (shadowG << 8) | shadowR;
+        const shadowOffsetX = originOffsetX + shadowOffset.x;
+        const shadowOffsetY = originOffsetY + shadowOffset.y;
 
+        // Shadow tint is solid; modulate by each corner's alpha so it follows
+        // per-corner alpha on the text.
         const shadowTintData = {
-            tintTopLeft: shadowTintValue,
-            tintTopRight: shadowTintValue,
-            tintBottomLeft: shadowTintValue,
-            tintBottomRight: shadowTintValue
+            tintTopLeft:     packCornerTint(0xffffff, shadowColor.r, shadowColor.g, shadowColor.b, shadowAlpha, src._alphaTL),
+            tintTopRight:    packCornerTint(0xffffff, shadowColor.r, shadowColor.g, shadowColor.b, shadowAlpha, src._alphaTR),
+            tintBottomLeft:  packCornerTint(0xffffff, shadowColor.r, shadowColor.g, shadowColor.b, shadowAlpha, src._alphaBL),
+            tintBottomRight: packCornerTint(0xffffff, shadowColor.r, shadowColor.g, shadowColor.b, shadowAlpha, src._alphaBR)
         };
 
         for (let i = 0; i < characterCount; i++) {
@@ -129,16 +153,9 @@ function MSDFTextWebGLRenderer(
                 continue;
             }
 
-            tempCharData.x = char.x + shadowOffset.x;
-            tempCharData.y = char.y + shadowOffset.y;
-            tempCharData.w = char.w;
-            tempCharData.h = char.h;
-            tempCharData.u0 = char.u0;
-            tempCharData.v0 = char.v0;
-            tempCharData.u1 = char.u1;
-            tempCharData.v1 = char.v1;
-
-            let shadowCharData: typeof tempCharData = tempCharData;
+            let shadowCharData: typeof tempCharData | any = char;
+            let shadowOffX = shadowOffsetX;
+            let shadowOffY = shadowOffsetY;
             let shadowMatrix = calcMatrix;
             let shadowTint = shadowTintData;
 
@@ -155,10 +172,10 @@ function MSDFTextWebGLRenderer(
                 callbackData.rotation = char.rotation || 0;
                 callbackData.data = char.data;
 
-                callbackData.tint.topLeft = shadowTintValue;
-                callbackData.tint.topRight = shadowTintValue;
-                callbackData.tint.bottomLeft = shadowTintValue;
-                callbackData.tint.bottomRight = shadowTintValue;
+                callbackData.tint.topLeft = shadowTintData.tintTopLeft;
+                callbackData.tint.topRight = shadowTintData.tintTopRight;
+                callbackData.tint.bottomLeft = shadowTintData.tintBottomLeft;
+                callbackData.tint.bottomRight = shadowTintData.tintBottomRight;
 
                 const result = src.displayCallback(callbackData);
 
@@ -166,35 +183,50 @@ function MSDFTextWebGLRenderer(
                 const scaleChanged = result.scale !== 1;
                 const rotationChanged = result.rotation !== 0;
 
-                if (posChanged || scaleChanged || rotationChanged) {
+                if (scaleChanged || rotationChanged) {
                     const centerX = char.w / 2;
                     const centerY = char.h / 2;
 
                     tempCharMatrix.copyFrom(calcMatrix);
-                    tempCharMatrix.translate(result.x + centerX, result.y + centerY);
+                    tempCharMatrix.translate(result.x + centerX + originOffsetX, result.y + centerY + originOffsetY);
 
                     if (rotationChanged) {
                         tempCharMatrix.rotate(result.rotation);
                     }
-
                     if (scaleChanged) {
                         tempCharMatrix.scale(result.scale, result.scale);
                     }
 
-                    shadowCharData = { ...tempCharData };
-                    shadowCharData.x = -centerX;
-                    shadowCharData.y = -centerY;
+                    tempCharData.x = -centerX;
+                    tempCharData.y = -centerY;
+                    tempCharData.w = char.w;
+                    tempCharData.h = char.h;
+                    tempCharData.u0 = char.u0;
+                    tempCharData.v0 = char.v0;
+                    tempCharData.u1 = char.u1;
+                    tempCharData.v1 = char.v1;
+                    shadowCharData = tempCharData;
                     shadowMatrix = tempCharMatrix;
+                    shadowOffX = 0;
+                    shadowOffY = 0;
                 } else if (posChanged) {
-                    shadowCharData = { ...tempCharData };
-                    shadowCharData.x = result.x;
-                    shadowCharData.y = result.y;
+                    tempCharData.x = result.x;
+                    tempCharData.y = result.y;
+                    tempCharData.w = char.w;
+                    tempCharData.h = char.h;
+                    tempCharData.u0 = char.u0;
+                    tempCharData.v0 = char.v0;
+                    tempCharData.u1 = char.u1;
+                    tempCharData.v1 = char.v1;
+                    shadowCharData = tempCharData;
+                    shadowOffX = originOffsetX;
+                    shadowOffY = originOffsetY;
                 }
 
-                const tintChanged = result.tint.topLeft !== shadowTintValue ||
-                    result.tint.topRight !== shadowTintValue ||
-                    result.tint.bottomLeft !== shadowTintValue ||
-                    result.tint.bottomRight !== shadowTintValue;
+                const tintChanged = result.tint.topLeft !== shadowTintData.tintTopLeft ||
+                    result.tint.topRight !== shadowTintData.tintTopRight ||
+                    result.tint.bottomLeft !== shadowTintData.tintBottomLeft ||
+                    result.tint.bottomRight !== shadowTintData.tintBottomRight;
 
                 if (tintChanged) {
                     shadowTint = {
@@ -206,7 +238,7 @@ function MSDFTextWebGLRenderer(
                 }
             }
 
-            BatchMSDFChar(drawingContext, batchHandler, texture, shadowCharData, shadowMatrix, shadowTint);
+            BatchMSDFChar(drawingContext, batchHandler, texture, shadowCharData, shadowOffX, shadowOffY, shadowMatrix, shadowTint);
         }
     }
 
@@ -218,6 +250,8 @@ function MSDFTextWebGLRenderer(
         }
 
         let charData: any = char;
+        let offX = originOffsetX;
+        let offY = originOffsetY;
         let charMatrix = calcMatrix;
         let charTint = tempTintData;
 
@@ -233,10 +267,10 @@ function MSDFTextWebGLRenderer(
             callbackData.rotation = char.rotation || 0;
             callbackData.data = char.data;
 
-            callbackData.tint.topLeft = tintValue;
-            callbackData.tint.topRight = tintValue;
-            callbackData.tint.bottomLeft = tintValue;
-            callbackData.tint.bottomRight = tintValue;
+            callbackData.tint.topLeft = tintTL;
+            callbackData.tint.topRight = tintTR;
+            callbackData.tint.bottomLeft = tintBL;
+            callbackData.tint.bottomRight = tintBR;
 
             const result = src.displayCallback(callbackData);
 
@@ -245,45 +279,49 @@ function MSDFTextWebGLRenderer(
                 const scaleChanged = result.scale !== 1;
                 const rotationChanged = result.rotation !== 0;
 
-                if (posChanged || scaleChanged || rotationChanged) {
+                if (scaleChanged || rotationChanged) {
+                    const centerX = char.w / 2;
+                    const centerY = char.h / 2;
+
+                    tempCharMatrix.copyFrom(calcMatrix);
+                    tempCharMatrix.translate(result.x + centerX + originOffsetX, result.y + centerY + originOffsetY);
+
+                    if (rotationChanged) {
+                        tempCharMatrix.rotate(result.rotation);
+                    }
+                    if (scaleChanged) {
+                        tempCharMatrix.scale(result.scale, result.scale);
+                    }
+
+                    tempCharData.x = -centerX;
+                    tempCharData.y = -centerY;
                     tempCharData.w = char.w;
                     tempCharData.h = char.h;
                     tempCharData.u0 = char.u0;
                     tempCharData.v0 = char.v0;
                     tempCharData.u1 = char.u1;
                     tempCharData.v1 = char.v1;
-
-                    if (scaleChanged || rotationChanged) {
-                        const centerX = char.w / 2;
-                        const centerY = char.h / 2;
-
-                        tempCharMatrix.copyFrom(calcMatrix);
-                        tempCharMatrix.translate(result.x + centerX, result.y + centerY);
-
-                        if (rotationChanged) {
-                            tempCharMatrix.rotate(result.rotation);
-                        }
-
-                        if (scaleChanged) {
-                            tempCharMatrix.scale(result.scale, result.scale);
-                        }
-
-                        charMatrix = tempCharMatrix;
-                        tempCharData.x = -centerX;
-                        tempCharData.y = -centerY;
-                    } else {
-                        tempCharData.x = result.x;
-                        tempCharData.y = result.y;
-                    }
-
+                    charData = tempCharData;
+                    charMatrix = tempCharMatrix;
+                    offX = 0;
+                    offY = 0;
+                } else if (posChanged) {
+                    tempCharData.x = result.x;
+                    tempCharData.y = result.y;
+                    tempCharData.w = char.w;
+                    tempCharData.h = char.h;
+                    tempCharData.u0 = char.u0;
+                    tempCharData.v0 = char.v0;
+                    tempCharData.u1 = char.u1;
+                    tempCharData.v1 = char.v1;
                     charData = tempCharData;
                 }
 
                 const tintChanged =
-                    result.tint.topLeft !== tintValue ||
-                    result.tint.topRight !== tintValue ||
-                    result.tint.bottomLeft !== tintValue ||
-                    result.tint.bottomRight !== tintValue;
+                    result.tint.topLeft !== tintTL ||
+                    result.tint.topRight !== tintTR ||
+                    result.tint.bottomLeft !== tintBL ||
+                    result.tint.bottomRight !== tintBR;
 
                 if (tintChanged) {
                     charTint = {
@@ -296,7 +334,7 @@ function MSDFTextWebGLRenderer(
             }
         }
 
-        BatchMSDFChar(drawingContext, batchHandler, texture, charData, charMatrix, charTint);
+        BatchMSDFChar(drawingContext, batchHandler, texture, charData, offX, offY, charMatrix, charTint);
     }
 }
 

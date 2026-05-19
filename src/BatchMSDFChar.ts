@@ -39,11 +39,13 @@ function BatchMSDFChar(
     batchHandler: MSDFBatchHandlerInstance,
     texture: any,
     char: CharQuad,
+    offsetX: number,
+    offsetY: number,
     calcMatrix: CalcMatrix,
     tintData: TintData
 ): void {
-    const x = char.x;
-    const y = char.y;
+    const x = char.x + offsetX;
+    const y = char.y + offsetY;
     const xw = x + char.w;
     const yh = y + char.h;
 

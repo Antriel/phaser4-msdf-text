@@ -92,21 +92,18 @@ export interface CharacterData {
  * Type interface for MSDFText instances
  * Use this for type annotations instead of the Class constructor
  */
-export interface MSDFTextInstance extends Phaser.GameObjects.GameObject {
-    // Properties from components
-    x: number;
-    y: number;
-    scaleX: number;
-    scaleY: number;
-    rotation: number;
-    originX: number;
-    originY: number;
-    alpha: number;
-    visible: boolean;
-    blendMode: number;
-    depth: number;
-    scrollFactorX: number;
-    scrollFactorY: number;
+export interface MSDFTextInstance extends
+    Phaser.GameObjects.GameObject,
+    Phaser.GameObjects.Components.Alpha,
+    Phaser.GameObjects.Components.BlendMode,
+    Phaser.GameObjects.Components.Depth,
+    Phaser.GameObjects.Components.GetBounds,
+    Phaser.GameObjects.Components.Origin,
+    Phaser.GameObjects.Components.ScrollFactor,
+    Phaser.GameObjects.Components.Texture,
+    Phaser.GameObjects.Components.Tint,
+    Phaser.GameObjects.Components.Transform,
+    Phaser.GameObjects.Components.Visible {
 
     // Custom properties
     font: string;
@@ -124,10 +121,17 @@ export interface MSDFTextInstance extends Phaser.GameObjects.GameObject {
     _shadowColor: { r: number; g: number; b: number };
     _shadowAlpha: number;
     _characters: CharacterData[];
+    _width: number;
+    _height: number;
     _dirty: boolean;
     displayCallback?: DisplayCallback;
     callbackData: DisplayCallbackData;
-    _texture: any;
+
+    // Dimensions (derived from text bounds)
+    readonly width: number;
+    readonly height: number;
+    displayWidth: number;
+    displayHeight: number;
 
     // Property accessors (with side effects — trigger rebuild on change)
     text: string;
@@ -137,7 +141,7 @@ export interface MSDFTextInstance extends Phaser.GameObjects.GameObject {
     maxWidth: number;
 
     // Chainable setters
-    setText(text: string): this;
+    setText(text: string | string[]): this;
     setFontSize(size: number): this;
     setColor(color: ColorValue, alpha?: number): this;
     setAlign(align: TextAlign): this;
@@ -179,10 +183,9 @@ const DefaultMSDFNodes = new PhaserMap([
  */
 const MSDFTextRender = {
     renderWebGL: function (renderer: any, src: any, drawingContext: any, parentMatrix: any): void {
-        // Rebuild if needed
+        // Rebuild if needed — rebuildText clears _dirty internally.
         if (src._dirty) {
             src.rebuildText();
-            src._dirty = false;
         }
 
         // Delegate to MSDFTextWebGLRenderer
@@ -201,9 +204,12 @@ export const MSDFText = new Class({
         Components.Alpha,
         Components.BlendMode,
         Components.Depth,
+        Components.GetBounds,
         Components.Origin,
         Components.RenderNodes,
         Components.ScrollFactor,
+        Components.Texture,
+        Components.Tint,
         Components.Transform,
         Components.Visible,
         MSDFTextRender
@@ -251,6 +257,8 @@ export const MSDFText = new Class({
 
         // Character layout data (not GameObjects!)
         this._characters = [];
+        this._width = 0;
+        this._height = 0;
         this._dirty = true;
 
         // Display callback (Phase 5.2)
@@ -272,26 +280,25 @@ export const MSDFText = new Class({
             data: undefined
         };
 
-        // Texture and rendering
-        this._texture = null; // WebGLTextureWrapper
-
-        // Get texture wrapper from Phaser's texture cache
+        // Bind atlas texture via the standard Texture component (no width/height
+        // or origin updates — those derive from text bounds, not the atlas frame).
         if (fontData) {
-            const frame = scene.sys.textures.getFrame(fontData.textureKey);
-            if (frame && frame.glTexture) {
-                this._texture = frame.glTexture;
-            } else {
-                console.warn(`MSDFText: Could not get texture wrapper for '${fontData.textureKey}'`);
-            }
+            this.setTexture(fontData.textureKey, undefined, false, false);
         }
 
         // Set initial position using Transform component
         this.setPosition(x, y);
 
+        // Match BitmapText: position from top-left of the rendered text.
+        // Assign directly (not via setOrigin) to avoid an early width-getter
+        // call that would trigger a rebuild before we're done setting up.
+        this.originX = 0;
+        this.originY = 0;
+
         // Initialize render nodes using RenderNodes component
         this.initRenderNodes(this._defaultRenderNodesMap);
 
-        // Initial build
+        // Initial build — also computes bounds, clears _dirty, and calls updateDisplayOrigin.
         this.rebuildText();
     },
 
@@ -450,6 +457,14 @@ export const MSDFText = new Class({
 
     /**
      * Set outline for the text.
+     *
+     * The maximum representable outline is roughly half the font's
+     * `distanceRange` (`pxRange`). Past that, the MSDF texture's distance
+     * field is saturated and the outline stops growing, showing flat edges
+     * around each glyph's atlas cell. For thicker outlines, regenerate the
+     * font with a larger `-pxrange` (and matching glyph padding) rather than
+     * raising `width` further.
+     *
      * @param width Outline width in distance field units
      * @param color Outline color (number, hex/rgb string, or {r,g,b,a?} object). Defaults to black.
      * @param alpha Outline alpha (0-1). Overrides any alpha in `color`.
@@ -511,19 +526,69 @@ export const MSDFText = new Class({
     // ========================================================================
 
     /**
-     * Get the width of the rendered text
+     * The width of the rendered text in local space (excludes scale).
      */
-    getTextWidth: function (): number {
-        const { width } = this.fontData.measureText(this._text, this._fontSize);
-        return width;
+    width: {
+        get: function (this: any): number {
+            if (this._dirty) {
+                this.rebuildText();
+                this._dirty = false;
+            }
+            return this._width;
+        }
     },
 
     /**
-     * Get the height of the rendered text
+     * The height of the rendered text in local space (excludes scale).
+     */
+    height: {
+        get: function (this: any): number {
+            if (this._dirty) {
+                this.rebuildText();
+                this._dirty = false;
+            }
+            return this._height;
+        }
+    },
+
+    /**
+     * The displayed width of this text, taking the scale factor into account.
+     * Setting this adjusts `scaleX` so the rendered width matches the value.
+     */
+    displayWidth: {
+        get: function (this: any): number {
+            return this.width * this.scaleX;
+        },
+        set: function (this: any, value: number) {
+            this.scaleX = this.width === 0 ? 1 : value / this.width;
+        }
+    },
+
+    /**
+     * The displayed height of this text, taking the scale factor into account.
+     * Setting this adjusts `scaleY` so the rendered height matches the value.
+     */
+    displayHeight: {
+        get: function (this: any): number {
+            return this.height * this.scaleY;
+        },
+        set: function (this: any, value: number) {
+            this.scaleY = this.height === 0 ? 1 : value / this.height;
+        }
+    },
+
+    /**
+     * Get the width of the rendered text in local space (alias for `width`).
+     */
+    getTextWidth: function (): number {
+        return this.width;
+    },
+
+    /**
+     * Get the height of the rendered text in local space (alias for `height`).
      */
     getTextHeight: function (): number {
-        const { height } = this.fontData.measureText(this._text, this._fontSize);
-        return height;
+        return this.height;
     },
 
     /**
@@ -716,18 +781,27 @@ export const MSDFText = new Class({
         }
 
         // Apply alignment
-        this.applyAlignment();
+        this.applyAlignment(textToRender);
+
+        // Cache local bounds and refresh display origin so getBounds/origin work.
+        // Clear dirty BEFORE updateDisplayOrigin so the width/height getters
+        // it reads don't re-enter rebuildText.
+        const lineData = this.fontData.measureLines(textToRender, this._fontSize, this._lineSpacing);
+        this._width = lineData.totalWidth;
+        this._height = lineData.totalHeight;
+        this._dirty = false;
+        this.updateDisplayOrigin();
     },
 
     /**
      * Apply text alignment to character positions
      */
-    applyAlignment: function () {
+    applyAlignment: function (textToRender: string) {
         if (this._align === 'left' || this._characters.length === 0) {
             return;
         }
 
-        const textWidth = this.getTextWidth();
+        const textWidth = this.fontData.measureText(textToRender, this._fontSize).width;
         let offset = 0;
 
         if (this._align === 'center') {
