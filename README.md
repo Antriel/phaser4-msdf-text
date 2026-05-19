@@ -66,7 +66,7 @@ class MyScene extends Phaser.Scene {
         const font = this.cache.custom.msdfFont.get('arial');
 
         const text = this.add.msdfText(400, 300, font, 'Hello, MSDF!', 48);
-        text.setColorHex('#ffffff');
+        text.setColor('#ffffff');
         text.setAlign('center');
         text.setOrigin(0.5);
     }
@@ -81,7 +81,7 @@ const text = this.make.msdfText({
     font,
     text: 'Hello, MSDF!',
     fontSize: 48,
-    color: { r: 255, g: 255, b: 255 },
+    color: 0xffffff,
     align: 'center',
 });
 ```
@@ -94,8 +94,10 @@ const text = this.make.msdfText({
 // Chainable setters (Phaser-idiomatic)
 text.setText('New content');
 text.setFontSize(64);
-text.setColor(255, 128, 0);        // 0-255 RGB
-text.setColorHex('#ff8800');
+text.setColor(0xff8800);           // packed 0xRRGGBB
+text.setColor('#ff8800');          // hex string or 'rgb(255, 136, 0)'
+text.setColor({ r: 255, g: 136, b: 0 });  // object (0-255), optional `a`
+text.setColor(0xff8800, 0.5);      // optional alpha (0-1) overrides color's alpha
 text.setAlign('center');           // 'left' | 'center' | 'right'
 text.setLineSpacing(10);
 

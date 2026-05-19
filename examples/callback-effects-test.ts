@@ -43,7 +43,7 @@ class CallbackEffectsTestScene extends Phaser.Scene {
 
     // Effect 1: Wave (vertical sine wave)
     this.waveText = this.add.msdfText(400, 60, font, "WAVE EFFECT", 36);
-    this.waveText.setColorHex("#00ff00");
+    this.waveText.setColor("#00ff00");
     this.waveText.setAlign("center");
     this.waveText.setDisplayCallback((data: DisplayCallbackData) => {
       data.y += Math.sin((data.index * 0.5) + (this.currentTime * 0.003)) * 15;
@@ -66,7 +66,7 @@ class CallbackEffectsTestScene extends Phaser.Scene {
 
     // Effect 3: Breathing (pulsing scale)
     this.breathingText = this.add.msdfText(400, 200, font, "BREATHING", 36);
-    this.breathingText.setColorHex("#ffff00");
+    this.breathingText.setColor("#ffff00");
     this.breathingText.setAlign("center");
     this.breathingText.setDisplayCallback((data: DisplayCallbackData) => {
       const pulsePhase = (data.index * 0.2) + (this.currentTime * 0.002);
@@ -76,7 +76,7 @@ class CallbackEffectsTestScene extends Phaser.Scene {
 
     // Effect 4: Jiggle (random position offsets)
     this.jiggleText = this.add.msdfText(400, 270, font, "JIGGLE!", 36);
-    this.jiggleText.setColorHex("#ff00ff");
+    this.jiggleText.setColor("#ff00ff");
     this.jiggleText.setAlign("center");
     this.jiggleText.setDisplayCallback((data: DisplayCallbackData) => {
       // Use time + index for pseudo-random but smooth jiggle
@@ -89,7 +89,7 @@ class CallbackEffectsTestScene extends Phaser.Scene {
 
     // Effect 5: Rotation (spinning characters)
     this.rotationText = this.add.msdfText(400, 340, font, "SPINNING", 36);
-    this.rotationText.setColorHex("#00ffff");
+    this.rotationText.setColor("#00ffff");
     this.rotationText.setAlign("center");
     this.rotationText.setDisplayCallback((data: DisplayCallbackData) => {
       data.rotation = (this.currentTime * 0.002 + data.index * 0.2);

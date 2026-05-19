@@ -28,6 +28,14 @@ const PhaserMap: any = (Phaser as any).Structs.Map;
 export type TextAlign = 'left' | 'center' | 'right';
 
 /**
+ * Any value accepted by Phaser.Display.Color.ValueToColor:
+ * - number: packed 0xRRGGBB
+ * - string: '#rrggbb', '#rgb', or 'rgb(r,g,b)'
+ * - object: { r, g, b, a? } with channels in 0-255 (also accepts Phaser.Display.Color)
+ */
+export type ColorValue = number | string | Phaser.Types.Display.InputColorObject | Phaser.Display.Color;
+
+/**
  * Per-corner tint data for display callbacks
  */
 export interface DisplayCallbackTint {
@@ -130,17 +138,16 @@ export interface MSDFTextInstance extends Phaser.GameObjects.GameObject {
     // Chainable setters
     setText(text: string): this;
     setFontSize(size: number): this;
-    setColor(r: number, g: number, b: number, a?: number): this;
-    setColorHex(hex: string, alpha?: number): this;
+    setColor(color: ColorValue, alpha?: number): this;
     setAlign(align: TextAlign): this;
     setLineSpacing(spacing: number): this;
     setMaxWidth(width: number): this;
     setDisplayCallback(callback: DisplayCallback | undefined): this;
     clearDisplayCallback(): this;
-    setOutline(width: number, color: number, alpha?: number): this;
+    setOutline(width: number, color?: ColorValue, alpha?: number): this;
     clearOutline(): this;
     hasOutline(): boolean;
-    setShadow(offsetX: number, offsetY: number, color?: number, alpha?: number): this;
+    setShadow(offsetX: number, offsetY: number, color?: ColorValue, alpha?: number): this;
     clearShadow(): this;
     hasShadow(): boolean;
     getTextWidth(): number;
@@ -332,30 +339,17 @@ export const MSDFText = new Class({
     },
 
     /**
-     * Set text color (0-255 range)
+     * Set text color. Accepts a 0xRRGGBB number, a hex/rgb string, or an
+     * `{r, g, b, a?}` object (channels in 0-255). When provided, `alpha`
+     * (0-1) overrides any alpha embedded in the color value.
      */
-    setColor: function (r: number, g: number, b: number, a: number = 255) {
+    setColor: function (color: ColorValue, alpha?: number) {
+        const c = (Phaser.Display.Color.ValueToColor as any)(color);
         this._color = {
-            r: r / 255,
-            g: g / 255,
-            b: b / 255,
-            a: a / 255
-        };
-        return this;
-    },
-
-    /**
-     * Set text color from hex string
-     */
-    setColorHex: function (hex: string, alpha: number = 1) {
-        // Phaser.Display.Color exposes r/g/b at runtime but they're missing
-        // from the published types — cast to bypass.
-        const rgb = Phaser.Display.Color.HexStringToColor(hex) as unknown as { r: number; g: number; b: number };
-        this._color = {
-            r: rgb.r / 255,
-            g: rgb.g / 255,
-            b: rgb.b / 255,
-            a: alpha
+            r: c.redGL,
+            g: c.greenGL,
+            b: c.blueGL,
+            a: alpha !== undefined ? alpha : c.alphaGL
         };
         return this;
     },
@@ -443,17 +437,15 @@ export const MSDFText = new Class({
     },
 
     /**
-     * Set outline for the text
+     * Set outline for the text.
      * @param width Outline width in distance field units
-     * @param color Outline color as 0xRRGGBB
-     * @param alpha Outline alpha (0-1)
+     * @param color Outline color (number, hex/rgb string, or {r,g,b,a?} object). Defaults to black.
+     * @param alpha Outline alpha (0-1). Overrides any alpha in `color`.
      */
-    setOutline: function (width: number, color: number, alpha: number = 1) {
+    setOutline: function (width: number, color: ColorValue = 0x000000, alpha: number = 1) {
         this._outlineWidth = width;
-        const r = ((color >> 16) & 0xFF) / 255;
-        const g = ((color >> 8) & 0xFF) / 255;
-        const b = (color & 0xFF) / 255;
-        this._outlineColor = { r, g, b, a: alpha };
+        const c = (Phaser.Display.Color.ValueToColor as any)(color);
+        this._outlineColor = { r: c.redGL, g: c.greenGL, b: c.blueGL, a: alpha };
         return this;
     },
 
@@ -473,18 +465,16 @@ export const MSDFText = new Class({
     },
 
     /**
-     * Set shadow for the text
+     * Set shadow for the text.
      * @param offsetX Shadow X offset in pixels
      * @param offsetY Shadow Y offset in pixels
-     * @param color Shadow color as 0xRRGGBB
+     * @param color Shadow color (number, hex/rgb string, or {r,g,b,a?} object). Defaults to black.
      * @param alpha Shadow alpha (0-1)
      */
-    setShadow: function (offsetX: number, offsetY: number, color: number = 0x000000, alpha: number = 0.5) {
+    setShadow: function (offsetX: number, offsetY: number, color: ColorValue = 0x000000, alpha: number = 0.5) {
         this._shadowOffset = { x: offsetX, y: offsetY };
-        const r = ((color >> 16) & 0xFF) / 255;
-        const g = ((color >> 8) & 0xFF) / 255;
-        const b = (color & 0xFF) / 255;
-        this._shadowColor = { r, g, b };
+        const c = (Phaser.Display.Color.ValueToColor as any)(color);
+        this._shadowColor = { r: c.redGL, g: c.greenGL, b: c.blueGL };
         this._shadowAlpha = alpha;
         return this;
     },

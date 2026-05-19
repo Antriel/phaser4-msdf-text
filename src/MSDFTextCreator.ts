@@ -6,7 +6,7 @@
  */
 
 import Phaser from 'phaser';
-import { MSDFText } from './MSDFText';
+import { MSDFText, ColorValue } from './MSDFText';
 import { MSDFFont } from './MSDFFont';
 
 // @ts-ignore - Phaser internals not fully typed
@@ -23,7 +23,8 @@ export interface MSDFTextConfig extends Phaser.Types.GameObjects.GameObjectConfi
     font: MSDFFont;
     text?: string;
     fontSize?: number;
-    color?: { r: number; g: number; b: number; a?: number };
+    color?: ColorValue;
+    colorAlpha?: number;
     align?: 'left' | 'center' | 'right';
     lineSpacing?: number;
     maxWidth?: number;
@@ -74,11 +75,8 @@ GameObjectCreator.register('msdfText', function (
     // Apply MSDF-specific config options
     const color = GetAdvancedValue(config, 'color', null);
     if (color !== null) {
-        const r = GetAdvancedValue(color, 'r', 255);
-        const g = GetAdvancedValue(color, 'g', 255);
-        const b = GetAdvancedValue(color, 'b', 255);
-        const a = GetAdvancedValue(color, 'a', 255);
-        msdfText.setColor(r, g, b, a);
+        const colorAlpha = GetAdvancedValue(config, 'colorAlpha', null);
+        msdfText.setColor(color, colorAlpha !== null ? colorAlpha : undefined);
     }
 
     const align = GetAdvancedValue(config, 'align', null);

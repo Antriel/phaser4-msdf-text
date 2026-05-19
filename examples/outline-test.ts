@@ -57,27 +57,27 @@ class OutlineTestScene extends Phaser.Scene {
     }
 
     this.text1 = this.add.msdfText(400, 100, font, "OUTLINED TEXT", 64);
-    this.text1.setColorHex("#ffffff");
+    this.text1.setColor("#ffffff");
     this.text1.setAlign("center");
     this.text1.setOutline(this.currentOutlineWidth, this.outlinePresets[0].color, this.outlinePresets[0].alpha);
 
     this.text2 = this.add.msdfText(400, 190, font, "Colorful Outline", 48);
-    this.text2.setColorHex("#00ff00");
+    this.text2.setColor("#00ff00");
     this.text2.setAlign("center");
     this.text2.setOutline(this.currentOutlineWidth, 0x000000, 1.0);
 
     this.text3 = this.add.msdfText(400, 270, font, "Press START", 56);
-    this.text3.setColorHex("#ffffff");
+    this.text3.setColor("#ffffff");
     this.text3.setAlign("center");
     this.text3.setOutline(2.0, 0x000000, 0.8);
 
     this.text4 = this.add.msdfText(400, 350, font, "Small text with thin outline", 24);
-    this.text4.setColorHex("#ffff00");
+    this.text4.setColor("#ffff00");
     this.text4.setAlign("center");
     this.text4.setOutline(0.8, 0x000000, 1.0);
 
     this.text5 = this.add.msdfText(400, 400, font, "BOLD STYLE", 52);
-    this.text5.setColorHex("#ff6600");
+    this.text5.setColor("#ff6600");
     this.text5.setAlign("center");
     this.text5.setOutline(2.5, 0x000000, 1.0);
 

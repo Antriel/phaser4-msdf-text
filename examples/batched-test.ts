@@ -49,7 +49,7 @@ class BatchedTestScene extends Phaser.Scene {
 
     // Test 1: Simple text with rotation (using factory pattern)
     this.text1 = this.add.msdfText(400, 100, font, "Batched MSDF Text!", 48);
-    this.text1.setColorHex("#00ff00");
+    this.text1.setColor("#00ff00");
     this.text1.setAlign("center");
     // Add rotation animation to test transform support
     this.tweens.add({
@@ -68,7 +68,7 @@ class BatchedTestScene extends Phaser.Scene {
       "This is batched rendering!\nMultiple lines work too.\nMuch faster than Phase 3!",
       32
     );
-    this.text2.setColorHex("#ffffff");
+    this.text2.setColor("#ffffff");
     this.text2.setAlign("center");
     this.text2.setLineSpacing(5);
 
@@ -80,7 +80,7 @@ class BatchedTestScene extends Phaser.Scene {
       "Duis aute irure dolor in reprehenderit in voluptate velit esse.";
 
     this.text3 = this.add.msdfText(50, 350, font, loremIpsum, 24);
-    this.text3.setColorHex("#ffff00");
+    this.text3.setColor("#ffff00");
     this.text3.setAlign("left");
     this.text3.scaleX = 10;
     this.tweens.add({
@@ -95,7 +95,7 @@ class BatchedTestScene extends Phaser.Scene {
 
     // FPS counter (updates every frame to test dynamic text, using factory pattern)
     this.fpsText = this.add.msdfText(10, 10, font, "FPS: --", 20);
-    this.fpsText.setColorHex("#ff0000");
+    this.fpsText.setColor("#ff0000");
 
     // Instructions
     this.add.text(
@@ -121,7 +121,7 @@ class BatchedTestScene extends Phaser.Scene {
     if (this.text2) {
       const hue = (time / 10) % 360;
       const color = Phaser.Display.Color.HSVToRGB(hue / 360, 1, 1);
-      this.text2.setColor(color.r, color.g, color.b, 255);
+      this.text2.setColor(color);
     }
   }
 }
