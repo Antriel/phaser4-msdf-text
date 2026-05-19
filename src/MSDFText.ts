@@ -108,32 +108,33 @@ export interface MSDFTextInstance extends Phaser.GameObjects.GameObject {
     _align: TextAlign;
     _lineSpacing: number;
     _maxWidth: number;
-    _wordWrapCharCode: number;
+    wordWrapCharCode: number;
     _outlineWidth: number;
     _outlineColor: { r: number; g: number; b: number; a: number };
     _shadowOffset: { x: number; y: number };
     _shadowColor: { r: number; g: number; b: number };
     _shadowAlpha: number;
     _characters: CharacterData[];
-    needsRebuild: boolean;
+    _dirty: boolean;
     displayCallback?: DisplayCallback;
     callbackData: DisplayCallbackData;
     _texture: any;
-    _pxRange: number;
 
-    // Methods
+    // Property accessors (with side effects — trigger rebuild on change)
+    text: string;
+    fontSize: number;
+    align: TextAlign;
+    lineSpacing: number;
+    maxWidth: number;
+
+    // Chainable setters
     setText(text: string): this;
-    getText(): string;
     setFontSize(size: number): this;
-    getFontSize(): number;
     setColor(r: number, g: number, b: number, a?: number): this;
     setColorHex(hex: string, alpha?: number): this;
     setAlign(align: TextAlign): this;
     setLineSpacing(spacing: number): this;
     setMaxWidth(width: number): this;
-    getMaxWidth(): number;
-    setWordWrapCharCode(charCode: number): this;
-    getWordWrapCharCode(): number;
     setDisplayCallback(callback: DisplayCallback | undefined): this;
     clearDisplayCallback(): this;
     setOutline(width: number, color: number, alpha?: number): this;
@@ -154,8 +155,6 @@ export interface MSDFTextInstance extends Phaser.GameObjects.GameObject {
             longest: number;
         };
     };
-    getDebugInfo(): string;
-    printDebugInfo(): void;
 }
 
 /**
@@ -173,9 +172,9 @@ const DefaultMSDFNodes = new PhaserMap([
 const MSDFTextRender = {
     renderWebGL: function (renderer: any, src: any, drawingContext: any, parentMatrix: any): void {
         // Rebuild if needed
-        if (src.needsRebuild) {
+        if (src._dirty) {
             src.rebuildText();
-            src.needsRebuild = false;
+            src._dirty = false;
         }
 
         // Delegate to MSDFTextWebGLRenderer
@@ -222,7 +221,7 @@ export const MSDFText = new Class({
         this._align = 'left';
         this._lineSpacing = 0;
         this._maxWidth = 0; // 0 = no word wrapping
-        this._wordWrapCharCode = 32; // space character
+        this.wordWrapCharCode = 32; // space character
 
         // Outline properties (Phase 5.4)
         this._outlineWidth = 0;
@@ -235,7 +234,7 @@ export const MSDFText = new Class({
 
         // Character layout data (not GameObjects!)
         this._characters = [];
-        this.needsRebuild = true;
+        this._dirty = true;
 
         // Display callback (Phase 5.2)
         this.displayCallback = undefined;
@@ -258,7 +257,6 @@ export const MSDFText = new Class({
 
         // Texture and rendering
         this._texture = null; // WebGLTextureWrapper
-        this._pxRange = 4;
 
         // Get texture wrapper from Phaser's texture cache
         const frame = scene.sys.textures.getFrame(font.textureKey);
@@ -267,9 +265,6 @@ export const MSDFText = new Class({
         } else {
             console.warn(`MSDFText: Could not get texture wrapper for '${font.textureKey}'`);
         }
-
-        // Get MSDF distance range parameter
-        this._pxRange = font.distanceField.distanceRange;
 
         // Set initial position using Transform component
         this.setPosition(x, y);
@@ -295,39 +290,45 @@ export const MSDFText = new Class({
     // ========================================================================
 
     /**
-     * Set the text content
+     * The text content. Setting this triggers a rebuild on next render.
+     */
+    text: {
+        get: function (this: any): string { return this._text; },
+        set: function (this: any, value: string) {
+            if (this._text !== value) {
+                this._text = value;
+                this._dirty = true;
+            }
+        }
+    },
+
+    /**
+     * Set the text content (chainable)
      */
     setText: function (text: string) {
-        if (this._text !== text) {
-            this._text = text;
-            this.needsRebuild = true;
-        }
+        this.text = text;
         return this;
     },
 
     /**
-     * Get the text content
+     * The font size. Setting this triggers a rebuild on next render.
      */
-    getText: function (): string {
-        return this._text;
+    fontSize: {
+        get: function (this: any): number { return this._fontSize; },
+        set: function (this: any, value: number) {
+            if (this._fontSize !== value) {
+                this._fontSize = value;
+                this._dirty = true;
+            }
+        }
     },
 
     /**
-     * Set font size
+     * Set font size (chainable)
      */
     setFontSize: function (size: number) {
-        if (this._fontSize !== size) {
-            this._fontSize = size;
-            this.needsRebuild = true;
-        }
+        this.fontSize = size;
         return this;
-    },
-
-    /**
-     * Get font size
-     */
-    getFontSize: function (): number {
-        return this._fontSize;
     },
 
     /**
@@ -360,63 +361,68 @@ export const MSDFText = new Class({
     },
 
     /**
-     * Set text alignment
+     * Text alignment. Setting this triggers a rebuild on next render.
+     */
+    align: {
+        get: function (this: any): TextAlign { return this._align; },
+        set: function (this: any, value: TextAlign) {
+            if (this._align !== value) {
+                this._align = value;
+                this._dirty = true;
+            }
+        }
+    },
+
+    /**
+     * Set text alignment (chainable)
      */
     setAlign: function (align: TextAlign) {
-        if (this._align !== align) {
-            this._align = align;
-            this.needsRebuild = true;
-        }
+        this.align = align;
         return this;
     },
 
     /**
-     * Set line spacing
+     * Line spacing. Setting this triggers a rebuild on next render.
+     */
+    lineSpacing: {
+        get: function (this: any): number { return this._lineSpacing; },
+        set: function (this: any, value: number) {
+            if (this._lineSpacing !== value) {
+                this._lineSpacing = value;
+                this._dirty = true;
+            }
+        }
+    },
+
+    /**
+     * Set line spacing (chainable)
      */
     setLineSpacing: function (spacing: number) {
-        if (this._lineSpacing !== spacing) {
-            this._lineSpacing = spacing;
-            this.needsRebuild = true;
-        }
+        this.lineSpacing = spacing;
         return this;
     },
 
     /**
-     * Set maximum text width for word wrapping
+     * Maximum text width for word wrapping (0 = no wrapping).
+     * Setting this triggers a rebuild on next render.
+     */
+    maxWidth: {
+        get: function (this: any): number { return this._maxWidth; },
+        set: function (this: any, value: number) {
+            if (this._maxWidth !== value) {
+                this._maxWidth = value;
+                this._dirty = true;
+            }
+        }
+    },
+
+    /**
+     * Set maximum text width for word wrapping (chainable)
      * @param width Maximum width in pixels (0 = no wrapping)
      */
     setMaxWidth: function (width: number) {
-        if (this._maxWidth !== width) {
-            this._maxWidth = width;
-            this.needsRebuild = true;
-        }
+        this.maxWidth = width;
         return this;
-    },
-
-    /**
-     * Get maximum text width for word wrapping
-     */
-    getMaxWidth: function (): number {
-        return this._maxWidth;
-    },
-
-    /**
-     * Set word wrap character code
-     * @param charCode Character code to wrap on (default: 32 for space)
-     */
-    setWordWrapCharCode: function (charCode: number) {
-        if (this._wordWrapCharCode !== charCode) {
-            this._wordWrapCharCode = charCode;
-            this.needsRebuild = true;
-        }
-        return this;
-    },
-
-    /**
-     * Get word wrap character code
-     */
-    getWordWrapCharCode: function (): number {
-        return this._wordWrapCharCode;
     },
 
     /**
@@ -576,7 +582,7 @@ export const MSDFText = new Class({
                 const char = String.fromCharCode(charCode);
 
                 // Check if this is a wrap character
-                if (charCode === this._wordWrapCharCode) {
+                if (charCode === this.wordWrapCharCode) {
                     // Try adding the current word (including the wrap character)
                     const testLine = currentLine + currentWord + char;
                     const { width } = this.font.measureText(testLine, this._fontSize);
@@ -750,32 +756,6 @@ export const MSDFText = new Class({
      */
     preDestroy: function () {
         this.clearCharacters();
-    },
-
-    // ========================================================================
-    // Debug
-    // ========================================================================
-
-    /**
-     * Get debug information
-     */
-    getDebugInfo: function (): string {
-        return [
-            `Text: "${this._text}"`,
-            `Font: ${this.font.face}`,
-            `Size: ${this._fontSize}px`,
-            `Characters: ${this._characters.length}`,
-            `Bounds: ${this.getTextWidth().toFixed(1)}x${this.getTextHeight().toFixed(1)}`,
-            `Align: ${this._align}`,
-            `Color: rgba(${(this._color.r * 255).toFixed(0)}, ${(this._color.g * 255).toFixed(0)}, ${(this._color.b * 255).toFixed(0)}, ${this._color.a.toFixed(2)})`
-        ].join('\n');
-    },
-
-    /**
-     * Print debug info to console
-     */
-    printDebugInfo: function () {
-        // Debug method intentionally left empty - use getDebugInfo() instead
     }
 
 });

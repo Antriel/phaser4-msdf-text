@@ -97,13 +97,6 @@ class BatchedTestScene extends Phaser.Scene {
     this.fpsText = this.add.msdfText(10, 10, font, "FPS: --", 20);
     this.fpsText.setColorHex("#ff0000");
 
-    // Print debug info
-    console.log("=== Text 1 Debug ===");
-    this.text1.printDebugInfo();
-
-    console.log("\n=== Text 3 Debug (Large Block) ===");
-    this.text3.printDebugInfo();
-
     // Instructions
     this.add.text(
       10,

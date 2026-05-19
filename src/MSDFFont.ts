@@ -252,29 +252,4 @@ export class MSDFFont {
         return this.data.chars.size;
     }
 
-    // ========================================================================
-    // Debug
-    // ========================================================================
-
-    /**
-     * Get debug information about the font
-     */
-    getDebugInfo(): string {
-        return [
-            `Font: ${this.face}`,
-            `Base Size: ${this.baseSize}px`,
-            `Line Height: ${this.data.lineHeight.toFixed(3)}`,
-            `Characters: ${this.charCount}`,
-            `Atlas: ${this.data.atlasWidth}x${this.data.atlasHeight}`,
-            `Distance Field: ${this.data.distanceField.fieldType}`,
-            `Distance Range: ${this.data.distanceField.distanceRange}`
-        ].join('\n');
-    }
-
-    /**
-     * Print debug info to console
-     */
-    printDebugInfo(): void {
-        // Debug method intentionally left empty - use getDebugInfo() instead
-    }
 }

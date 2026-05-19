@@ -98,12 +98,19 @@ const text = this.make.msdfText({
 ### Text properties
 
 ```ts
+// Chainable setters (Phaser-idiomatic)
 text.setText('New content');
 text.setFontSize(64);
 text.setColor(255, 128, 0);        // 0-255 RGB
 text.setColorHex('#ff8800');
 text.setAlign('center');           // 'left' | 'center' | 'right'
 text.setLineSpacing(10);
+
+// Or use property accessors directly
+text.text = 'New content';
+text.fontSize = 64;
+text.align = 'center';
+text.lineSpacing = 10;
 
 text.getTextWidth();
 text.getTextHeight();
@@ -114,7 +121,8 @@ text.getTextBounds();              // { width, height, lines: { count, lengths, 
 
 ```ts
 text.setMaxWidth(400);             // Wrap to fit 400px (0 disables)
-text.setWordWrapCharCode(32);      // Default: space. Use 45 for hyphen, etc.
+// Or:  text.maxWidth = 400;
+text.wordWrapCharCode = 32;        // Default: space. Use 45 for hyphen, etc.
 ```
 
 ### Outline (shader-based, no extra draw calls)
