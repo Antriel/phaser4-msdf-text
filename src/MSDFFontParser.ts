@@ -168,6 +168,10 @@ export interface MSDFFontData {
  *
  * - yOrigin "top": atlas pixel Y grows downward, so we flip with `1 - y/H`.
  * - yOrigin "bottom": atlas pixel Y already matches OpenGL UV (Y up); no flip.
+ *
+ * UVs use atlasBounds directly. Neighbour-pixel bleed under LINEAR filtering is
+ * controlled by giving each glyph enough gutter at atlas-generation time
+ * (msdf-atlas-gen `-pxpadding` / `-outerpxpadding`); see FONTS.md.
  */
 function atlasBoundsToUV(
     atlasBounds: MSDFAtlasBounds,

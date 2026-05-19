@@ -17,6 +17,7 @@ ceramic/git/msdf-atlas-gen-binary/windows/msdf-atlas-gen.exe \
   -type msdf \
   -pxrange 4 \
   -size 42 \
+  -outerpxpadding 2 \
   -potr \
   -yorigin top \
   -imageout "public/assets/fonts/Arial.png" \
@@ -52,6 +53,7 @@ ceramic\git\msdf-atlas-gen-binary\windows\msdf-atlas-gen.exe ^
   -type msdf ^
   -pxrange 4 ^
   -size 42 ^
+  -outerpxpadding 2 ^
   -potr ^
   -yorigin top ^
   -imageout "public\assets\fonts\<FONT_NAME>.png" ^
@@ -66,6 +68,7 @@ ceramic/git/msdf-atlas-gen-binary/mac/msdf-atlas-gen \
   -type msdf \
   -pxrange 4 \
   -size 42 \
+  -outerpxpadding 2 \
   -potr \
   -yorigin top \
   -imageout "public/assets/fonts/<FONT_NAME>.png" \
@@ -81,6 +84,7 @@ ceramic/git/msdf-atlas-gen-binary/linux-x86_64/msdf-atlas-gen \
   -type msdf \
   -pxrange 4 \
   -size 42 \
+  -outerpxpadding 2 \
   -potr \
   -yorigin top \
   -imageout "public/assets/fonts/<FONT_NAME>.png" \
@@ -92,6 +96,7 @@ ceramic/git/msdf-atlas-gen-binary/linux-arm64/msdf-atlas-gen \
   -type msdf \
   -pxrange 4 \
   -size 42 \
+  -outerpxpadding 2 \
   -potr \
   -yorigin top \
   -imageout "public/assets/fonts/<FONT_NAME>.png" \
@@ -110,6 +115,7 @@ ceramic/git/msdf-atlas-gen-binary/linux-arm64/msdf-atlas-gen \
 | `-type msdf` | Fixed | Multi-channel SDF (best quality) |
 | `-pxrange 4` | **CRITICAL** | Distance range - must match shader uniform! |
 | `-size 42` | Recommended | Base font size in pixels per EM |
+| `-outerpxpadding 2` | Recommended | Gutter between glyphs in the atlas. Without this, LINEAR sampling at the quad edges can blend in the neighbouring glyph — visible as edge bleed, especially at non-uniform scale or extreme zoom. Bump higher (4+) if you stretch text heavily. |
 | `-potr` | Recommended | Power-of-two rectangle dimensions |
 | `-yorigin top` | **REQUIRED** | Top-down Y-axis (Phaser convention) |
 
@@ -236,6 +242,10 @@ Use these formats for `-imageout`:
 - ✅ Verify `distanceRange` in shader config matches `-pxrange`
 - ✅ Check texture dimensions in shader config match actual atlas
 - ✅ Ensure LINEAR texture filtering (not NEAREST)
+
+### Neighbour-glyph pixels bleed onto character edges
+
+- ✅ Regenerate the atlas with `-outerpxpadding 2` (or higher if the bleed appears under stretching / heavy zoom). The default gutter is only ~1 px, which is not enough for LINEAR filtering to stay safely inside a glyph's slot.
 
 ### Text has wrong orientation
 
