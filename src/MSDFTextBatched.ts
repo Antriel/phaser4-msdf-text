@@ -16,16 +16,14 @@
 
 import Phaser from 'phaser';
 import { MSDFFont } from './MSDFFont';
-import MSDFTextWebGLRenderer from './MSDFTextWebGLRenderer.js';
+import MSDFTextWebGLRenderer from './MSDFTextWebGLRenderer';
 
-// @ts-ignore - Phaser internals not fully typed
-const Class = Phaser.Class;
-// @ts-ignore - Phaser internals not fully typed
-const Components = Phaser.GameObjects.Components;
-// @ts-ignore - Phaser internals not fully typed
-const GameObject = Phaser.GameObjects.GameObject;
-// @ts-ignore - Phaser internals not fully typed
-const PhaserMap = Phaser.Structs.Map;
+// Phaser's published types describe these as interfaces/values that don't
+// match the runtime shape we need, so reach through `any`.
+const Class: any = (Phaser as any).Class;
+const Components: any = (Phaser as any).GameObjects.Components;
+const GameObject: any = (Phaser as any).GameObjects.GameObject;
+const PhaserMap: any = (Phaser as any).Structs.Map;
 
 export type TextAlign = 'left' | 'center' | 'right';
 
@@ -349,7 +347,9 @@ export const MSDFText = new Class({
      * Set text color from hex string
      */
     setColorHex: function (hex: string, alpha: number = 1) {
-        const rgb = Phaser.Display.Color.HexStringToColor(hex);
+        // Phaser.Display.Color exposes r/g/b at runtime but they're missing
+        // from the published types — cast to bypass.
+        const rgb = Phaser.Display.Color.HexStringToColor(hex) as unknown as { r: number; g: number; b: number };
         this._color = {
             r: rgb.r / 255,
             g: rgb.g / 255,

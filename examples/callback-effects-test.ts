@@ -13,10 +13,8 @@
  */
 
 import Phaser from 'phaser';
-import '../src';
-import { installMSDFPlugin } from '../src/MSDFPlugin';
-import type { MSDFTextInstance, DisplayCallbackData } from '../src/MSDFTextBatched';
-import { registerMSDFBatchHandler } from '../src/registerMSDFBatchHandler';
+import { MSDFPlugin, MSDFBatchHandler } from '../src';
+import type { MSDFTextInstance, DisplayCallbackData } from '../src';
 import * as SPECTOR from "phaser3spectorjs";
 
 class CallbackEffectsTestScene extends Phaser.Scene {
@@ -168,18 +166,23 @@ const config: Phaser.Types.Core.GameConfig = {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
+  render: {
+    // Phaser's published types describe entries as { key, function } wrappers,
+    // but the runtime (RenderNodeManager) takes the value as the constructor
+    // directly. Cast to bypass the stale type.
+    renderNodes: { BatchHandlerMSDF: MSDFBatchHandler } as any,
+  },
+  plugins: {
+    global: [
+      { key: 'MSDFPlugin', plugin: MSDFPlugin, start: true },
+    ],
+  },
   callbacks: {
-    postBoot: (game) => {
-      installMSDFPlugin(game);
+    postBoot: () => {
       const spector = new SPECTOR.Spector();
       spector.displayUI();
     },
   },
 };
 
-// Create game
-const game = new Phaser.Game(config);
-
-// Register MSDF batch handler
-registerMSDFBatchHandler(game);
-console.log('Callback effects test initialized! Enjoy the show!');
+new Phaser.Game(config);

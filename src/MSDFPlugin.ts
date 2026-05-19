@@ -1,99 +1,53 @@
 /**
- * MSDFPlugin - Phaser Plugin for MSDF Font Support
+ * MSDFPlugin — global Phaser plugin that installs the MSDF font cache and
+ * verifies the required WebGL extension.
  *
- * This plugin adds a custom cache for MSDF fonts to the CacheManager.
- * It should be initialized once when your game boots.
+ * Recommended registration via game config:
+ *
+ *   import { MSDFPlugin, MSDFBatchHandler } from 'phaser4-msdf-font';
+ *
+ *   new Phaser.Game({
+ *       type: Phaser.WEBGL,
+ *       render: { renderNodes: { BatchHandlerMSDF: MSDFBatchHandler } },
+ *       plugins: { global: [{ key: 'MSDFPlugin', plugin: MSDFPlugin, start: true }] },
+ *       scene: [MyScene]
+ *   });
+ *
+ * Or call `installMSDFPlugin(game)` from `callbacks.postBoot` for manual setup.
  */
 
 import Phaser from 'phaser';
 
-/**
- * Install MSDF font support into a Phaser game instance
- *
- * This adds a custom cache at `game.cache.custom.msdfFont` where
- * loaded MSDF fonts are stored.
- *
- * Call this function once during game initialization, typically in
- * the game config's `callbacks.postBoot` or at the start of your
- * first scene's `create()` method.
- *
- * @param game - The Phaser game instance
- *
- * @example
- * ```typescript
- * const config = {
- *     type: Phaser.WEBGL,
- *     width: 800,
- *     height: 600,
- *     scene: MyScene,
- *     callbacks: {
- *         postBoot: (game) => {
- *             installMSDFPlugin(game);
- *         }
- *     }
- * };
- * const game = new Phaser.Game(config);
- * ```
- */
-export function installMSDFPlugin(game: Phaser.Game): void {
-    // The MSDF fragment shader uses fwidth() for derivative-based AA, which
-    // requires OES_standard_derivatives. Phaser fetches this extension
-    // unconditionally during renderer init, so by the time any plugin code
-    // runs it should already be active on the context — we just verify.
-    const renderer = game.renderer as Phaser.Renderer.WebGL.WebGLRenderer | undefined;
-    if (renderer && 'standardDerivativesExtension' in renderer && !renderer.standardDerivativesExtension) {
-        throw new Error(
-            '[MSDFPlugin] OES_standard_derivatives WebGL extension is required for MSDF rendering but is not available on this context.'
-        );
-    }
+const BasePlugin: typeof Phaser.Plugins.BasePlugin = (Phaser as any).Plugins.BasePlugin;
 
-    // Add custom cache for MSDF fonts
-    if (!game.cache.custom.msdfFont) {
-        game.cache.addCustom('msdfFont');
-        console.log('[MSDFPlugin] MSDF font cache installed');
+export class MSDFPlugin extends BasePlugin {
+    init(): void {
+        const game = this.game as Phaser.Game;
+        ensureDerivativesExtension(game);
+        ensureMSDFCache(game);
     }
 }
 
 /**
- * Get the MSDF font cache from a game instance
- *
- * @param game - The Phaser game instance
- * @returns The MSDF font cache, or undefined if not installed
+ * Install MSDF support manually (alternative to registering MSDFPlugin in the
+ * game config). Safe to call multiple times.
  */
+export function installMSDFPlugin(game: Phaser.Game): void {
+    ensureDerivativesExtension(game);
+    ensureMSDFCache(game);
+}
+
 export function getMSDFCache(game: Phaser.Game): Phaser.Cache.BaseCache | undefined {
     return game.cache.custom.msdfFont;
 }
 
-/**
- * Check if the MSDF plugin is installed
- *
- * @param game - The Phaser game instance
- * @returns True if the plugin is installed
- */
 export function isMSDFPluginInstalled(game: Phaser.Game): boolean {
     return !!game.cache.custom.msdfFont;
 }
 
 /**
- * Auto-install the plugin when a scene is booted
- *
- * This is a convenience function that automatically installs the MSDF plugin
- * when a scene starts if it hasn't been installed yet.
- *
- * You can call this in your scene's `init()` or `preload()` method to ensure
- * the plugin is available without manually calling installMSDFPlugin.
- *
- * @param scene - The Phaser scene
- *
- * @example
- * ```typescript
- * class MyScene extends Phaser.Scene {
- *     preload() {
- *         autoInstallMSDFPlugin(this);
- *         this.load.msdfFont('arial', 'assets/fonts/Arial');
- *     }
- * }
- * ```
+ * Convenience: install from inside a scene's `init()` or `preload()` if you
+ * don't want to wire it up via the game config.
  */
 export function autoInstallMSDFPlugin(scene: Phaser.Scene): void {
     if (!isMSDFPluginInstalled(scene.game)) {
@@ -101,37 +55,17 @@ export function autoInstallMSDFPlugin(scene: Phaser.Scene): void {
     }
 }
 
-/**
- * Augment Phaser's LoaderPlugin type to include msdfFont method
- */
-declare module 'phaser' {
-    namespace Loader {
-        interface LoaderPlugin {
-            /**
-             * Load an MSDF font from JSON data and PNG texture.
-             *
-             * @param key - The key to use for this font.
-             * @param textureURL - URL to the PNG texture atlas. If omitted, defaults to `<key>.png`.
-             * @param fontDataURL - URL to the JSON font data. If omitted, defaults to `<key>.json`.
-             * @param textureXhrSettings - Optional XHR settings for the texture.
-             * @param fontDataXhrSettings - Optional XHR settings for the font data.
-             */
-            msdfFont(
-                key: string,
-                textureURL?: string,
-                fontDataURL?: string,
-                textureXhrSettings?: Phaser.Types.Loader.XHRSettingsObject,
-                fontDataXhrSettings?: Phaser.Types.Loader.XHRSettingsObject
-            ): this;
-        }
+function ensureDerivativesExtension(game: Phaser.Game): void {
+    const renderer = game.renderer as Phaser.Renderer.WebGL.WebGLRenderer | undefined;
+    if (renderer && 'standardDerivativesExtension' in renderer && !(renderer as any).standardDerivativesExtension) {
+        throw new Error(
+            '[MSDFPlugin] OES_standard_derivatives WebGL extension is required for MSDF rendering but is not available on this context.'
+        );
     }
+}
 
-    namespace Cache {
-        interface CacheManager {
-            custom: {
-                msdfFont?: BaseCache;
-                [key: string]: BaseCache | undefined;
-            };
-        }
+function ensureMSDFCache(game: Phaser.Game): void {
+    if (!game.cache.custom.msdfFont) {
+        game.cache.addCustom('msdfFont');
     }
 }

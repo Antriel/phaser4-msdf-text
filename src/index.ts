@@ -1,12 +1,30 @@
 /**
- * MSDF Font Rendering for Phaser 4
+ * Phaser 4 MSDF Font Rendering
  *
- * Main entry point - exports public API and registers factory/creator methods
+ * Public entry point. Importing this module also registers the `msdfFont`
+ * loader and `msdfTextBatched` factory/creator on Phaser via side-effect
+ * imports.
+ *
+ * Usage (recommended, via game config):
+ *
+ *   import { MSDFPlugin, MSDFBatchHandler } from 'phaser4-msdf-font';
+ *
+ *   new Phaser.Game({
+ *       type: Phaser.WEBGL,
+ *       render: { renderNodes: { BatchHandlerMSDF: MSDFBatchHandler } },
+ *       plugins: { global: [{ key: 'MSDFPlugin', plugin: MSDFPlugin, start: true }] },
+ *       scene: MyScene
+ *   });
+ *
+ *   // In a scene:
+ *   this.load.msdfFont('arial', 'assets/fonts/Arial.png', 'assets/fonts/Arial.json');
+ *   const font = this.cache.custom.msdfFont.get('arial');
+ *   const text = this.add.msdfTextBatched(100, 100, font, 'Hello World', 42);
  */
 
-/// <reference path="./phaser-augmentations.d.ts" />
-
-// Side-effect imports: register factory/creator methods and the msdfFont loader
+// Side-effect imports: register factory, creator, and loader, and apply
+// Phaser type augmentations.
+import './phaser-augmentations';
 import './MSDFTextBatchedFactory';
 import './MSDFTextBatchedCreator';
 import './MSDFFontFile';
@@ -15,37 +33,23 @@ import './MSDFFontFile';
 export { MSDFFont } from './MSDFFont';
 export { MSDFText } from './MSDFTextBatched';
 export { parseMSDFFont } from './MSDFFontParser';
-export { installMSDFPlugin, autoInstallMSDFPlugin, getMSDFCache, isMSDFPluginInstalled } from './MSDFPlugin';
+export {
+    MSDFPlugin,
+    installMSDFPlugin,
+    autoInstallMSDFPlugin,
+    getMSDFCache,
+    isMSDFPluginInstalled
+} from './MSDFPlugin';
+export { default as MSDFBatchHandler } from './MSDFBatchHandler';
 
 // Types
-export type { TextAlign, DisplayCallback, DisplayCallbackData, DisplayCallbackTint, MSDFTextInstance, CharacterData } from './MSDFTextBatched';
+export type {
+    TextAlign,
+    DisplayCallback,
+    DisplayCallbackData,
+    DisplayCallbackTint,
+    MSDFTextInstance,
+    CharacterData
+} from './MSDFTextBatched';
 export type { MSDFFontFileConfig } from './MSDFFontFile';
-
-/**
- * Usage:
- *
- * ```typescript
- * import 'phaser4-msdf-font';
- * import { installMSDFPlugin } from 'phaser4-msdf-font';
- *
- * const config = {
- *     type: Phaser.WEBGL,
- *     scene: MyScene,
- *     callbacks: {
- *         postBoot: (game) => installMSDFPlugin(game)
- *     }
- * };
- *
- * // In preload():
- * this.load.msdfFont('myFont', 'assets/fonts/MyFont.png', 'assets/fonts/MyFont.json');
- *
- * // In create():
- * const font = this.cache.custom.msdfFont.get('myFont');
- * const text = this.add.msdfTextBatched(100, 100, font, 'Hello World', 42);
- * // or
- * const text = this.make.msdfTextBatched({
- *     font, text: 'Hello World', fontSize: 42, x: 100, y: 100,
- *     color: { r: 255, g: 0, b: 0 }
- * });
- * ```
- */
+export type { MSDFTextConfig } from './MSDFTextBatchedCreator';

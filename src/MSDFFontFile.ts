@@ -74,7 +74,7 @@ export const MSDFFontFile = new Class({
         let image: any;
         let data: any;
 
-        if (IsPlainObject(key)) {
+        if (IsPlainObject(key as object)) {
             const config = key as MSDFFontFileConfig;
             const configKey = GetFastValue(config, 'key');
 
@@ -92,11 +92,11 @@ export const MSDFFontFile = new Class({
                 xhrSettings: GetFastValue(config, 'fontDataXhrSettings')
             });
         } else {
-            image = new ImageFile(loader, key, textureURL, textureXhrSettings);
-            data = new JSONFile(loader, key, fontDataURL, fontDataXhrSettings);
+            image = new ImageFile(loader, key as string, textureURL, textureXhrSettings);
+            data = new JSONFile(loader, key as string, fontDataURL, fontDataXhrSettings);
         }
 
-        MultiFile.call(this, loader, 'msdffont', key, [image, data]);
+        MultiFile.call(this, loader, 'msdffont', key as string, [image, data]);
     },
 
     /**
@@ -186,6 +186,7 @@ export const MSDFFontFile = new Class({
  * @return {this} The Loader instance.
  */
 FileTypesManager.register('msdfFont', function (
+    this: Phaser.Loader.LoaderPlugin,
     key: string | MSDFFontFileConfig | MSDFFontFileConfig[],
     textureURL?: string,
     fontDataURL?: string,

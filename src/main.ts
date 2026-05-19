@@ -6,4 +6,6 @@
 import './index';
 
 // Load batched-test.ts to test MSDFTextBatched with MSDFBatchHandler
-import '../examples/batched-test';
+// import '../examples/batched-test';
+// import '../examples/outline-test';
+import '../examples/callback-effects-test';
