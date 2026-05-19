@@ -139,9 +139,6 @@ const config: Phaser.Types.Core.GameConfig = {
   width: 800,
   height: 600,
   backgroundColor: "#2d2d2d",
-  // Enables the OES_standard_derivatives WebGL extension that MSDF AA needs.
-  // The flag name is misleading — Phaser only exposes the extension when this is true.
-  smoothPixelArt: true,
   scene: BatchedTestScene,
   scale: {
     mode: Phaser.Scale.RESIZE,

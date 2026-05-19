@@ -163,7 +163,6 @@ const config: Phaser.Types.Core.GameConfig = {
   width: 800,
   height: 600,
   backgroundColor: "#1a1a2e",
-  smoothPixelArt: true,
   scene: CallbackEffectsTestScene,
   scale: {
     mode: Phaser.Scale.RESIZE,

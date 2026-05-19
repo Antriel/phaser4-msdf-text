@@ -36,6 +36,17 @@ import Phaser from 'phaser';
  * ```
  */
 export function installMSDFPlugin(game: Phaser.Game): void {
+    // The MSDF fragment shader uses fwidth() for derivative-based AA, which
+    // requires OES_standard_derivatives. Phaser fetches this extension
+    // unconditionally during renderer init, so by the time any plugin code
+    // runs it should already be active on the context — we just verify.
+    const renderer = game.renderer as Phaser.Renderer.WebGL.WebGLRenderer | undefined;
+    if (renderer && 'standardDerivativesExtension' in renderer && !renderer.standardDerivativesExtension) {
+        throw new Error(
+            '[MSDFPlugin] OES_standard_derivatives WebGL extension is required for MSDF rendering but is not available on this context.'
+        );
+    }
+
     // Add custom cache for MSDF fonts
     if (!game.cache.custom.msdfFont) {
         game.cache.addCustom('msdfFont');

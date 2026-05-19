@@ -30,10 +30,12 @@ Based on [Ceramic Engine](https://github.com/ceramic-engine/ceramic) (MIT licens
 - Fragment shader calculates opacity based on signed distance field
 - Premultiplied alpha: `rgb = color.rgb * alpha`
 - Uniforms: `iChannel0` (texture), `uTexSize`, `uPxRange`, `uTextColor`
-- Requires the `OES_standard_derivatives` WebGL extension. Phaser 4 only enables
-  it when the game config sets `smoothPixelArt: true` (misleading flag name —
-  it's the same extension used elsewhere by Phaser's SmoothPixelArt addition).
-  Consumers of this plugin must set that flag in their Phaser game config.
+- Requires the `OES_standard_derivatives` WebGL extension. Phaser 4 fetches this
+  extension unconditionally during renderer init (see
+  `WebGLRenderer.setExtensions` — `gl.getExtension('OES_standard_derivatives')`
+  is called regardless of any config flag), so the shader's
+  `#extension GL_OES_standard_derivatives : enable` pragma works on its own.
+  `installMSDFPlugin()` verifies availability and throws a clear error otherwise.
 
 **Font Data Structure**:
 - BMFont format with custom `distanceField` metadata line
@@ -93,8 +95,8 @@ MSDF fonts **MUST** use LINEAR filtering. NEAREST filtering will break the dista
 ### Phaser 4 Shader Discoveries
 - **Premultiplied alpha is mandatory**: Phaser's Shader GameObject expects `vec4(color.rgb * alpha, alpha)`
 - **Derivatives are required**: AA uses `fwidth(dist)` so it scales correctly
-  with `pxRange` and zoom. Game config must set `smoothPixelArt: true` to make
-  Phaser enable the `OES_standard_derivatives` extension.
+  with `pxRange` and zoom. The `OES_standard_derivatives` extension is enabled
+  by Phaser's renderer init unconditionally — no game config flag needed.
 - **Default vertex shader sufficient**: No custom vertex shader needed
 - **Texture binding**: Use `iChannel0` for texture sampler (texture unit 0)
 

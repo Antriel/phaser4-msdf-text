@@ -31,7 +31,6 @@ export type { MSDFFontFileConfig } from './MSDFFontFile';
  * const config = {
  *     type: Phaser.WEBGL,
  *     scene: MyScene,
- *     smoothPixelArt: true, // enables OES_standard_derivatives (required for AA)
  *     callbacks: {
  *         postBoot: (game) => installMSDFPlugin(game)
  *     }
