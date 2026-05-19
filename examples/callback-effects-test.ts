@@ -13,18 +13,19 @@
  */
 
 import Phaser from 'phaser';
-import { loadMSDFFont, getMSDFFont } from '../src/MSDFLoader';
-import { MSDFText, DisplayCallbackData } from '../src/MSDFTextBatched';
+import '../src';
+import { installMSDFPlugin } from '../src/MSDFPlugin';
+import type { MSDFTextInstance, DisplayCallbackData } from '../src/MSDFTextBatched';
 import { registerMSDFBatchHandler } from '../src/registerMSDFBatchHandler';
 import * as SPECTOR from "phaser3spectorjs";
 
 class CallbackEffectsTestScene extends Phaser.Scene {
-  private waveText?: MSDFText;
-  private rainbowText?: MSDFText;
-  private breathingText?: MSDFText;
-  private jiggleText?: MSDFText;
-  private rotationText?: MSDFText;
-  private combinedText?: MSDFText;
+  private waveText?: MSDFTextInstance;
+  private rainbowText?: MSDFTextInstance;
+  private breathingText?: MSDFTextInstance;
+  private jiggleText?: MSDFTextInstance;
+  private rotationText?: MSDFTextInstance;
+  private combinedText?: MSDFTextInstance;
   private currentTime: number = 0;
 
   constructor() {
@@ -32,21 +33,18 @@ class CallbackEffectsTestScene extends Phaser.Scene {
   }
 
   preload() {
-    console.log("Loading MSDF font...");
-    loadMSDFFont(this, "arial", "assets/fonts/Arial");
+    this.load.msdfFont("arial", "assets/fonts/Arial.png", "assets/fonts/Arial.json");
   }
 
   create() {
-    console.log("Creating callback effects tests...");
-
-    const font = getMSDFFont(this, "arial");
+    const font = this.cache.custom.msdfFont?.get("arial");
     if (!font) {
       console.error("Failed to load font!");
       return;
     }
 
     // Effect 1: Wave (vertical sine wave)
-    this.waveText = new MSDFText(this, 400, 60, font, "WAVE EFFECT", 36);
+    this.waveText = this.add.msdfTextBatched(400, 60, font, "WAVE EFFECT", 36);
     this.waveText.setColorHex("#00ff00");
     this.waveText.setAlign("center");
     this.waveText.setDisplayCallback((data: DisplayCallbackData) => {
@@ -55,7 +53,7 @@ class CallbackEffectsTestScene extends Phaser.Scene {
     });
 
     // Effect 2: Rainbow (gradient colors)
-    this.rainbowText = new MSDFText(this, 400, 130, font, "RAINBOW COLORS", 36);
+    this.rainbowText = this.add.msdfTextBatched(400, 130, font, "RAINBOW COLORS", 36);
     this.rainbowText.setAlign("center");
     this.rainbowText.setDisplayCallback((data: DisplayCallbackData) => {
       const hue = (data.index * 30 + this.currentTime * 0.1) % 360;
@@ -69,7 +67,7 @@ class CallbackEffectsTestScene extends Phaser.Scene {
     });
 
     // Effect 3: Breathing (pulsing scale)
-    this.breathingText = new MSDFText(this, 400, 200, font, "BREATHING", 36);
+    this.breathingText = this.add.msdfTextBatched(400, 200, font, "BREATHING", 36);
     this.breathingText.setColorHex("#ffff00");
     this.breathingText.setAlign("center");
     this.breathingText.setDisplayCallback((data: DisplayCallbackData) => {
@@ -79,7 +77,7 @@ class CallbackEffectsTestScene extends Phaser.Scene {
     });
 
     // Effect 4: Jiggle (random position offsets)
-    this.jiggleText = new MSDFText(this, 400, 270, font, "JIGGLE!", 36);
+    this.jiggleText = this.add.msdfTextBatched(400, 270, font, "JIGGLE!", 36);
     this.jiggleText.setColorHex("#ff00ff");
     this.jiggleText.setAlign("center");
     this.jiggleText.setDisplayCallback((data: DisplayCallbackData) => {
@@ -92,7 +90,7 @@ class CallbackEffectsTestScene extends Phaser.Scene {
     });
 
     // Effect 5: Rotation (spinning characters)
-    this.rotationText = new MSDFText(this, 400, 340, font, "SPINNING", 36);
+    this.rotationText = this.add.msdfTextBatched(400, 340, font, "SPINNING", 36);
     this.rotationText.setColorHex("#00ffff");
     this.rotationText.setAlign("center");
     this.rotationText.setDisplayCallback((data: DisplayCallbackData) => {
@@ -101,7 +99,7 @@ class CallbackEffectsTestScene extends Phaser.Scene {
     });
 
     // Effect 6: Combined (wave + rainbow + scale)
-    this.combinedText = new MSDFText(this, 400, 450, font, "COMBINED EFFECTS!", 48);
+    this.combinedText = this.add.msdfTextBatched(400, 450, font, "COMBINED EFFECTS!", 48);
     this.combinedText.setAlign("center");
     this.combinedText.setDisplayCallback((data: DisplayCallbackData) => {
       // Wave
@@ -165,6 +163,7 @@ const config: Phaser.Types.Core.GameConfig = {
   width: 800,
   height: 600,
   backgroundColor: "#1a1a2e",
+  smoothPixelArt: true,
   scene: CallbackEffectsTestScene,
   scale: {
     mode: Phaser.Scale.RESIZE,
@@ -172,7 +171,7 @@ const config: Phaser.Types.Core.GameConfig = {
   },
   callbacks: {
     postBoot: (game) => {
-      // Initialize Spector.js for WebGL debugging
+      installMSDFPlugin(game);
       const spector = new SPECTOR.Spector();
       spector.displayUI();
     },

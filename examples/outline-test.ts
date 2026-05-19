@@ -16,17 +16,18 @@
  */
 
 import Phaser from 'phaser';
-import { loadMSDFFont, getMSDFFont } from '../src/MSDFLoader';
-import { MSDFText } from '../src/MSDFTextBatched';
+import '../src';
+import { installMSDFPlugin } from '../src/MSDFPlugin';
+import type { MSDFTextInstance } from '../src/MSDFTextBatched';
 import { registerMSDFBatchHandler } from '../src/registerMSDFBatchHandler';
 import * as SPECTOR from "phaser3spectorjs";
 
 class OutlineTestScene extends Phaser.Scene {
-  private text1?: MSDFText;
-  private text2?: MSDFText;
-  private text3?: MSDFText;
-  private text4?: MSDFText;
-  private text5?: MSDFText;
+  private text1?: MSDFTextInstance;
+  private text2?: MSDFTextInstance;
+  private text3?: MSDFTextInstance;
+  private text4?: MSDFTextInstance;
+  private text5?: MSDFTextInstance;
   private currentOutlineWidth: number = 1.5;
   private currentColorIndex: number = 0;
   private controlsText?: Phaser.GameObjects.Text;
@@ -45,46 +46,38 @@ class OutlineTestScene extends Phaser.Scene {
   }
 
   preload() {
-    console.log("Loading MSDF font...");
-    loadMSDFFont(this, "arial", "assets/fonts/Arial");
+    this.load.msdfFont("arial", "assets/fonts/Arial.png", "assets/fonts/Arial.json");
   }
 
   create() {
-    console.log("Creating outline tests...");
-
-    const font = getMSDFFont(this, "arial");
+    const font = this.cache.custom.msdfFont?.get("arial");
     if (!font) {
       console.error("Failed to load font!");
       return;
     }
 
-    // Sample 1: Large text with outline
-    this.text1 = new MSDFText(this, 400, 100, font, "OUTLINED TEXT", 64);
+    this.text1 = this.add.msdfTextBatched(400, 100, font, "OUTLINED TEXT", 64);
     this.text1.setColorHex("#ffffff");
     this.text1.setAlign("center");
     this.text1.setOutline(this.currentOutlineWidth, this.outlinePresets[0].color, this.outlinePresets[0].alpha);
 
-    // Sample 2: Colored text with contrasting outline
-    this.text2 = new MSDFText(this, 400, 190, font, "Colorful Outline", 48);
-    this.text2.setColorHex("#00ff00"); // Green text
+    this.text2 = this.add.msdfTextBatched(400, 190, font, "Colorful Outline", 48);
+    this.text2.setColorHex("#00ff00");
     this.text2.setAlign("center");
-    this.text2.setOutline(this.currentOutlineWidth, 0x000000, 1.0); // Black outline
+    this.text2.setOutline(this.currentOutlineWidth, 0x000000, 1.0);
 
-    // Sample 3: White text with dark outline (typical game style)
-    this.text3 = new MSDFText(this, 400, 270, font, "Press START", 56);
+    this.text3 = this.add.msdfTextBatched(400, 270, font, "Press START", 56);
     this.text3.setColorHex("#ffffff");
     this.text3.setAlign("center");
     this.text3.setOutline(2.0, 0x000000, 0.8);
 
-    // Sample 4: Small text with thin outline
-    this.text4 = new MSDFText(this, 400, 350, font, "Small text with thin outline", 24);
-    this.text4.setColorHex("#ffff00"); // Yellow text
+    this.text4 = this.add.msdfTextBatched(400, 350, font, "Small text with thin outline", 24);
+    this.text4.setColorHex("#ffff00");
     this.text4.setAlign("center");
     this.text4.setOutline(0.8, 0x000000, 1.0);
 
-    // Sample 5: Bold colored text with thick outline
-    this.text5 = new MSDFText(this, 400, 400, font, "BOLD STYLE", 52);
-    this.text5.setColorHex("#ff6600"); // Orange text
+    this.text5 = this.add.msdfTextBatched(400, 400, font, "BOLD STYLE", 52);
+    this.text5.setColorHex("#ff6600");
     this.text5.setAlign("center");
     this.text5.setOutline(2.5, 0x000000, 1.0);
 
@@ -202,6 +195,7 @@ const config: Phaser.Types.Core.GameConfig = {
   width: 800,
   height: 600,
   backgroundColor: "#1a1a2e",
+  smoothPixelArt: true,
   scene: OutlineTestScene,
   scale: {
     mode: Phaser.Scale.RESIZE,
@@ -209,7 +203,7 @@ const config: Phaser.Types.Core.GameConfig = {
   },
   callbacks: {
     postBoot: (game) => {
-      // Initialize Spector.js for WebGL debugging
+      installMSDFPlugin(game);
       const spector = new SPECTOR.Spector();
       spector.displayUI();
     },

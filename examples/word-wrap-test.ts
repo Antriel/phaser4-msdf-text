@@ -11,16 +11,17 @@
  */
 
 import Phaser from 'phaser';
-import { loadMSDFFont, getMSDFFont } from '../src/MSDFLoader';
-import { MSDFText } from '../src/MSDFTextBatched';
+import '../src';
+import { installMSDFPlugin } from '../src/MSDFPlugin';
+import type { MSDFTextInstance } from '../src/MSDFTextBatched';
 import { registerMSDFBatchHandler } from '../src/registerMSDFBatchHandler';
 import * as SPECTOR from "phaser3spectorjs";
 
 class WordWrapTestScene extends Phaser.Scene {
-  private text1?: MSDFText;
-  private text2?: MSDFText;
-  private text3?: MSDFText;
-  private boundsText?: MSDFText;
+  private text1?: MSDFTextInstance;
+  private text2?: MSDFTextInstance;
+  private text3?: MSDFTextInstance;
+  private boundsText?: MSDFTextInstance;
   private maxWidthValue: number = 400;
 
   constructor() {
@@ -28,46 +29,39 @@ class WordWrapTestScene extends Phaser.Scene {
   }
 
   preload() {
-    console.log("Loading MSDF font...");
-    loadMSDFFont(this, "arial", "assets/fonts/Arial");
+    this.load.msdfFont("arial", "assets/fonts/Arial.png", "assets/fonts/Arial.json");
   }
 
   create() {
-    console.log("Creating word wrap tests...");
-
-    const font = getMSDFFont(this, "arial");
+    const font = this.cache.custom.msdfFont?.get("arial");
     if (!font) {
       console.error("Failed to load font!");
       return;
     }
 
-    // Test 1: Basic word wrapping
     const longText = "This is a very long line of text that will automatically wrap when it exceeds the maximum width. Word wrapping makes text much more readable in constrained spaces!";
 
-    this.text1 = new MSDFText(this, 50, 50, font, longText, 24);
+    this.text1 = this.add.msdfTextBatched(50, 50, font, longText, 24);
     this.text1.setColorHex("#00ff00");
     this.text1.setAlign("left");
     this.text1.setMaxWidth(this.maxWidthValue);
 
-    // Test 2: Word wrapping with center alignment
     const mediumText = "Centered text with word wrapping. This demonstrates how alignment works with wrapped text.";
 
-    this.text2 = new MSDFText(this, 400, 200, font, mediumText, 28);
+    this.text2 = this.add.msdfTextBatched(400, 200, font, mediumText, 28);
     this.text2.setColorHex("#ffff00");
     this.text2.setAlign("center");
     this.text2.setMaxWidth(350);
 
-    // Test 3: Word wrapping with existing newlines
     const mixedText = "First paragraph with manual line break.\nSecond paragraph that will wrap because it contains a very long line that exceeds the maximum width constraint.";
 
-    this.text3 = new MSDFText(this, 50, 350, font, mixedText, 22);
+    this.text3 = this.add.msdfTextBatched(50, 350, font, mixedText, 22);
     this.text3.setColorHex("#ff00ff");
     this.text3.setAlign("left");
     this.text3.setMaxWidth(500);
     this.text3.setLineSpacing(3);
 
-    // Display text bounds information
-    this.boundsText = new MSDFText(this, 550, 50, font, "", 16);
+    this.boundsText = this.add.msdfTextBatched(550, 50, font, "", 16);
     this.boundsText.setColorHex("#ffffff");
     this.boundsText.setAlign("left");
     this.updateBoundsInfo();
@@ -148,6 +142,7 @@ const config: Phaser.Types.Core.GameConfig = {
   width: 800,
   height: 600,
   backgroundColor: "#2d2d2d",
+  smoothPixelArt: true,
   scene: WordWrapTestScene,
   scale: {
     mode: Phaser.Scale.RESIZE,
@@ -155,7 +150,7 @@ const config: Phaser.Types.Core.GameConfig = {
   },
   callbacks: {
     postBoot: (game) => {
-      // Initialize Spector.js for WebGL debugging
+      installMSDFPlugin(game);
       const spector = new SPECTOR.Spector();
       spector.displayUI();
     },

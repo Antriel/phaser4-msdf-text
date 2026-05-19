@@ -24,7 +24,6 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],
-      "@shaders/*": ["shaders/*"],
       "@examples/*": ["examples/*"]
     }
   },

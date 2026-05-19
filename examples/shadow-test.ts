@@ -17,17 +17,18 @@
  */
 
 import Phaser from 'phaser';
-import { loadMSDFFont, getMSDFFont } from '../src/MSDFLoader';
-import { MSDFText, DisplayCallbackData } from '../src/MSDFTextBatched';
+import '../src';
+import { installMSDFPlugin } from '../src/MSDFPlugin';
+import type { MSDFTextInstance, DisplayCallbackData } from '../src/MSDFTextBatched';
 import { registerMSDFBatchHandler } from '../src/registerMSDFBatchHandler';
 import * as SPECTOR from "phaser3spectorjs";
 
 class ShadowTestScene extends Phaser.Scene {
-  private text1?: MSDFText;
-  private text2?: MSDFText;
-  private text3?: MSDFText;
-  private text4?: MSDFText;
-  private text5?: MSDFText;  // Wave + shadow
+  private text1?: MSDFTextInstance;
+  private text2?: MSDFTextInstance;
+  private text3?: MSDFTextInstance;
+  private text4?: MSDFTextInstance;
+  private text5?: MSDFTextInstance;  // Wave + shadow
   private currentShadowX: number = 3;
   private currentShadowY: number = 3;
   private currentShadowAlpha: number = 0.7;
@@ -49,45 +50,37 @@ class ShadowTestScene extends Phaser.Scene {
   }
 
   preload() {
-    console.log("Loading MSDF font...");
-    loadMSDFFont(this, "arial", "assets/fonts/Arial");
+    this.load.msdfFont("arial", "assets/fonts/Arial.png", "assets/fonts/Arial.json");
   }
 
   create() {
-    console.log("Creating shadow tests...");
-
-    const font = getMSDFFont(this, "arial");
+    const font = this.cache.custom.msdfFont?.get("arial");
     if (!font) {
       console.error("Failed to load font!");
       return;
     }
 
-    // Sample 1: Large text with shadow
-    this.text1 = new MSDFText(this, 400, 80, font, "SHADOWED TEXT", 56);
+    this.text1 = this.add.msdfTextBatched(400, 80, font, "SHADOWED TEXT", 56);
     this.text1.setColorHex("#ffffff");
     this.text1.setAlign("center");
     this.text1.setShadow(this.currentShadowX, this.currentShadowY, this.shadowPresets[0].color, this.currentShadowAlpha);
 
-    // Sample 2: Colored text with shadow
-    this.text2 = new MSDFText(this, 400, 160, font, "Colorful Shadow", 42);
+    this.text2 = this.add.msdfTextBatched(400, 160, font, "Colorful Shadow", 42);
     this.text2.setColorHex("#00ff00");
     this.text2.setAlign("center");
     this.text2.setShadow(this.currentShadowX, this.currentShadowY, this.shadowPresets[0].color, this.currentShadowAlpha);
 
-    // Sample 3: Classic game text (white + black shadow)
-    this.text3 = new MSDFText(this, 400, 230, font, "GAME OVER", 64);
+    this.text3 = this.add.msdfTextBatched(400, 230, font, "GAME OVER", 64);
     this.text3.setColorHex("#ffffff");
     this.text3.setAlign("center");
     this.text3.setShadow(4, 4, 0x000000, 0.9);
 
-    // Sample 4: Small text with soft shadow
-    this.text4 = new MSDFText(this, 400, 310, font, "Small text with subtle shadow", 24);
+    this.text4 = this.add.msdfTextBatched(400, 310, font, "Small text with subtle shadow", 24);
     this.text4.setColorHex("#ffff00");
     this.text4.setAlign("center");
     this.text4.setShadow(2, 2, 0x000000, 0.4);
 
-    // Sample 5: Wave effect with callback-aware shadow
-    this.text5 = new MSDFText(this, 400, 370, font, "WAVE WITH SHADOW", 48);
+    this.text5 = this.add.msdfTextBatched(400, 370, font, "WAVE WITH SHADOW", 48);
     this.text5.setColorHex("#00ffff");
     this.text5.setAlign("center");
     this.text5.setShadow(3, 3, 0x000000, 0.6);
@@ -209,17 +202,16 @@ const config: Phaser.Types.Core.GameConfig = {
   width: 800,
   height: 600,
   backgroundColor: "#1a1a2e",
+  smoothPixelArt: true,
   scene: ShadowTestScene,
-  parent: "game-container",
+  callbacks: {
+    postBoot: (game) => {
+      installMSDFPlugin(game);
+      const spector = new SPECTOR.Spector();
+      spector.displayUI();
+    },
+  },
 };
 
 const game = new Phaser.Game(config);
-
-// Register MSDF batch handler
 registerMSDFBatchHandler(game);
-
-// Enable Spector.js for WebGL debugging
-if ((window as any).SPECTOR) {
-  const spector = new SPECTOR.Spector();
-  spector.displayUI();
-}

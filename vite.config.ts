@@ -5,7 +5,6 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      '@shaders': path.resolve(__dirname, './shaders'),
       '@examples': path.resolve(__dirname, './examples')
     }
   },
