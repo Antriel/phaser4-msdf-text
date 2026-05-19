@@ -20,7 +20,7 @@
   "author": "Peter Achberger",
   "license": "MIT",
   "dependencies": {
-    "phaser": "^4.0.0-beta.1",
+    "phaser": "^4.1.0",
     "phaser3spectorjs": "^0.0.8"
   },
   "devDependencies": {

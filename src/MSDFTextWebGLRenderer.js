@@ -8,8 +8,10 @@
  * Based on BitmapTextWebGLRenderer from Phaser 4.
  */
 
+import Phaser from 'phaser';
 import BatchMSDFChar from './BatchMSDFChar.js';
-import GetCalcMatrix from 'phaser/src/gameobjects/GetCalcMatrix';
+
+const GetCalcMatrix = Phaser.GameObjects.GetCalcMatrix;
 
 /**
  * Temporary tint data object (reused to avoid allocations)
