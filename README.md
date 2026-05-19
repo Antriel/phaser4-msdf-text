@@ -23,24 +23,18 @@ npm install phaser@^4.1.0
 
 ## Setup
 
-Register the MSDF batch handler and global plugin in your Phaser game config.
-This is the idiomatic Phaser 4 way: the batch handler is installed *before* the
-renderer is constructed, and the plugin's lifecycle is managed by Phaser.
+Register the global plugin in your Phaser game config. The plugin wires up the
+`BatchHandlerMSDF` render node, the font cache, and verifies the required
+`OES_standard_derivatives` extension — no separate `renderNodes` entry needed.
 
 ```ts
 import Phaser from 'phaser';
-import { MSDFPlugin, MSDFBatchHandler } from 'phaser4-msdf-font';
+import { MSDFPlugin } from 'phaser4-msdf-font';
 
 new Phaser.Game({
     type: Phaser.WEBGL,
     width: 800,
     height: 600,
-    render: {
-        // Phaser's published types describe entries as { key, function } wrappers,
-        // but the runtime takes the value as the constructor directly. The
-        // `as any` cast bypasses the stale type.
-        renderNodes: { BatchHandlerMSDF: MSDFBatchHandler } as any,
-    },
     plugins: {
         global: [
             { key: 'MSDFPlugin', plugin: MSDFPlugin, start: true },
@@ -51,9 +45,8 @@ new Phaser.Game({
 ```
 
 > If you prefer not to wire it up in the game config, call
-> `installMSDFPlugin(game)` from `callbacks.postBoot` (you'll still need to
-> register the batch handler via `render.renderNodes`, since constructors must
-> be available before the renderer boots).
+> `installMSDFPlugin(game)` from `callbacks.postBoot` — it registers the batch
+> handler with the renderer directly.
 
 ## Use
 

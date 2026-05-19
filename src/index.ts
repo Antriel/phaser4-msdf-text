@@ -6,11 +6,10 @@
  *
  * Usage (recommended, via game config):
  *
- *   import { MSDFPlugin, MSDFBatchHandler } from 'phaser4-msdf-font';
+ *   import { MSDFPlugin } from 'phaser4-msdf-font';
  *
  *   new Phaser.Game({
  *       type: Phaser.WEBGL,
- *       render: { renderNodes: { BatchHandlerMSDF: MSDFBatchHandler } },
  *       plugins: { global: [{ key: 'MSDFPlugin', plugin: MSDFPlugin, start: true }] },
  *       scene: MyScene
  *   });

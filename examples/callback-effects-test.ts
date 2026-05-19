@@ -13,7 +13,7 @@
  */
 
 import Phaser from 'phaser';
-import { MSDFPlugin, MSDFBatchHandler } from '../src';
+import { MSDFPlugin } from '../src';
 import type { MSDFTextInstance, DisplayCallbackData } from '../src';
 import * as SPECTOR from "phaser3spectorjs";
 
@@ -165,12 +165,6 @@ const config: Phaser.Types.Core.GameConfig = {
   scale: {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
-  },
-  render: {
-    // Phaser's published types describe entries as { key, function } wrappers,
-    // but the runtime (RenderNodeManager) takes the value as the constructor
-    // directly. Cast to bypass the stale type.
-    renderNodes: { BatchHandlerMSDF: MSDFBatchHandler } as any,
   },
   plugins: {
     global: [

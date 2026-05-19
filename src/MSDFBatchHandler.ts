@@ -5,9 +5,8 @@
  * Batches character quads into a single draw call with proper texture sampling and
  * derivative-based anti-aliasing.
  *
- * Register via the game config:
- *
- *   render: { renderNodes: { BatchHandlerMSDF: MSDFBatchHandler } }
+ * Registered automatically by `MSDFPlugin` (and `installMSDFPlugin`) as the
+ * `BatchHandlerMSDF` render node.
  */
 
 import Phaser from 'phaser';
