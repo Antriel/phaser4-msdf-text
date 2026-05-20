@@ -9,11 +9,21 @@ export class CallbackEffectsTestScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.msdfFont('arial', 'assets/fonts/Arial.png', 'assets/fonts/Arial.json');
+    this.load.msdfFont(
+      "Roboto_Regular",
+      "assets/fonts/Roboto_Regular.png",
+      "assets/fonts/Roboto_Regular.json",
+    );
   }
 
   create() {
-    const wave = this.add.msdfText(400, 60, 'arial', 'WAVE EFFECT', 36);
+    const wave = this.add.msdfText(
+      400,
+      60,
+      "Roboto_Regular",
+      "WAVE EFFECT",
+      36,
+    );
     wave.setColor('#00ff00');
     wave.setAlign('center');
     wave.setDisplayCallback((data: DisplayCallbackData) => {
@@ -21,7 +31,13 @@ export class CallbackEffectsTestScene extends Phaser.Scene {
       return data;
     });
 
-    const rainbow = this.add.msdfText(400, 130, 'arial', 'RAINBOW COLORS', 36);
+    const rainbow = this.add.msdfText(
+      400,
+      130,
+      "Roboto_Regular",
+      "RAINBOW COLORS",
+      36,
+    );
     rainbow.setAlign('center');
     rainbow.setDisplayCallback((data: DisplayCallbackData) => {
       const hue = (data.index * 30 + this.currentTime * 0.1) % 360;
@@ -31,7 +47,13 @@ export class CallbackEffectsTestScene extends Phaser.Scene {
       return data;
     });
 
-    const breathing = this.add.msdfText(400, 200, 'arial', 'BREATHING', 36);
+    const breathing = this.add.msdfText(
+      400,
+      200,
+      "Roboto_Regular",
+      "BREATHING",
+      36,
+    );
     breathing.setColor('#ffff00');
     breathing.setAlign('center');
     breathing.setDisplayCallback((data: DisplayCallbackData) => {
@@ -39,7 +61,7 @@ export class CallbackEffectsTestScene extends Phaser.Scene {
       return data;
     });
 
-    const jiggle = this.add.msdfText(400, 270, 'arial', 'JIGGLE!', 36);
+    const jiggle = this.add.msdfText(400, 270, "Roboto_Regular", "JIGGLE!", 36);
     jiggle.setColor('#ff00ff');
     jiggle.setAlign('center');
     jiggle.setDisplayCallback((data: DisplayCallbackData) => {
@@ -48,7 +70,13 @@ export class CallbackEffectsTestScene extends Phaser.Scene {
       return data;
     });
 
-    const spinning = this.add.msdfText(400, 340, 'arial', 'SPINNING', 36);
+    const spinning = this.add.msdfText(
+      400,
+      340,
+      "Roboto_Regular",
+      "SPINNING",
+      36,
+    );
     spinning.setColor('#00ffff');
     spinning.setAlign('center');
     spinning.setDisplayCallback((data: DisplayCallbackData) => {
@@ -56,7 +84,13 @@ export class CallbackEffectsTestScene extends Phaser.Scene {
       return data;
     });
 
-    const combined = this.add.msdfText(400, 450, 'arial', 'COMBINED EFFECTS!', 48);
+    const combined = this.add.msdfText(
+      400,
+      450,
+      "Roboto_Regular",
+      "COMBINED EFFECTS!",
+      48,
+    );
     combined.setAlign('center');
     combined.setDisplayCallback((data: DisplayCallbackData) => {
       data.y += Math.sin(data.index * 0.4 + this.currentTime * 0.004) * 20;

@@ -39,7 +39,8 @@ const SimpleFragmentShader = [
     '#endif',
     '',
     'uniform sampler2D uMainSampler;',
-    'uniform float uPxRange;',
+    'uniform vec2 uAtlasSize;',     // Atlas texture size in pixels.
+    'uniform float uPxRange;',      // distanceRange from the font JSON.
     'uniform float uOutlineWidth;',
     'uniform vec4 uOutlineColor;',
     '',
@@ -51,21 +52,32 @@ const SimpleFragmentShader = [
     '    return max(min(r, g), min(max(r, g), b));',
     '}',
     '',
+    '// Canonical msdfgen anti-aliasing width: the distance range expressed in',
+    '// screen pixels. Derived from the derivative of the texture coordinates,',
+    '// which interpolate linearly across the quad, so the width stays uniform',
+    '// across the whole glyph instead of wobbling with the sampled field.',
+    'float screenPxRange()',
+    '{',
+    '    vec2 unitRange = vec2(uPxRange) / uAtlasSize;',
+    '    vec2 screenTexSize = vec2(1.0) / fwidth(outTexCoord);',
+    '    return max(0.5 * dot(unitRange, screenTexSize), 1.0);',
+    '}',
+    '',
     'void main()',
     '{',
     '    vec3 textureSample = texture2D(uMainSampler, outTexCoord).rgb;',
     '    float dist = median(textureSample.r, textureSample.g, textureSample.b);',
-    '    float w = max(fwidth(dist), 0.0001);',
+    '    float pxRange = screenPxRange();',
     '',
     '    if (uOutlineWidth > 0.0)',
     '    {',
     '        float textEdge = 0.5;',
     '        float outlineEdge = 0.5 - (uOutlineWidth / uPxRange);',
     '',
-    '        float coverage = clamp((dist - outlineEdge) / w + 0.5, 0.0, 1.0);',
-    '        float textMix  = clamp((dist - textEdge   ) / w + 0.5, 0.0, 1.0);',
+    '        float coverage = clamp(pxRange * (dist - outlineEdge) + 0.5, 0.0, 1.0);',
+    '        float textMix  = clamp(pxRange * (dist - textEdge   ) + 0.5, 0.0, 1.0);',
     '',
-    '        // Guard against fwidth-induced haze in the deep background at extreme minification.',
+    '        // Guard against haze in the deep background at extreme minification.',
     '        float backgroundFade = smoothstep(0.0, 0.2, dist);',
     '',
     '        vec3 rgb = mix(uOutlineColor.rgb, outTint.rgb, textMix);',
@@ -75,7 +87,7 @@ const SimpleFragmentShader = [
     '    }',
     '    else',
     '    {',
-    '        float alpha = clamp((dist - 0.5) / w + 0.5, 0.0, 1.0);',
+    '        float alpha = clamp(pxRange * (dist - 0.5) + 0.5, 0.0, 1.0);',
     '        vec4 color = outTint;',
     '        gl_FragColor = vec4(color.rgb * alpha, alpha * color.a);',
     '    }',
@@ -91,6 +103,7 @@ type DrawingContext = any;
 interface MSDFBatchHandlerInstance {
     _currentTexture: WebGLTextureWrapper | null;
     _pxRange: number;
+    _atlasSize: [number, number];
     _outlineWidth: number;
     _outlineColor: [number, number, number, number];
 
@@ -104,6 +117,7 @@ interface MSDFBatchHandlerInstance {
     manager: any;
 
     setPxRange(pxRange: number): void;
+    setAtlasSize(width: number, height: number): void;
     setOutline(width: number, r: number, g: number, b: number, a: number): void;
     hasOutlineChanged(width: number, r: number, g: number, b: number, a: number): boolean;
     setupUniforms(drawingContext: DrawingContext): void;
@@ -150,12 +164,19 @@ class MSDFBatchHandler extends PhaserBatchHandler {
         const self = this as unknown as MSDFBatchHandlerInstance;
         self._currentTexture = null;
         self._pxRange = 4;
+        self._atlasSize = [512, 512];
         self._outlineWidth = 0;
         self._outlineColor = [0, 0, 0, 0];
     }
 
     setPxRange(pxRange: number): void {
         (this as unknown as MSDFBatchHandlerInstance)._pxRange = pxRange;
+    }
+
+    setAtlasSize(width: number, height: number): void {
+        const self = this as unknown as MSDFBatchHandlerInstance;
+        self._atlasSize[0] = width;
+        self._atlasSize[1] = height;
     }
 
     setOutline(width: number, r: number, g: number, b: number, a: number): void {
@@ -197,6 +218,7 @@ class MSDFBatchHandler extends PhaserBatchHandler {
 
         programManager.setUniform('uMainSampler', 0);
         programManager.setUniform('uPxRange', self._pxRange);
+        programManager.setUniform('uAtlasSize', self._atlasSize);
         programManager.setUniform('uOutlineWidth', self._outlineWidth);
         programManager.setUniform('uOutlineColor', self._outlineColor);
 

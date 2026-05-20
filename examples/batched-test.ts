@@ -12,11 +12,21 @@ export class BatchedTestScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.msdfFont('arial', 'assets/fonts/Chubby_Thumbs.png', 'assets/fonts/Chubby_Thumbs.json');
+    this.load.msdfFont(
+      "Roboto_Regular",
+      "assets/fonts/Roboto_Regular.png",
+      "assets/fonts/Roboto_Regular.json",
+    );
   }
 
   create() {
-    this.text1 = this.add.msdfText(400, 100, 'arial', 'Batched MSDF Text!', 48);
+    this.text1 = this.add.msdfText(
+      400,
+      100,
+      "Roboto_Regular",
+      "Batched MSDF Text!",
+      48,
+    );
     this.text1.setColor('#00ff00');
     this.text1.setAlign('center');
     this.tweens.add({
@@ -27,17 +37,26 @@ export class BatchedTestScene extends Phaser.Scene {
       ease: 'Linear',
     });
 
-    this.text2 = this.add.msdfText(400, 200, 'arial', 'This is batched rendering!\nMultiple lines work too.\nMuch faster than Phase 3!', 32);
+    this.text2 = this.add.msdfText(
+      400,
+      200,
+      "Roboto_Regular",
+      "This is batched rendering!\nMultiple lines work too.\nMuch faster than Phase 3!",
+      32,
+    );
     this.text2.setColor('#ffffff');
     this.text2.setAlign('center');
     this.text2.setLineSpacing(5);
 
-    this.text3 = this.add.msdfText(50, 350, 'arial',
-      'Lorem ipsum dolor sit amet, consectetur adipiscing elit.\n' +
-      'Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n' +
-      'Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.\n' +
-      'Duis aute irure dolor in reprehenderit in voluptate velit esse.',
-      24
+    this.text3 = this.add.msdfText(
+      50,
+      350,
+      "Roboto_Regular",
+      "Lorem ipsum dolor sit amet, consectetur adipiscing elit.\n" +
+        "Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n" +
+        "Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.\n" +
+        "Duis aute irure dolor in reprehenderit in voluptate velit esse.",
+      24,
     );
     this.text3.setColor('#ffff00');
     this.text3.setAlign('left');
@@ -52,7 +71,7 @@ export class BatchedTestScene extends Phaser.Scene {
       ease: 'Sine.easeInOut',
     });
 
-    this.fpsText = this.add.msdfText(10, 10, 'arial', 'FPS: --', 20);
+    this.fpsText = this.add.msdfText(10, 10, "Roboto_Regular", "FPS: --", 20);
     this.fpsText.setColor('#ff0000');
   }
 

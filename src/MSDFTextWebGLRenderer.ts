@@ -93,6 +93,7 @@ function MSDFTextWebGLRenderer(
     const originOffsetY = -src.displayOriginY;
 
     batchHandler.setPxRange(src.fontData.distanceField.distanceRange);
+    batchHandler.setAtlasSize(src.fontData.atlasSize.width, src.fontData.atlasSize.height);
 
     // Outline state — flush if it changed since the last batch.
     if (src.hasOutline()) {

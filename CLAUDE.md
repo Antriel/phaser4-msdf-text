@@ -18,16 +18,21 @@ from a single texture per font. Published as the npm package
 - The atlas PNG stores a distance field in its RGB channels.
 - The fragment shader takes the `median()` of the three channels to recover
   the signed distance, then derives coverage from it.
-- Anti-aliasing uses screen-space derivatives (`fwidth`), so edge quality is
-  independent of the atlas distance range and stays crisp at any zoom.
-- `pxRange` (the atlas `distanceRange`) is read from the font JSON at runtime
-  and only feeds the outline path — plain AA does not use it.
+- Anti-aliasing uses the canonical msdfgen `screenPxRange()` method: the
+  transition width is the distance range expressed in screen pixels, derived
+  from the screen-space derivative of the *texture coordinates*
+  (`fwidth(texCoord)`). Texcoords interpolate linearly across the quad, so the
+  AA width stays uniform across each glyph and crisp at any zoom — unlike
+  `fwidth` of the sampled field, which wobbles near texel boundaries.
+- `pxRange` (the atlas `distanceRange`) and the atlas pixel dimensions are read
+  from the font JSON at runtime and feed both the plain AA path and the
+  outline path.
 
 **Shaders** — inline string arrays in `src/MSDFBatchHandler.ts`:
 - Vertex: uniform `uProjectionMatrix`; attributes `inPosition`, `inTexCoord`,
   `inTint`.
-- Fragment: uniforms `uMainSampler`, `uPxRange`, `uOutlineWidth`,
-  `uOutlineColor`.
+- Fragment: uniforms `uMainSampler`, `uAtlasSize`, `uPxRange`,
+  `uOutlineWidth`, `uOutlineColor`.
 - Output is premultiplied alpha (`vec4(rgb * a, a)`) — required by Phaser 4's
   batched pipeline.
 - Uses `#extension GL_OES_standard_derivatives : enable` for `fwidth`.

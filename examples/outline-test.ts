@@ -24,7 +24,11 @@ export class OutlineTestScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.msdfFont('arial', 'assets/fonts/Arial.png', 'assets/fonts/Arial.json');
+    this.load.msdfFont(
+      "Roboto_Regular",
+      "assets/fonts/Roboto_Regular.png",
+      "assets/fonts/Roboto_Regular.json",
+    );
   }
 
   create() {
@@ -37,7 +41,7 @@ export class OutlineTestScene extends Phaser.Scene {
     ];
 
     for (const [label, color, x, y] of specs) {
-      const t = this.add.msdfText(x, y, 'arial', label, 48);
+      const t = this.add.msdfText(x, y, "Roboto_Regular", label, 48);
       t.setColor(color);
       t.setAlign('center');
       this.texts.push(t);

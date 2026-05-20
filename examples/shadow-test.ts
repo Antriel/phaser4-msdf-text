@@ -26,15 +26,19 @@ export class ShadowTestScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.msdfFont('arial', 'assets/fonts/Arial.png', 'assets/fonts/Arial.json');
+    this.load.msdfFont(
+      "Roboto_Regular",
+      "assets/fonts/Roboto_Regular.png",
+      "assets/fonts/Roboto_Regular.json",
+    );
   }
 
   create() {
-    const t1 = this.add.msdfText(400, 80,  'arial', 'SHADOWED TEXT',           56);
-    const t2 = this.add.msdfText(400, 160, 'arial', 'Colorful Shadow',         42);
-    const t3 = this.add.msdfText(400, 230, 'arial', 'GAME OVER',               64);
-    const t4 = this.add.msdfText(400, 310, 'arial', 'Small text with shadow',  24);
-    const t5 = this.add.msdfText(400, 370, 'arial', 'WAVE WITH SHADOW',        48);
+    const t1 = this.add.msdfText(400, 80,  'Roboto_Regular', 'SHADOWED TEXT',           56);
+    const t2 = this.add.msdfText(400, 160, 'Roboto_Regular', 'Colorful Shadow',         42);
+    const t3 = this.add.msdfText(400, 230, 'Roboto_Regular', 'GAME OVER',               64);
+    const t4 = this.add.msdfText(400, 310, 'Roboto_Regular', 'Small text with shadow',  24);
+    const t5 = this.add.msdfText(400, 370, 'Roboto_Regular', 'WAVE WITH SHADOW',        48);
 
     t1.setColor('#ffffff'); t1.setAlign('center');
     t2.setColor('#00ff00'); t2.setAlign('center');
