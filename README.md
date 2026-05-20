@@ -28,7 +28,7 @@ Register the global plugin in your Phaser game config. The plugin wires up the
 `OES_standard_derivatives` extension — no separate `renderNodes` entry needed.
 
 ```ts
-import Phaser from 'phaser';
+import * as Phaser from 'phaser';
 import { MSDFPlugin } from 'phaser4-msdf-font';
 
 new Phaser.Game({

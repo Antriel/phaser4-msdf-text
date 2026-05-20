@@ -16,7 +16,7 @@
  * Or call `installMSDFPlugin(game)` from `callbacks.postBoot` for manual setup.
  */
 
-import Phaser from 'phaser';
+import * as Phaser from "phaser";
 import MSDFBatchHandler from './MSDFBatchHandler';
 
 const BasePlugin: typeof Phaser.Plugins.BasePlugin = (Phaser as any).Plugins.BasePlugin;

@@ -14,7 +14,7 @@
  *   const text = scene.make.msdfText({ font: 'arial', text: 'Hello', fontSize: 42, x: 100, y: 100 });
  */
 
-import Phaser from 'phaser';
+import * as Phaser from "phaser";
 import { MSDFFont } from './MSDFFont';
 import MSDFTextWebGLRenderer from './MSDFTextWebGLRenderer';
 

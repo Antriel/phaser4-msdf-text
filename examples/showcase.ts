@@ -1,12 +1,12 @@
-import Phaser from 'phaser';
-import { Pane } from 'tweakpane';
-import { MSDFPlugin } from '../src';
+import * as Phaser from "phaser";
+import { Pane } from "tweakpane";
+import { MSDFPlugin } from "../src";
 
-import { BatchedTestScene } from './batched-test';
-import { CallbackEffectsTestScene } from './callback-effects-test';
-import { OutlineTestScene } from './outline-test';
-import { ShadowTestScene } from './shadow-test';
-import { WordWrapTestScene } from './word-wrap-test';
+import { BatchedTestScene } from "./batched-test";
+import { CallbackEffectsTestScene } from "./callback-effects-test";
+import { OutlineTestScene } from "./outline-test";
+import { ShadowTestScene } from "./shadow-test";
+import { WordWrapTestScene } from "./word-wrap-test";
 
 type SceneCtor = new () => Phaser.Scene & { setupPane?(pane: Pane): void };
 
@@ -17,20 +17,28 @@ interface Example {
 }
 
 const examples: Example[] = [
-  { title: 'Batched Rendering', scene: BatchedTestScene,        key: 'BatchedTestScene' },
-  { title: 'Callback Effects',  scene: CallbackEffectsTestScene, key: 'CallbackEffectsTestScene' },
-  { title: 'Outline Effect',    scene: OutlineTestScene,         key: 'OutlineTestScene' },
-  { title: 'Shadow Effect',     scene: ShadowTestScene,          key: 'ShadowTestScene' },
-  { title: 'Word Wrap',         scene: WordWrapTestScene,        key: 'WordWrapTestScene' },
+  {
+    title: "Batched Rendering",
+    scene: BatchedTestScene,
+    key: "BatchedTestScene",
+  },
+  {
+    title: "Callback Effects",
+    scene: CallbackEffectsTestScene,
+    key: "CallbackEffectsTestScene",
+  },
+  { title: "Outline Effect", scene: OutlineTestScene, key: "OutlineTestScene" },
+  { title: "Shadow Effect", scene: ShadowTestScene, key: "ShadowTestScene" },
+  { title: "Word Wrap", scene: WordWrapTestScene, key: "WordWrapTestScene" },
 ];
 
 // ── DOM refs ──────────────────────────────────────────────────
-const canvasContainer = document.getElementById('canvas-container')!;
-const paneContainer   = document.getElementById('pane-container')!;
-const navTitle        = document.getElementById('nav-title')!;
-const navCounter      = document.getElementById('nav-counter')!;
-const btnPrev         = document.getElementById('btn-prev') as HTMLButtonElement;
-const btnNext         = document.getElementById('btn-next') as HTMLButtonElement;
+const canvasContainer = document.getElementById("canvas-container")!;
+const paneContainer = document.getElementById("pane-container")!;
+const navTitle = document.getElementById("nav-title")!;
+const navCounter = document.getElementById("nav-counter")!;
+const btnPrev = document.getElementById("btn-prev") as HTMLButtonElement;
+const btnNext = document.getElementById("btn-next") as HTMLButtonElement;
 
 // ── State ─────────────────────────────────────────────────────
 let currentIndex = -1;
@@ -39,19 +47,19 @@ let currentPane: Pane | null = null;
 // ── Phaser game ───────────────────────────────────────────────
 const game = new Phaser.Game({
   type: Phaser.WEBGL,
-  backgroundColor: '#1a1a2e',
+  backgroundColor: "#1a1a2e",
   parent: canvasContainer,
   scale: {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.NONE,
-    width: '100%',
-    height: '100%',
+    width: "100%",
+    height: "100%",
   },
   // Register all scene classes; none auto-start (Phaser starts only the first by default).
   // We stop them all once ready and drive scene transitions ourselves.
-  scene: examples.map(e => e.scene),
+  scene: examples.map((e) => e.scene),
   plugins: {
-    global: [{ key: 'MSDFPlugin', plugin: MSDFPlugin, start: true }],
+    global: [{ key: "MSDFPlugin", plugin: MSDFPlugin, start: true }],
   },
 });
 
@@ -72,8 +80,8 @@ function showExample(nextIndex: number) {
   if (currentPane) {
     currentPane.dispose();
     currentPane = null;
-    paneContainer.innerHTML = '';
-    paneContainer.classList.remove('visible');
+    paneContainer.innerHTML = "";
+    paneContainer.classList.remove("visible");
   }
 
   currentIndex = nextIndex;
@@ -94,14 +102,14 @@ function showExample(nextIndex: number) {
     if (scene.setupPane) {
       currentPane = new Pane({ container: paneContainer });
       scene.setupPane(currentPane);
-      paneContainer.classList.add('visible');
+      paneContainer.classList.add("visible");
     }
   });
 }
 
-btnPrev.addEventListener('click', () => {
+btnPrev.addEventListener("click", () => {
   if (currentIndex > 0) showExample(currentIndex - 1);
 });
-btnNext.addEventListener('click', () => {
+btnNext.addEventListener("click", () => {
   if (currentIndex < examples.length - 1) showExample(currentIndex + 1);
 });

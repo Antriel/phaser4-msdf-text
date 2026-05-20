@@ -9,7 +9,7 @@
  * `BatchHandlerMSDF` render node.
  */
 
-import Phaser from 'phaser';
+import * as Phaser from "phaser";
 
 const SimpleVertexShader = [
     'precision mediump float;',

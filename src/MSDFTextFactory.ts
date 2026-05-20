@@ -5,7 +5,7 @@
  * making it available as `scene.add.msdfText(x, y, fontKey, text, fontSize)`
  */
 
-import Phaser from 'phaser';
+import * as Phaser from "phaser";
 import { MSDFText } from './MSDFText';
 
 // @ts-ignore - Phaser internals not fully typed

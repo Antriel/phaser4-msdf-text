@@ -5,7 +5,7 @@
  * making it available as `scene.make.msdfText(config)`
  */
 
-import Phaser from 'phaser';
+import * as Phaser from "phaser";
 import { MSDFText, ColorValue } from './MSDFText';
 
 // @ts-ignore - Phaser internals not fully typed

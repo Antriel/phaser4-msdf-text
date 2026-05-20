@@ -1,5 +1,5 @@
-import Phaser from 'phaser';
-import type { MSDFTextInstance } from '../src';
+import * as Phaser from "phaser";
+import type { MSDFTextInstance } from "../src";
 
 export class BatchedTestScene extends Phaser.Scene {
   private text1?: MSDFTextInstance;
@@ -8,7 +8,7 @@ export class BatchedTestScene extends Phaser.Scene {
   private fpsText?: MSDFTextInstance;
 
   constructor() {
-    super({ key: 'BatchedTestScene' });
+    super({ key: "BatchedTestScene" });
   }
 
   preload() {
@@ -27,14 +27,14 @@ export class BatchedTestScene extends Phaser.Scene {
       "Batched MSDF Text!",
       48,
     );
-    this.text1.setColor('#00ff00');
-    this.text1.setAlign('center');
+    this.text1.setColor("#00ff00");
+    this.text1.setAlign("center");
     this.tweens.add({
       targets: this.text1,
       rotation: Math.PI * 2,
       duration: 3000,
       repeat: -1,
-      ease: 'Linear',
+      ease: "Linear",
     });
 
     this.text2 = this.add.msdfText(
@@ -44,8 +44,8 @@ export class BatchedTestScene extends Phaser.Scene {
       "This is batched rendering!\nMultiple lines work too.\nMuch faster than Phase 3!",
       32,
     );
-    this.text2.setColor('#ffffff');
-    this.text2.setAlign('center');
+    this.text2.setColor("#ffffff");
+    this.text2.setAlign("center");
     this.text2.setLineSpacing(5);
 
     this.text3 = this.add.msdfText(
@@ -58,8 +58,8 @@ export class BatchedTestScene extends Phaser.Scene {
         "Duis aute irure dolor in reprehenderit in voluptate velit esse.",
       24,
     );
-    this.text3.setColor('#ffff00');
-    this.text3.setAlign('left');
+    this.text3.setColor("#ffff00");
+    this.text3.setAlign("left");
     this.text3.scaleX = 10;
     this.tweens.add({
       targets: this.text3,
@@ -68,11 +68,11 @@ export class BatchedTestScene extends Phaser.Scene {
       duration: 2000,
       yoyo: true,
       repeat: -1,
-      ease: 'Sine.easeInOut',
+      ease: "Sine.easeInOut",
     });
 
     this.fpsText = this.add.msdfText(10, 10, "Roboto_Regular", "FPS: --", 20);
-    this.fpsText.setColor('#ff0000');
+    this.fpsText.setColor("#ff0000");
   }
 
   update() {

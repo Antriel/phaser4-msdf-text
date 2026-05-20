@@ -10,7 +10,7 @@
  * is honored — the MSDF shader doesn't implement FILL/ADD/SCREEN/OVERLAY/HARD_LIGHT.
  */
 
-import Phaser from 'phaser';
+import * as Phaser from "phaser";
 import BatchMSDFChar from './BatchMSDFChar';
 import type { MSDFBatchHandlerInstance } from './MSDFBatchHandler';
 

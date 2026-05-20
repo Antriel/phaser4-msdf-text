@@ -5,7 +5,7 @@
  * as a single unit, following Phaser's MultiFile pattern (similar to BitmapFontFile).
  */
 
-import Phaser from 'phaser';
+import * as Phaser from "phaser";
 import { parseMSDFFont } from './MSDFFontParser';
 import { MSDFFont } from './MSDFFont';
 
