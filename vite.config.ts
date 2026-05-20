@@ -14,8 +14,7 @@ export default defineConfig(({ command }) => {
       server: {
         port: 3000,
         open: true
-      },
-      assetsInclude: ['**/*.frag', '**/*.vert', '**/*.glsl']
+      }
     };
   }
 
@@ -25,6 +24,9 @@ export default defineConfig(({ command }) => {
       outDir: 'dist',
       sourcemap: true,
       emptyOutDir: true,
+      // The library build ships only JS + d.ts. `public/` holds sample fonts
+      // for the dev examples app and must not be copied into the npm package.
+      copyPublicDir: false,
       lib: {
         entry: path.resolve(__dirname, 'src/index.ts'),
         name: 'Phaser4MSDFFont',

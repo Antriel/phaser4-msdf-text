@@ -1,153 +1,85 @@
 # Project: Phaser 4 MSDF Font Rendering
 
 ## Overview
-Implementing MSDF (Multi-channel Signed Distance Field) font rendering for Phaser 4 game engine. MSDF fonts provide high-quality text rendering at any scale without pixelation.
+MSDF (Multi-channel Signed Distance Field) font rendering plugin for the
+Phaser 4 game engine. MSDF fonts stay crisp at any scale without pixelation,
+from a single texture per font. Published as the npm package
+`phaser4-msdf-font`.
 
-## Project Context
+## Technology stack
+- **Engine**: Phaser 4 (TypeScript), WebGL renderer
+- **Rendering**: custom `BatchHandler` render node with inline GLSL shaders
+- **Font data**: JSON atlas produced by `msdf-atlas-gen` (`.json` + `.png`)
+- **Build**: Vite (library mode) + `tsc` for declarations
 
-### Technology Stack
-- **Engine**: Phaser 4 (TypeScript-based game framework)
-- **Rendering**: WebGL with custom GLSL shaders
-- **Font Generation**: msdf-atlas-gen (binary tools available in ceramic submodule)
-- **Font Format**: BMFont format (.fnt + .png)
+## How it works
 
-### Reference Implementation
-Based on [Ceramic Engine](https://github.com/ceramic-engine/ceramic) (MIT licensed) MSDF implementation, which provides proven shader code and architecture patterns.
+**MSDF rendering**
+- The atlas PNG stores a distance field in its RGB channels.
+- The fragment shader takes the `median()` of the three channels to recover
+  the signed distance, then derives coverage from it.
+- Anti-aliasing uses screen-space derivatives (`fwidth`), so edge quality is
+  independent of the atlas distance range and stays crisp at any zoom.
+- `pxRange` (the atlas `distanceRange`) is read from the font JSON at runtime
+  and only feeds the outline path — plain AA does not use it.
 
-### Key Technical Concepts
+**Shaders** — inline string arrays in `src/MSDFBatchHandler.ts`:
+- Vertex: uniform `uProjectionMatrix`; attributes `inPosition`, `inTexCoord`,
+  `inTint`.
+- Fragment: uniforms `uMainSampler`, `uPxRange`, `uOutlineWidth`,
+  `uOutlineColor`.
+- Output is premultiplied alpha (`vec4(rgb * a, a)`) — required by Phaser 4's
+  batched pipeline.
+- Uses `#extension GL_OES_standard_derivatives : enable` for `fwidth`.
+  Phaser 4 fetches this extension unconditionally in
+  `WebGLRenderer.setExtensions`, so no game-config flag is needed.
+  `installMSDFPlugin()` verifies it and throws a clear error if absent.
 
-**MSDF Rendering**:
-- Distance field data stored in RGB channels of texture atlas
-- Fragment shader uses `median()` function to extract signed distance
-- Anti-aliasing uses screen-space derivatives (`fwidth(dist)`) so AA quality is
-  independent of the atlas's `pxRange` and stays crisp at any zoom level
-- **Premultiplied alpha required** for Phaser 4 Shader GameObject
-- LINEAR texture filtering is mandatory (not NEAREST)
-- `pxRange` (distance range) is read from the font JSON and only matters for the
-  outline shader path; AA itself no longer depends on it
+**Font data** — `msdf-atlas-gen` JSON, parsed by `src/MSDFFontParser.ts` into a
+runtime `MSDFFont`. Contains `atlas` metadata (type, `distanceRange`, size,
+dimensions, `yOrigin`), normalized `metrics`, per-glyph plane/atlas bounds, and
+kerning pairs.
 
-**Shader Requirements**:
-- Fragment shader calculates opacity based on signed distance field
-- Premultiplied alpha: `rgb = color.rgb * alpha`
-- Uniforms: `iChannel0` (texture), `uTexSize`, `uPxRange`, `uTextColor`
-- Requires the `OES_standard_derivatives` WebGL extension. Phaser 4 fetches this
-  extension unconditionally during renderer init (see
-  `WebGLRenderer.setExtensions` — `gl.getExtension('OES_standard_derivatives')`
-  is called regardless of any config flag), so the shader's
-  `#extension GL_OES_standard_derivatives : enable` pragma works on its own.
-  `installMSDFPlugin()` verifies availability and throws a clear error otherwise.
-
-**Font Data Structure**:
-- BMFont format with custom `distanceField` metadata line
-- Character metrics: position, size, offset, advance, kerning
-- Multi-page texture support for large character sets
-
-### Project Structure
+## Source layout
 ```
-phaser4-msdf-font/
-├── CLAUDE.md                          # This file - general project info
-├── README.md                          # Main documentation
-├── DEVELOPMENT.md                     # Development workflow
-├── FONTS.md                           # Font generation guide
-├── PHASE-4-MIGRATION-GUIDE.md         # Migration guide for batched rendering
-├── Phaser 4 Shader Guide.md           # Phaser 4 shader reference
-├── docs/archive/                      # Archived working documents
-├── ceramic/                           # Git submodule with reference code
-│   └── git/msdf-atlas-gen-binary/    # Font generation binaries (Windows/Mac/Linux)
-├── src/                               # Source code
-└── examples/                          # Test examples
+src/
+  index.ts                 # Public entry point / exports
+  MSDFPlugin.ts            # Global plugin; installMSDFPlugin, cache + extension check
+  MSDFFontFile.ts          # Registers the `this.load.msdfFont` loader
+  MSDFFontParser.ts        # Parses msdf-atlas-gen JSON
+  MSDFFont.ts              # Parsed font: glyph metrics, kerning, measurement
+  MSDFText.ts              # Text GameObject (layout, wrap, outline, shadow, callbacks)
+  MSDFTextFactory.ts       # add.msdfText factory
+  MSDFTextCreator.ts       # make.msdfText creator
+  MSDFTextWebGLRenderer.ts # Per-object render function
+  MSDFBatchHandler.ts      # Custom BatchHandler render node + GLSL
+  BatchMSDFChar.ts         # Packs a character quad into the batch buffer
+  phaser-augmentations.ts  # Phaser type augmentations
+
+examples/                  # Vite dev app (`npm run dev`) with feature demos
+public/assets/fonts/       # Sample fonts for the dev app only (not shipped to npm)
 ```
 
-## Architecture Components
+## Documentation
+- **CLAUDE.md** — this file: project context and conventions
+- **README.md** — installation, API reference, usage
+- **FONTS.md** — generating MSDF font atlases
 
-1. **MSDFShader** - Custom WebGL shader for MSDF rendering
-2. **MSDFFont** - Font data loader and manager
-3. **MSDFText** - Text GameObject using MSDF fonts
-4. **MSDFLoader** - Asset loader for .fnt and .png files
-5. **Font Generation Tools** - Scripts to generate MSDF fonts from TTF/OTF
-
-## Development Approach
-
-### Documentation
-- **CLAUDE.md**: High-level project context, architecture notes, conventions (this file)
-- **README.md**: Main documentation, API reference, usage examples
-- **DEVELOPMENT.md**: Development workflow, testing procedures
-- **PHASE-4-MIGRATION-GUIDE.md**: Guide for migrating from Phase 3 to Phase 4
-- **docs/archive/**: Historical working documents and design notes
-
-### Completed Phases
-1. ✅ **Phase 1**: Shader Implementation (fragment + vertex GLSL)
-2. ✅ **Phase 2**: Font Data Structures & MSDFText GameObject
-3. ✅ **Phase 3**: Loader Integration
-4. ✅ **Phase 4**: Batching Optimization (5-10x performance improvement)
-5. 🚧 **Phase 5**: Advanced Features (word wrap, rich text, effects)
-
-## Important Notes
-
-### Critical Parameters
-- **distanceRange**: Typically 4 (range: 2-8)
-- **fontSize**: Base size during generation (typically 42)
-- **pxRange**: Must match distanceRange from generation
-
-### Texture Filtering
-MSDF fonts **MUST** use LINEAR filtering. NEAREST filtering will break the distance field interpolation.
-
-### Phaser 4 Shader Discoveries
-- **Premultiplied alpha is mandatory**: Phaser's Shader GameObject expects `vec4(color.rgb * alpha, alpha)`
-- **Derivatives are required**: AA uses `fwidth(dist)` so it scales correctly
-  with `pxRange` and zoom. The `OES_standard_derivatives` extension is enabled
-  by Phaser's renderer init unconditionally — no game config flag needed.
-- **Default vertex shader sufficient**: No custom vertex shader needed
-- **Texture binding**: Use `iChannel0` for texture sampler (texture unit 0)
+## Gotchas / invariants
+- **Premultiplied alpha** — all shader output must be `vec4(rgb * a, a)`.
+- **LINEAR filtering** — MSDF relies on linear interpolation of the distance
+  field; NEAREST breaks it. Phaser's default LINEAR is correct.
+- **V coordinates** — `MSDFFontParser` flips V based on the atlas `yOrigin`
+  (`top` → `1 - y/H`, `bottom` → no flip) and normalizes to `v0 < v1`.
+  `MSDFText` then swaps `v0`/`v1` again for the batched quad orientation — see
+  the note in `MSDFText.ts` around the glyph build.
+- **Generation params** — typical `distanceRange` 4 (range 2–8), generation
+  `size` 42. `pxRange` is taken from the JSON automatically; there is no
+  separate value to keep in sync.
 
 ## References
-- Ceramic Engine: https://github.com/ceramic-engine/ceramic
-- msdf-atlas-gen: https://github.com/Chlumsky/msdf-atlas-gen
-- MSDF Technique: https://github.com/Chlumsky/msdfgen
-- Phaser 4 Shader Guide: Available in this repository
-
-## Current Status
-
-**All core phases complete!** The MSDF font rendering system is fully functional with batched rendering.
-
-### ✅ Phase 1: Shader Implementation - COMPLETE
-- Fragment shader with median() and derivative-based AA
-- Premultiplied alpha implementation
-- TypeScript helper (MSDFShader.ts)
-
-### ✅ Phase 2: MSDFText GameObject - COMPLETE
-- JSON Parser (msdf-atlas-gen format)
-- MSDFFont class (data management, kerning, measurements)
-- MSDFText GameObject (renders individual characters)
-- Text layout engine (positioning, advance, kerning, alignment)
-- Multiple font sizes and colors
-
-### ✅ Phase 3: Loader Integration - COMPLETE
-- Simplified loader API (`loadMSDFFont()` and `getMSDFFont()`)
-- Automatic JSON + PNG loading
-- Font caching and parsing
-
-### ✅ Phase 4: Batching Optimization - COMPLETE
-- Custom MSDFBatchHandler (RenderNode system)
-- Batched character rendering (1-2 draw calls per text)
-- **5-10x performance improvement**
-- 100% API compatibility with Phase 3
-- MSDFText GameObject
-
-### 🚧 Phase 5: Advanced Features - NEXT
-- Word wrapping and text flow
-- Rich text (inline colors/formatting)
-- Text effects (shadow, outline, gradient)
-- Additional optimizations
-
-## Key Discoveries
-
-### V-Coordinate Flipping
-**Critical Finding**: Phaser uses OpenGL's bottom-up texture coordinates, regardless of the `yOrigin` setting in the font JSON. All V-coordinates must be flipped:
-```typescript
-const v0 = 1 - (atlasBounds.bottom / atlasHeight);
-const v1 = 1 - (atlasBounds.top / atlasHeight);
-```
-
-### Per-Character Shader Configs
-Each character requires its own shader config with character-specific `uCharUV` values. The `setupUniforms` function is called every frame, so per-character UVs must be baked into each config.
+- msdf-atlas-gen — https://github.com/Chlumsky/msdf-atlas-gen
+- msdfgen (original MSDF research) — https://github.com/Chlumsky/msdfgen
+- Phaser 4 — https://github.com/phaserjs/phaser
+- Shader approach inspired by the MIT-licensed Ceramic Engine —
+  https://github.com/ceramic-engine/ceramic

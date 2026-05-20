@@ -10,5 +10,5 @@
     "noUnusedParameters": false
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "examples", "ceramic", "src/main.ts"]
+  "exclude": ["node_modules", "dist", "examples"]
 }

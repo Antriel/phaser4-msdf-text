@@ -64,7 +64,7 @@ class MyScene extends Phaser.Scene {
 
     create() {
         const text = this.add.msdfText(400, 300, 'arial', 'Hello, MSDF!', 48);
-        text.setColor('#ffffff');
+        text.setColor(0xffffff);
         text.setAlign('center');
         text.setOrigin(0.5);
     }
