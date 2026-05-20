@@ -30,6 +30,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build && tsc -p tsconfig.build.json",
+    "build:examples": "vite build --mode examples",
     "preview": "vite preview"
   },
   "keywords": [

@@ -122,8 +122,9 @@ export const MSDFFontFile = new Class({
             // for both field types.
             const textureManager: any = this.loader.textureManager;
             const renderer: any = this.loader.systems.renderer;
+            const hasTexture = textureManager.exists(textureKey);
 
-            if (renderer && renderer.gl && !textureManager.exists(textureKey)) {
+            if (renderer && renderer.gl && !hasTexture) {
                 const gl = renderer.gl;
                 const img = image.data;
                 const wrap = gl.CLAMP_TO_EDGE;
@@ -142,35 +143,66 @@ export const MSDFFontFile = new Class({
                 );
 
                 textureManager.addGLTexture(textureKey, glTexture);
-            } else {
-                // No WebGL renderer (or the key is already taken) — fall back to the
-                // default path. Plain MSDF still renders; MTSDF effects would not.
+            } else if (!hasTexture) {
+                // No WebGL renderer — fall back to the default upload path. Plain
+                // MSDF still renders; MTSDF effects would not.
                 image.addToCache();
             }
+            // else: the texture is already registered (the same font finished
+            // loading in another scene). Reuse it — re-adding would trip
+            // TextureManager.checkKey ("Texture key already in use").
 
             if (!textureManager.exists(textureKey)) {
                 console.error(`[MSDFFontFile] Failed to load texture for key: ${textureKey}`);
                 return;
             }
 
-            // Parse the MSDF font data
-            const fontData = parseMSDFFont(json.data, this.key);
-
-            // Create MSDFFont instance
-            const font = new MSDFFont(fontData, textureKey);
-
-            // Add to custom msdfFont cache
-            // The cache is created by MSDFPlugin on boot
-            if (this.loader.cacheManager.custom.msdfFont) {
-                this.loader.cacheManager.custom.msdfFont.add(this.key, font);
-            } else {
+            // Register the parsed font in the custom msdfFont cache (created by
+            // MSDFPlugin on boot). Skip if already present — two scenes can load
+            // the same font before either finishes processing.
+            const cache = this.loader.cacheManager.custom.msdfFont;
+            if (!cache) {
                 console.warn('[MSDFFontFile] MSDF font cache not initialized. Did you install the MSDFPlugin?');
+            } else if (!cache.has(this.key)) {
+                const fontData = parseMSDFFont(json.data, this.key);
+                cache.add(this.key, new MSDFFont(fontData, textureKey));
             }
 
             this.complete = true;
         }
     }
 });
+
+/**
+ * Queues a single MSDF font for loading, unless a font with that key has
+ * already been parsed into the `msdfFont` cache.
+ *
+ * Phaser's loader dedups standard files via `File.hasCacheConflict()` against
+ * each file's target cache. An MSDF font is only fully usable once it lands in
+ * the custom `msdfFont` cache, so that cache is the authoritative "already
+ * loaded" check — applying it here makes re-`preload()`ing the same font (e.g.
+ * from every scene that uses it) a no-op instead of a redundant download.
+ */
+function addMSDFFont(
+    loader: Phaser.Loader.LoaderPlugin,
+    key: string | MSDFFontFileConfig,
+    textureURL?: string,
+    fontDataURL?: string,
+    textureXhrSettings?: Phaser.Types.Loader.XHRSettingsObject,
+    fontDataXhrSettings?: Phaser.Types.Loader.XHRSettingsObject
+): void {
+    const fontKey = typeof key === 'string' ? key : GetFastValue(key, 'key');
+    const cache = (loader as any).cacheManager.custom.msdfFont;
+
+    if (cache && fontKey && cache.has(fontKey)) {
+        return;
+    }
+
+    const multifile = new MSDFFontFile(
+        loader, key, textureURL, fontDataURL, textureXhrSettings, fontDataXhrSettings
+    );
+    loader.addFile(multifile.files);
+}
 
 /**
  * Adds an MSDF Font, or array of fonts, to the current load queue.
@@ -228,20 +260,13 @@ FileTypesManager.register('msdfFont', function (
     textureXhrSettings?: Phaser.Types.Loader.XHRSettingsObject,
     fontDataXhrSettings?: Phaser.Types.Loader.XHRSettingsObject
 ) {
-    let multifile;
-
-    // Supports an Object file definition in the key argument
-    // Or an array of objects in the key argument
-    // Or a single entry where all arguments have been defined
-
+    // Supports a single key + URLs, a config object, or an array of configs.
     if (Array.isArray(key)) {
         for (let i = 0; i < key.length; i++) {
-            multifile = new MSDFFontFile(this, key[i]);
-            this.addFile(multifile.files);
+            addMSDFFont(this, key[i]);
         }
     } else {
-        multifile = new MSDFFontFile(this, key, textureURL, fontDataURL, textureXhrSettings, fontDataXhrSettings);
-        this.addFile(multifile.files);
+        addMSDFFont(this, key, textureURL, fontDataURL, textureXhrSettings, fontDataXhrSettings);
     }
 
     return this;

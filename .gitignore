@@ -5,6 +5,7 @@ pnpm-lock.yaml
 
 # Build output
 dist/
+dist-examples/
 build/
 *.js.map
 *.d.ts

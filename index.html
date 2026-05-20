@@ -46,6 +46,14 @@
     }
     #nav button:hover { background: #4b5563; }
 
+    /* Wider text button — overrides the 28px square icon-button sizing above. */
+    #nav #btn-capture {
+      width: auto;
+      padding: 0 10px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
     #nav-title {
       font-size: 14px;
       font-weight: 500;
@@ -103,6 +111,7 @@
     <button id="btn-next">&#8594;</button>
     <span id="nav-title">—</span>
     <span id="nav-counter"></span>
+    <button id="btn-capture" title="Capture a WebGL frame with Spector.js">Capture frame</button>
   </nav>
 
   <div id="main">

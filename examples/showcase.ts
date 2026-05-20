@@ -39,6 +39,7 @@ const navTitle = document.getElementById("nav-title")!;
 const navCounter = document.getElementById("nav-counter")!;
 const btnPrev = document.getElementById("btn-prev") as HTMLButtonElement;
 const btnNext = document.getElementById("btn-next") as HTMLButtonElement;
+const btnCapture = document.getElementById("btn-capture") as HTMLButtonElement;
 
 // ── State ─────────────────────────────────────────────────────
 let currentIndex = -1;
@@ -62,6 +63,7 @@ const game = new Phaser.Game({
     global: [{ key: "MSDFPlugin", plugin: MSDFPlugin, start: true }],
   },
 });
+(window as any).game = game;
 
 game.events.once(Phaser.Core.Events.READY, () => {
   // Stop everything Phaser may have auto-started.
@@ -112,4 +114,11 @@ btnPrev.addEventListener("click", () => {
 });
 btnNext.addEventListener("click", () => {
   if (currentIndex < examples.length - 1) showExample(currentIndex + 1);
+});
+
+// Capture the next rendered frame with Spector.js. `captureFrame()` self-guards
+// (`if (DEBUG && this.spector ...)`), so it is a harmless no-op if Phaser was
+// not built with the debug hooks enabled — see vite.config.ts.
+btnCapture.addEventListener("click", () => {
+  (game.renderer as Phaser.Renderer.WebGL.WebGLRenderer).captureFrame();
 });
