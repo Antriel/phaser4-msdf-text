@@ -29,7 +29,7 @@ export class BatchedTestScene extends Phaser.Scene {
       48,
     );
     this.text1.setColor("#00ff00");
-    this.text1.setAlign("center");
+    this.text1.setCenterAlign();
     this.tweens.add({
       targets: this.text1,
       rotation: Math.PI * 2,
@@ -46,7 +46,7 @@ export class BatchedTestScene extends Phaser.Scene {
       32,
     );
     this.text2.setColor("#ffffff");
-    this.text2.setAlign("center");
+    this.text2.setCenterAlign();
     this.text2.setLineSpacing(5);
 
     this.text3 = this.add.msdfText(
@@ -60,7 +60,7 @@ export class BatchedTestScene extends Phaser.Scene {
       24,
     );
     this.text3.setColor("#ffff00");
-    this.text3.setAlign("left");
+    this.text3.setLeftAlign();
     this.text3.scaleX = 10;
     this.tweens.add({
       targets: this.text3,

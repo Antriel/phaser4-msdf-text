@@ -41,13 +41,12 @@ export { default as MSDFBatchHandler } from './MSDFBatchHandler';
 
 // Types
 export type {
-    TextAlign,
+    ColorValue,
     DisplayCallback,
     DisplayCallbackData,
     DisplayCallbackTint,
     MSDFTextInstance,
-    MSDFOutlineOptions,
-    MSDFShadowOptions,
+    MSDFTextStatic,
     CharacterData
 } from './MSDFText';
 export type { MSDFFontFileConfig } from './MSDFFontFile';

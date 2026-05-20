@@ -25,7 +25,8 @@ declare module 'phaser' {
                 y: number,
                 font: string,
                 text?: string | string[],
-                fontSize?: number
+                fontSize?: number,
+                align?: number
             ): MSDFTextInstance;
         }
 

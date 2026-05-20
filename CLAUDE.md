@@ -33,10 +33,10 @@ from a single texture per font. Published as the npm package
 the alpha channel alongside the MSDF in RGB. The shader uses `median(rgb)` for
 crisp text (corners preserved) and the alpha SDF for effects that need rounded
 or soft edges:
-- Rounded outline (`setOutline(..., { rounded: true })`) — the outline edge
+- Rounded outline (`setOutline(..., rounded)`) — the outline edge
   comes from the alpha SDF, which rounds outer corners; the letterform edge
   still uses `median(rgb)`, so glyphs stay sharp.
-- Soft shadow / glow (`setShadow(..., { softness })`) — the shadow pass uses
+- Soft shadow / glow (`setDropShadow(..., softness)`) — the shadow pass uses
   the alpha SDF with a widened transition. `uShadowSoftness` is a per-pass
   uniform, so `MSDFTextWebGLRenderer` flushes the batch between the shadow and
   main passes. Softness is bounded by `pxRange`.

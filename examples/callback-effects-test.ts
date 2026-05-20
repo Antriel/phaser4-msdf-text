@@ -25,7 +25,7 @@ export class CallbackEffectsTestScene extends Phaser.Scene {
       36,
     );
     wave.setColor("#00ff00");
-    wave.setAlign("center");
+    wave.setCenterAlign();
     wave.setDisplayCallback((data: DisplayCallbackData) => {
       data.y += Math.sin(data.index * 0.5 + this.currentTime * 0.003) * 15;
       return data;
@@ -38,7 +38,7 @@ export class CallbackEffectsTestScene extends Phaser.Scene {
       "RAINBOW COLORS",
       36,
     );
-    rainbow.setAlign("center");
+    rainbow.setCenterAlign();
     rainbow.setDisplayCallback((data: DisplayCallbackData) => {
       const hue = (data.index * 30 + this.currentTime * 0.1) % 360;
       const color = Phaser.Display.Color.HSVToRGB(
@@ -63,7 +63,7 @@ export class CallbackEffectsTestScene extends Phaser.Scene {
       36,
     );
     breathing.setColor("#ffff00");
-    breathing.setAlign("center");
+    breathing.setCenterAlign();
     breathing.setDisplayCallback((data: DisplayCallbackData) => {
       data.scale =
         1 + Math.sin(data.index * 0.2 + this.currentTime * 0.002) * 0.3;
@@ -72,7 +72,7 @@ export class CallbackEffectsTestScene extends Phaser.Scene {
 
     const jiggle = this.add.msdfText(400, 270, "Roboto_Regular", "JIGGLE!", 36);
     jiggle.setColor("#ff00ff");
-    jiggle.setAlign("center");
+    jiggle.setCenterAlign();
     jiggle.setDisplayCallback((data: DisplayCallbackData) => {
       data.x += Math.sin(this.currentTime * 0.01 + data.index * 1.5) * 3;
       data.y += Math.cos(this.currentTime * 0.012 + data.index * 1.7) * 3;
@@ -87,7 +87,7 @@ export class CallbackEffectsTestScene extends Phaser.Scene {
       36,
     );
     spinning.setColor("#00ffff");
-    spinning.setAlign("center");
+    spinning.setCenterAlign();
     spinning.setDisplayCallback((data: DisplayCallbackData) => {
       data.rotation = this.currentTime * 0.002 + data.index * 0.2;
       return data;
@@ -100,7 +100,7 @@ export class CallbackEffectsTestScene extends Phaser.Scene {
       "COMBINED EFFECTS!",
       48,
     );
-    combined.setAlign("center");
+    combined.setCenterAlign();
     combined.setDisplayCallback((data: DisplayCallbackData) => {
       data.y += Math.sin(data.index * 0.4 + this.currentTime * 0.004) * 20;
       const hue = (data.index * 25 + this.currentTime * 0.15) % 360;

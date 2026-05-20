@@ -44,7 +44,7 @@ export class OutlineTestScene extends Phaser.Scene {
     for (const [label, color, x, y] of specs) {
       const t = this.add.msdfText(x, y, "Roboto_Regular", label, 48);
       t.setColor(color);
-      t.setAlign("center");
+      t.setCenterAlign();
       this.texts.push(t);
     }
 
@@ -96,9 +96,12 @@ export class OutlineTestScene extends Phaser.Scene {
       COLOR_PRESETS[0];
     for (const t of this.texts) {
       if (this.params.width > 0) {
-        t.setOutline(this.params.width, preset.color, this.params.alpha, {
-          rounded: this.params.rounded,
-        });
+        t.setOutline(
+          this.params.width,
+          preset.color,
+          this.params.alpha,
+          this.params.rounded,
+        );
       } else {
         t.clearOutline();
       }

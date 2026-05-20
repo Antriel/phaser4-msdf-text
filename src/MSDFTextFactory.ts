@@ -21,6 +21,7 @@ const GameObjectFactory = Phaser.GameObjects.GameObjectFactory;
  * @param {string} font - The key of the MSDF font to use, from the `msdfFont` cache.
  * @param {string} [text=''] - The text content to display.
  * @param {number} [fontSize=42] - The font size in pixels.
+ * @param {number} [align=0] - Line alignment for multi-line text: 0 (left), 1 (center) or 2 (right).
  *
  * @return {MSDFText} The Game Object that was created.
  */
@@ -29,11 +30,12 @@ GameObjectFactory.register('msdfText', function (
     y: number,
     font: string,
     text: string | string[] = '',
-    fontSize: number = 42
+    fontSize: number = 42,
+    align: number = 0
 ) {
     const normalized = Array.isArray(text) ? text.join('\n') : text;
     // @ts-ignore - 'this' context is GameObjectFactory
-    return this.displayList.add(new MSDFText(this.scene, x, y, font, normalized, fontSize));
+    return this.displayList.add(new MSDFText(this.scene, x, y, font, normalized, fontSize, align));
 });
 
 //  When registering a factory function 'this' refers to the GameObjectFactory context.

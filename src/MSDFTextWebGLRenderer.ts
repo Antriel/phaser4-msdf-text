@@ -99,17 +99,21 @@ function MSDFTextWebGLRenderer(
     // only carries usable data on MTSDF atlases. On a plain MSDF font they are
     // forced off here so the effects degrade to the standard look.
     const isMtsdf = src.fontData.distanceField.fieldType === 'mtsdf';
-    const shadowSoftness = (isMtsdf && src._shadowSoftness > 0) ? src._shadowSoftness : 0;
+    const shadowSoftness = (isMtsdf && src.dropShadowSoftness > 0) ? src.dropShadowSoftness : 0;
 
     // Outline state — flush if it changed since the last batch.
     if (src.hasOutline()) {
-        const outline = src._outlineColor;
-        const width = src._outlineWidth;
-        const rounded = (isMtsdf && src._outlineRounded) ? 1 : 0;
-        if (batchHandler.hasOutlineChanged(width, outline.r, outline.g, outline.b, outline.a, rounded)) {
+        const width = src.outlineWidth;
+        const oColor = src.outlineColor;
+        const oR = ((oColor >> 16) & 0xff) / 255;
+        const oG = ((oColor >> 8) & 0xff) / 255;
+        const oB = (oColor & 0xff) / 255;
+        const oA = src.outlineAlpha;
+        const rounded = (isMtsdf && src.outlineRounded) ? 1 : 0;
+        if (batchHandler.hasOutlineChanged(width, oR, oG, oB, oA, rounded)) {
             batchHandler.run(drawingContext);
         }
-        batchHandler.setOutline(width, outline.r, outline.g, outline.b, outline.a, rounded);
+        batchHandler.setOutline(width, oR, oG, oB, oA, rounded);
     } else {
         if (batchHandler.hasOutlineChanged(0, 0, 0, 0, 0, 0)) {
             batchHandler.run(drawingContext);
@@ -138,13 +142,17 @@ function MSDFTextWebGLRenderer(
     const hasCallback = src.displayCallback && typeof src.displayCallback === 'function';
 
     // Shadow pass — render shadow behind the text.
-    if (src.hasShadow()) {
-        const shadowOffset = src._shadowOffset;
-        const shadowColor = src._shadowColor;
-        const shadowAlpha = src._shadowAlpha;
+    if (src.hasDropShadow()) {
+        const dsx = src.dropShadowX;
+        const dsy = src.dropShadowY;
+        const sColor = src.dropShadowColor;
+        const sR = ((sColor >> 16) & 0xff) / 255;
+        const sG = ((sColor >> 8) & 0xff) / 255;
+        const sB = (sColor & 0xff) / 255;
+        const shadowAlpha = src.dropShadowAlpha;
 
-        const shadowOffsetX = originOffsetX + shadowOffset.x;
-        const shadowOffsetY = originOffsetY + shadowOffset.y;
+        const shadowOffsetX = originOffsetX + dsx;
+        const shadowOffsetY = originOffsetY + dsy;
 
         // Shadow softness is a per-pass uniform; flush any pending batch so the
         // shadow quads render with it before the main pass resets it to 0.
@@ -156,10 +164,10 @@ function MSDFTextWebGLRenderer(
         // Shadow tint is solid; modulate by each corner's alpha so it follows
         // per-corner alpha on the text.
         const shadowTintData = {
-            tintTopLeft:     packCornerTint(0xffffff, shadowColor.r, shadowColor.g, shadowColor.b, shadowAlpha, src._alphaTL),
-            tintTopRight:    packCornerTint(0xffffff, shadowColor.r, shadowColor.g, shadowColor.b, shadowAlpha, src._alphaTR),
-            tintBottomLeft:  packCornerTint(0xffffff, shadowColor.r, shadowColor.g, shadowColor.b, shadowAlpha, src._alphaBL),
-            tintBottomRight: packCornerTint(0xffffff, shadowColor.r, shadowColor.g, shadowColor.b, shadowAlpha, src._alphaBR)
+            tintTopLeft:     packCornerTint(0xffffff, sR, sG, sB, shadowAlpha, src._alphaTL),
+            tintTopRight:    packCornerTint(0xffffff, sR, sG, sB, shadowAlpha, src._alphaTR),
+            tintBottomLeft:  packCornerTint(0xffffff, sR, sG, sB, shadowAlpha, src._alphaBL),
+            tintBottomRight: packCornerTint(0xffffff, sR, sG, sB, shadowAlpha, src._alphaBR)
         };
 
         for (let i = 0; i < characterCount; i++) {
@@ -181,8 +189,8 @@ function MSDFTextWebGLRenderer(
                 const originalX = char.originalX !== undefined ? char.originalX : char.x;
                 const originalY = char.originalY !== undefined ? char.originalY : char.y;
 
-                callbackData.x = originalX + shadowOffset.x;
-                callbackData.y = originalY + shadowOffset.y;
+                callbackData.x = originalX + dsx;
+                callbackData.y = originalY + dsy;
                 callbackData.scale = char.scale || 1;
                 callbackData.rotation = char.rotation || 0;
                 callbackData.data = char.data;
@@ -194,7 +202,7 @@ function MSDFTextWebGLRenderer(
 
                 const result = src.displayCallback(callbackData);
 
-                const posChanged = result.x !== (originalX + shadowOffset.x) || result.y !== (originalY + shadowOffset.y);
+                const posChanged = result.x !== (originalX + dsx) || result.y !== (originalY + dsy);
                 const scaleChanged = result.scale !== 1;
                 const rotationChanged = result.rotation !== 0;
 

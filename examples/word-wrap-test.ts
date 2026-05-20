@@ -31,7 +31,7 @@ export class WordWrapTestScene extends Phaser.Scene {
       24,
     );
     this.text1.setColor("#00ff00");
-    this.text1.setAlign("left");
+    this.text1.setLeftAlign();
     this.text1.setMaxWidth(this.params.maxWidth);
 
     this.text2 = this.add.msdfText(
@@ -42,7 +42,7 @@ export class WordWrapTestScene extends Phaser.Scene {
       28,
     );
     this.text2.setColor("#ffff00");
-    this.text2.setAlign("center");
+    this.text2.setCenterAlign();
     this.text2.setMaxWidth(350);
 
     this.text3 = this.add.msdfText(
@@ -53,7 +53,7 @@ export class WordWrapTestScene extends Phaser.Scene {
       22,
     );
     this.text3.setColor("#ff00ff");
-    this.text3.setAlign("left");
+    this.text3.setLeftAlign();
     this.text3.setMaxWidth(500);
     this.text3.setLineSpacing(3);
 

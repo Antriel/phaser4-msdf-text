@@ -30,7 +30,7 @@ export interface MSDFTextOutlineConfig {
 }
 
 /**
- * Shadow configuration for {@link MSDFTextConfig}. Mirrors `setShadow`.
+ * Shadow configuration for {@link MSDFTextConfig}. Mirrors `setDropShadow`.
  */
 export interface MSDFTextShadowConfig {
     /** Shadow X offset in pixels. Defaults to 0. */
@@ -55,7 +55,8 @@ export interface MSDFTextConfig extends Phaser.Types.GameObjects.GameObjectConfi
     fontSize?: number;
     color?: ColorValue;
     colorAlpha?: number;
-    align?: 'left' | 'center' | 'right';
+    /** Line alignment: 0 (left), 1 (center) or 2 (right). See `MSDFText.ALIGN_*`. */
+    align?: number;
     lineSpacing?: number;
     letterSpacing?: number;
     maxWidth?: number;
@@ -111,7 +112,7 @@ GameObjectCreator.register('msdfText', function (
 
     const align = GetAdvancedValue(config, 'align', null);
     if (align !== null) {
-        msdfText.setAlign(align);
+        msdfText.align = align;
     }
 
     const lineSpacing = GetAdvancedValue(config, 'lineSpacing', null);
@@ -133,17 +134,17 @@ GameObjectCreator.register('msdfText', function (
     // GetAdvancedValue (which is geared toward primitive/random values).
     const outline = config.outline;
     if (outline && outline.width > 0) {
-        msdfText.setOutline(outline.width, outline.color, outline.alpha, { rounded: !!outline.rounded });
+        msdfText.setOutline(outline.width, outline.color, outline.alpha, !!outline.rounded);
     }
 
     const shadow = config.shadow;
     if (shadow) {
-        msdfText.setShadow(
+        msdfText.setDropShadow(
             shadow.offsetX || 0,
             shadow.offsetY || 0,
             shadow.color,
             shadow.alpha,
-            { softness: shadow.softness || 0 }
+            shadow.softness || 0
         );
     }
 

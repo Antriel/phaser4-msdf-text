@@ -65,7 +65,7 @@ class MyScene extends Phaser.Scene {
     create() {
         const text = this.add.msdfText(400, 300, 'arial', 'Hello, MSDF!', 48);
         text.setColor(0xffffff);
-        text.setAlign('center');
+        text.setCenterAlign();
         text.setOrigin(0.5);
     }
 }
@@ -80,8 +80,8 @@ const text = this.make.msdfText({
     text: 'Hello, MSDF!',
     fontSize: 48,
     color: 0xffffff,
-    align: 'center',
-    // Optional effects — same fields as setOutline / setShadow:
+    align: 1,  // 0 = left, 1 = center, 2 = right
+    // Optional effects — same fields as setOutline / setDropShadow:
     outline: { width: 1.5, color: 0x000000, rounded: true },
     shadow:  { offsetX: 4, offsetY: 4, alpha: 0.5, softness: 6 },
 });
@@ -99,19 +99,22 @@ text.setColor(0xff8800);           // packed 0xRRGGBB
 text.setColor('#ff8800');          // hex string or 'rgb(255, 136, 0)'
 text.setColor({ r: 255, g: 136, b: 0 });  // object (0-255), optional `a`
 text.setColor(0xff8800, 0.5);      // optional alpha (0-1) overrides color's alpha
-text.setAlign('center');           // 'left' | 'center' | 'right'
+text.setCenterAlign();             // also setLeftAlign() / setRightAlign()
 text.setLineSpacing(10);
 
 // Or use property accessors directly
 text.text = 'New content';
 text.fontSize = 64;
-text.align = 'center';
+text.align = 1;                    // 0 = left, 1 = center, 2 = right
 text.lineSpacing = 10;
 
-text.getTextWidth();
-text.getTextHeight();
+text.width;                        // rendered width in local space (read-only)
+text.height;                       // rendered height in local space (read-only)
 text.getTextBounds();              // { width, height, lines: { count, lengths, shortest, longest } }
 ```
+
+`align` mirrors Phaser's `BitmapText`: it is a number, and `MSDFText.ALIGN_LEFT`,
+`MSDFText.ALIGN_CENTER` and `MSDFText.ALIGN_RIGHT` are exported as `0`/`1`/`2`.
 
 ### Word wrap
 
@@ -124,10 +127,16 @@ text.wordWrapCharCode = 32;        // Default: space. Use 45 for hyphen, etc.
 ### Outline (shader-based, no extra draw calls)
 
 ```ts
-text.setOutline(1.5, 0x000000, 1.0);                    // width (distance-field units), color, alpha
-text.setOutline(1.5, 0x000000, 1.0, { rounded: true }); // rounded outer corners (MTSDF atlas only)
+text.setOutline(1.5, 0x000000, 1.0);          // width (distance-field units), color, alpha
+text.setOutline(1.5, 0x000000, 1.0, true);    // rounded outer corners (MTSDF atlas only)
 text.clearOutline();
-text.hasOutline();                    // boolean
+text.hasOutline();                            // boolean
+
+// setOutline is a convenience wrapper — the fields can be set or tweened directly:
+text.outlineWidth = 2;                        // distance-field units
+text.outlineColor = 0x000000;                 // packed 0xRRGGBB
+text.outlineAlpha = 1;
+text.outlineRounded = true;                   // MTSDF atlas only
 ```
 
 Practical outline widths are roughly 0.5–3.0. The shader can only represent
@@ -137,7 +146,7 @@ showing flat edges around the glyph's atlas cell instead. If you need thicker
 outlines, regenerate the atlas with a larger `-pxrange` in `msdf-atlas-gen`
 (and matching glyph padding) rather than pushing the width higher at runtime.
 
-`{ rounded: true }` rounds the outline's outer corners using the atlas's true
+`rounded` rounds the outline's outer corners using the atlas's true
 signed distance field. It requires an **MTSDF** atlas (generated with
 `-type mtsdf`; see [FONTS.md](FONTS.md)). On a plain MSDF font it is ignored
 with a one-time console warning and the outline stays sharp. The letterforms
@@ -146,14 +155,22 @@ themselves stay crisp either way — only the outline edge rounds.
 ### Shadow (extra pass, still batched)
 
 ```ts
-text.setShadow(4, 4, 0x000000, 0.5);                    // offsetX, offsetY, color, alpha
-text.setShadow(4, 4, 0x000000, 0.5, { softness: 6 });   // soft shadow, 6 px blur (MTSDF atlas only)
-text.setShadow(0, 0, 0x33ccff, 0.8, { softness: 8 });   // zero offset + softness reads as a glow
-text.clearShadow();
-text.hasShadow();
+text.setDropShadow(4, 4, 0x000000, 0.5);          // x, y, color, alpha
+text.setDropShadow(4, 4, 0x000000, 0.5, 6);       // soft shadow, 6 px blur (MTSDF atlas only)
+text.setDropShadow(0, 0, 0x33ccff, 0.8, 8);       // zero offset + softness reads as a glow
+text.clearDropShadow();
+text.hasDropShadow();
+
+// setDropShadow is a convenience wrapper — the fields can be set or tweened directly
+// (named to match Phaser's BitmapText):
+text.dropShadowX = 4;
+text.dropShadowY = 4;
+text.dropShadowColor = 0x000000;                  // packed 0xRRGGBB
+text.dropShadowAlpha = 0.5;
+text.dropShadowSoftness = 6;                      // MTSDF atlas only
 ```
 
-`{ softness }` is the shadow blur in screen pixels (`0` = hard edge, the
+`softness` is the shadow blur in screen pixels (`0` = hard edge, the
 default). Any value above `0` produces a soft shadow and requires an **MTSDF**
 atlas; on a plain MSDF font it is ignored with a one-time console warning. The
 maximum usable blur is bounded by the atlas `distanceRange` — for very soft

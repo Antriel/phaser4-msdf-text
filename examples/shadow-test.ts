@@ -66,17 +66,17 @@ export class ShadowTestScene extends Phaser.Scene {
     );
 
     t1.setColor("#ffffff");
-    t1.setAlign("center");
+    t1.setCenterAlign();
     t2.setColor("#00ff00");
-    t2.setAlign("center");
+    t2.setCenterAlign();
     t3.setColor("#ffffff");
-    t3.setAlign("center");
-    t3.setShadow(4, 4, 0x000000, 0.9);
+    t3.setCenterAlign();
+    t3.setDropShadow(4, 4, 0x000000, 0.9);
     t4.setColor("#ffff00");
-    t4.setAlign("center");
-    t4.setShadow(2, 2, 0x000000, 0.4);
+    t4.setCenterAlign();
+    t4.setDropShadow(2, 2, 0x000000, 0.4);
     t5.setColor("#00ffff");
-    t5.setAlign("center");
+    t5.setCenterAlign();
     t5.setDisplayCallback((data: DisplayCallbackData) => {
       data.y += Math.sin(data.index * 0.5 + this.currentTime * 0.003) * 20;
       return data;
@@ -142,12 +142,12 @@ export class ShadowTestScene extends Phaser.Scene {
       COLOR_PRESETS.find((p) => p.label === this.params.color) ??
       COLOR_PRESETS[0];
     for (const t of this.dynamicTexts) {
-      t.setShadow(
+      t.setDropShadow(
         this.params.offsetX,
         this.params.offsetY,
         preset.color,
         this.params.alpha,
-        { softness: this.params.softness },
+        this.params.softness,
       );
     }
   }
