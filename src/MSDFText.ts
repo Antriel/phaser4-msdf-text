@@ -918,12 +918,8 @@ export const MSDFText = new Class({
             const charY = cursorY + baselineOffset + char.yOffset * this._fontSize;
 
             // Calculate character size (using normalized dimensions scaled by fontSize)
-            const charWidth = (char.normalizedWidth || (char.width / this.fontData.baseSize)) * this._fontSize;
-            const charHeight = (char.normalizedHeight || (char.height / this.fontData.baseSize)) * this._fontSize;
-
-            if (!char.normalizedWidth) {
-                console.warn(`Character ${String.fromCharCode(charCode)} missing normalizedWidth! Font may need re-parsing.`);
-            }
+            const charWidth = char.normalizedWidth * this._fontSize;
+            const charHeight = char.normalizedHeight * this._fontSize;
 
             // Store character layout data (no GameObject creation!)
             // NOTE: UV coordinates in MSDFFont are pre-flipped for Phaser's Shader GameObject.
