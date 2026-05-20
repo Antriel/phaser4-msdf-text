@@ -16,11 +16,8 @@
  */
 
 import Phaser from 'phaser';
-import '../src';
-import { installMSDFPlugin } from '../src/MSDFPlugin';
-import type { MSDFTextInstance } from '../src/MSDFText';
-import { registerMSDFBatchHandler } from '../src/registerMSDFBatchHandler';
-import * as SPECTOR from "phaser3spectorjs";
+import { MSDFPlugin } from '../src';
+import type { MSDFTextInstance } from '../src';
 
 class OutlineTestScene extends Phaser.Scene {
   private text1?: MSDFTextInstance;
@@ -194,16 +191,11 @@ const config: Phaser.Types.Core.GameConfig = {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  callbacks: {
-    postBoot: (game) => {
-      installMSDFPlugin(game);
-      const spector = new SPECTOR.Spector();
-      spector.displayUI();
-    },
+  plugins: {
+    global: [
+      { key: 'MSDFPlugin', plugin: MSDFPlugin, start: true },
+    ],
   },
 };
 
-const game = new Phaser.Game(config);
-
-// Register MSDF batch handler
-registerMSDFBatchHandler(game);
+new Phaser.Game(config);

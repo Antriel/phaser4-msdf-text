@@ -10,10 +10,8 @@
  */
 
 import Phaser from 'phaser';
-import { installMSDFPlugin } from '../src/MSDFPlugin';
-import type { MSDFTextInstance } from '../src/MSDFText';
-import { registerMSDFBatchHandler } from '../src/registerMSDFBatchHandler';
-import * as SPECTOR from "phaser3spectorjs";
+import { MSDFPlugin } from '../src';
+import type { MSDFTextInstance } from '../src';
 
 class BatchedTestScene extends Phaser.Scene {
   private text1?: MSDFTextInstance;
@@ -103,7 +101,7 @@ class BatchedTestScene extends Phaser.Scene {
     );
   }
 
-  update(time: number, delta: number) {
+  update(time: number) {
     // Update FPS counter (tests dynamic text updates)
     if (this.fpsText) {
       const fps = Math.round(this.game.loop.actualFps);
@@ -130,21 +128,11 @@ const config: Phaser.Types.Core.GameConfig = {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  callbacks: {
-    postBoot: (game) => {
-      // Install MSDF plugin (adds custom font cache)
-      installMSDFPlugin(game);
-
-      // Initialize Spector.js for WebGL debugging
-      const spector = new SPECTOR.Spector();
-      spector.displayUI();
-    },
+  plugins: {
+    global: [
+      { key: 'MSDFPlugin', plugin: MSDFPlugin, start: true },
+    ],
   },
 };
 
-// Create game
-const game = new Phaser.Game(config);
-
-// Register MSDF batch handler (will auto-wait for renderer to be ready)
-registerMSDFBatchHandler(game);
-console.log('Batched test initialized! Check console for debug info.');
+new Phaser.Game(config);

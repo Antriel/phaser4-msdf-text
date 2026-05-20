@@ -17,11 +17,8 @@
  */
 
 import Phaser from 'phaser';
-import '../src';
-import { installMSDFPlugin } from '../src/MSDFPlugin';
-import type { MSDFTextInstance, DisplayCallbackData } from '../src/MSDFText';
-import { registerMSDFBatchHandler } from '../src/registerMSDFBatchHandler';
-import * as SPECTOR from "phaser3spectorjs";
+import { MSDFPlugin } from '../src';
+import type { MSDFTextInstance, DisplayCallbackData } from '../src';
 
 class ShadowTestScene extends Phaser.Scene {
   private text1?: MSDFTextInstance;
@@ -197,14 +194,11 @@ const config: Phaser.Types.Core.GameConfig = {
   height: 600,
   backgroundColor: "#1a1a2e",
   scene: ShadowTestScene,
-  callbacks: {
-    postBoot: (game) => {
-      installMSDFPlugin(game);
-      const spector = new SPECTOR.Spector();
-      spector.displayUI();
-    },
+  plugins: {
+    global: [
+      { key: 'MSDFPlugin', plugin: MSDFPlugin, start: true },
+    ],
   },
 };
 
-const game = new Phaser.Game(config);
-registerMSDFBatchHandler(game);
+new Phaser.Game(config);

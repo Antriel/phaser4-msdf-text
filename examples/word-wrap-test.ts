@@ -12,10 +12,8 @@
 
 import Phaser from 'phaser';
 import '../src';
-import { installMSDFPlugin } from '../src/MSDFPlugin';
-import type { MSDFTextInstance } from '../src/MSDFText';
-import { registerMSDFBatchHandler } from '../src/registerMSDFBatchHandler';
-import * as SPECTOR from "phaser3spectorjs";
+import { MSDFPlugin } from "../src";
+import type { MSDFTextInstance } from "../src";
 
 class WordWrapTestScene extends Phaser.Scene {
   private text1?: MSDFTextInstance;
@@ -29,25 +27,32 @@ class WordWrapTestScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.msdfFont("arial", "assets/fonts/Arial.png", "assets/fonts/Arial.json");
+    this.load.msdfFont(
+      "arial",
+      "assets/fonts/Arial.png",
+      "assets/fonts/Arial.json",
+    );
   }
 
   create() {
-    const longText = "This is a very long line of text that will automatically wrap when it exceeds the maximum width. Word wrapping makes text much more readable in constrained spaces!";
+    const longText =
+      "This is a very long line of text that will automatically wrap when it exceeds the maximum width. Word wrapping makes text much more readable in constrained spaces!";
 
     this.text1 = this.add.msdfText(50, 50, "arial", longText, 24);
     this.text1.setColor("#00ff00");
     this.text1.setAlign("left");
     this.text1.setMaxWidth(this.maxWidthValue);
 
-    const mediumText = "Centered text with word wrapping. This demonstrates how alignment works with wrapped text.";
+    const mediumText =
+      "Centered text with word wrapping. This demonstrates how alignment works with wrapped text.";
 
     this.text2 = this.add.msdfText(400, 200, "arial", mediumText, 28);
     this.text2.setColor("#ffff00");
     this.text2.setAlign("center");
     this.text2.setMaxWidth(350);
 
-    const mixedText = "First paragraph with manual line break.\nSecond paragraph that will wrap because it contains a very long line that exceeds the maximum width constraint.";
+    const mixedText =
+      "First paragraph with manual line break.\nSecond paragraph that will wrap because it contains a very long line that exceeds the maximum width constraint.";
 
     this.text3 = this.add.msdfText(50, 350, "arial", mixedText, 22);
     this.text3.setColor("#ff00ff");
@@ -69,20 +74,20 @@ class WordWrapTestScene extends Phaser.Scene {
         fontSize: "14px",
         color: "#aaaaaa",
         fontFamily: "Arial",
-      }
+      },
     );
 
     // Keyboard controls
     const cursors = this.input.keyboard!.createCursorKeys();
 
-    cursors.up!.on('down', () => {
+    cursors.up!.on("down", () => {
       this.maxWidthValue += 50;
       this.text1!.setMaxWidth(this.maxWidthValue);
       this.updateBoundsInfo();
       console.log(`MaxWidth: ${this.maxWidthValue}`);
     });
 
-    cursors.down!.on('down', () => {
+    cursors.down!.on("down", () => {
       this.maxWidthValue = Math.max(100, this.maxWidthValue - 50);
       this.text1!.setMaxWidth(this.maxWidthValue);
       this.updateBoundsInfo();
@@ -114,13 +119,13 @@ class WordWrapTestScene extends Phaser.Scene {
       `Lines:`,
       `Count: ${bounds.lines.count}`,
       `Shortest: ${bounds.lines.shortest.toFixed(1)}px`,
-      `Longest: ${bounds.lines.longest.toFixed(1)}px`
-    ].join('\n');
+      `Longest: ${bounds.lines.longest.toFixed(1)}px`,
+    ].join("\n");
 
     this.boundsText.setText(info);
   }
 
-  update(time: number, delta: number) {
+  update(time: number) {
     // Animate text2 by pulsing scale
     if (this.text2) {
       const scale = 1 + Math.sin(time / 500) * 0.1;
@@ -141,18 +146,9 @@ const config: Phaser.Types.Core.GameConfig = {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  callbacks: {
-    postBoot: (game) => {
-      installMSDFPlugin(game);
-      const spector = new SPECTOR.Spector();
-      spector.displayUI();
-    },
+  plugins: {
+    global: [{ key: "MSDFPlugin", plugin: MSDFPlugin, start: true }],
   },
 };
 
-// Create game
-const game = new Phaser.Game(config);
-
-// Register MSDF batch handler
-registerMSDFBatchHandler(game);
-console.log('Word wrap test initialized! Use UP/DOWN arrows to adjust maxWidth.');
+new Phaser.Game(config);

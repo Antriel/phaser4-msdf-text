@@ -15,7 +15,6 @@
 import Phaser from 'phaser';
 import { MSDFPlugin } from '../src';
 import type { MSDFTextInstance, DisplayCallbackData } from '../src';
-import * as SPECTOR from "phaser3spectorjs";
 
 class CallbackEffectsTestScene extends Phaser.Scene {
   private waveText?: MSDFTextInstance;
@@ -49,8 +48,13 @@ class CallbackEffectsTestScene extends Phaser.Scene {
     this.rainbowText.setAlign("center");
     this.rainbowText.setDisplayCallback((data: DisplayCallbackData) => {
       const hue = (data.index * 30 + this.currentTime * 0.1) % 360;
-      const color = Phaser.Display.Color.HSVToRGB(hue / 360, 1, 1);
-      const tintValue = (255 << 24) | (color.b << 16) | (color.g << 8) | color.r;
+      const color = Phaser.Display.Color.HSVToRGB(
+        hue / 360,
+        1,
+        1,
+      ) as Phaser.Types.Display.ColorObject;
+      const tintValue =
+        (255 << 24) | (color.b << 16) | (color.g << 8) | color.r;
       data.tint.topLeft = tintValue;
       data.tint.topRight = tintValue;
       data.tint.bottomLeft = tintValue;
@@ -63,7 +67,7 @@ class CallbackEffectsTestScene extends Phaser.Scene {
     this.breathingText.setColor("#ffff00");
     this.breathingText.setAlign("center");
     this.breathingText.setDisplayCallback((data: DisplayCallbackData) => {
-      const pulsePhase = (data.index * 0.2) + (this.currentTime * 0.002);
+      const pulsePhase = data.index * 0.2 + this.currentTime * 0.002;
       data.scale = 1 + Math.sin(pulsePhase) * 0.3;
       return data;
     });
@@ -86,28 +90,39 @@ class CallbackEffectsTestScene extends Phaser.Scene {
     this.rotationText.setColor("#00ffff");
     this.rotationText.setAlign("center");
     this.rotationText.setDisplayCallback((data: DisplayCallbackData) => {
-      data.rotation = (this.currentTime * 0.002 + data.index * 0.2);
+      data.rotation = this.currentTime * 0.002 + data.index * 0.2;
       return data;
     });
 
     // Effect 6: Combined (wave + rainbow + scale)
-    this.combinedText = this.add.msdfText(400, 450, "arial", "COMBINED EFFECTS!", 48);
+    this.combinedText = this.add.msdfText(
+      400,
+      450,
+      "arial",
+      "COMBINED EFFECTS!",
+      48,
+    );
     this.combinedText.setAlign("center");
     this.combinedText.setDisplayCallback((data: DisplayCallbackData) => {
       // Wave
-      data.y += Math.sin((data.index * 0.4) + (this.currentTime * 0.004)) * 20;
+      data.y += Math.sin(data.index * 0.4 + this.currentTime * 0.004) * 20;
 
       // Rainbow
       const hue = (data.index * 25 + this.currentTime * 0.15) % 360;
-      const color = Phaser.Display.Color.HSVToRGB(hue / 360, 1, 1);
-      const tintValue = (255 << 24) | (color.b << 16) | (color.g << 8) | color.r;
+      const color = Phaser.Display.Color.HSVToRGB(
+        hue / 360,
+        1,
+        1,
+      ) as Phaser.Types.Display.ColorObject;
+      const tintValue =
+        (255 << 24) | (color.b << 16) | (color.g << 8) | color.r;
       data.tint.topLeft = tintValue;
       data.tint.topRight = tintValue;
       data.tint.bottomLeft = tintValue;
       data.tint.bottomRight = tintValue;
 
       // Breathing
-      const pulsePhase = (data.index * 0.15) + (this.currentTime * 0.003);
+      const pulsePhase = data.index * 0.15 + this.currentTime * 0.003;
       data.scale = 1 + Math.sin(pulsePhase) * 0.2;
 
       return data;
@@ -144,7 +159,7 @@ class CallbackEffectsTestScene extends Phaser.Scene {
     console.log("All effects created! Watch the magic happen!");
   }
 
-  update(time: number, delta: number) {
+  update(time: number) {
     this.currentTime = time;
   }
 }
@@ -164,12 +179,6 @@ const config: Phaser.Types.Core.GameConfig = {
     global: [
       { key: 'MSDFPlugin', plugin: MSDFPlugin, start: true },
     ],
-  },
-  callbacks: {
-    postBoot: () => {
-      const spector = new SPECTOR.Spector();
-      spector.displayUI();
-    },
   },
 };
 

@@ -9,3 +9,4 @@ import './index';
 // import '../examples/batched-test';
 // import '../examples/outline-test';
 import '../examples/callback-effects-test';
+// import '../examples/word-wrap-test';
