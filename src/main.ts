@@ -1,12 +1,3 @@
-/**
- * Main entry point for Phaser 4 MSDF Font Test
- */
-
-// Import MSDF library to register factory/creator methods
-import './index';
-
-// Load batched-test.ts to test MSDFText with MSDFBatchHandler
-// import '../examples/batched-test';
-// import '../examples/outline-test';
-import '../examples/callback-effects-test';
-// import '../examples/word-wrap-test';
+// Entry point — the showcase lives in examples/showcase.ts,
+// which is loaded directly by index.html.
+// This file is kept as a fallback reference; it is not used at runtime.
