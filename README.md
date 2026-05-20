@@ -4,8 +4,8 @@ MSDF (Multi-channel Signed Distance Field) font rendering for [Phaser 4](https:/
 
 - Crisp text at any scale (no pixelation when zooming, single texture per font)
 - Batched rendering — 1–2 draw calls per text object, regardless of length
-- Shader-based outlines (no extra draw calls)
-- Drop shadows (extra pass, batched)
+- Shader-based outlines — sharp, or rounded corners on MTSDF atlases (no extra draw calls)
+- Drop shadows — hard, or soft/glow on MTSDF atlases (extra pass, batched)
 - Per-character display callbacks (wave, rainbow, jiggle, rotate, scale, …)
 - Word wrapping with configurable wrap character
 
@@ -81,6 +81,9 @@ const text = this.make.msdfText({
     fontSize: 48,
     color: 0xffffff,
     align: 'center',
+    // Optional effects — same fields as setOutline / setShadow:
+    outline: { width: 1.5, color: 0x000000, rounded: true },
+    shadow:  { offsetX: 4, offsetY: 4, alpha: 0.5, softness: 6 },
 });
 ```
 
@@ -121,7 +124,8 @@ text.wordWrapCharCode = 32;        // Default: space. Use 45 for hyphen, etc.
 ### Outline (shader-based, no extra draw calls)
 
 ```ts
-text.setOutline(1.5, 0x000000, 1.0);  // width (distance-field units), color, alpha
+text.setOutline(1.5, 0x000000, 1.0);                    // width (distance-field units), color, alpha
+text.setOutline(1.5, 0x000000, 1.0, { rounded: true }); // rounded outer corners (MTSDF atlas only)
 text.clearOutline();
 text.hasOutline();                    // boolean
 ```
@@ -133,13 +137,27 @@ showing flat edges around the glyph's atlas cell instead. If you need thicker
 outlines, regenerate the atlas with a larger `-pxrange` in `msdf-atlas-gen`
 (and matching glyph padding) rather than pushing the width higher at runtime.
 
+`{ rounded: true }` rounds the outline's outer corners using the atlas's true
+signed distance field. It requires an **MTSDF** atlas (generated with
+`-type mtsdf`; see [FONTS.md](FONTS.md)). On a plain MSDF font it is ignored
+with a one-time console warning and the outline stays sharp. The letterforms
+themselves stay crisp either way — only the outline edge rounds.
+
 ### Shadow (extra pass, still batched)
 
 ```ts
-text.setShadow(4, 4, 0x000000, 0.5);  // offsetX, offsetY, color, alpha
+text.setShadow(4, 4, 0x000000, 0.5);                    // offsetX, offsetY, color, alpha
+text.setShadow(4, 4, 0x000000, 0.5, { softness: 6 });   // soft shadow, 6 px blur (MTSDF atlas only)
+text.setShadow(0, 0, 0x33ccff, 0.8, { softness: 8 });   // zero offset + softness reads as a glow
 text.clearShadow();
 text.hasShadow();
 ```
+
+`{ softness }` is the shadow blur in screen pixels (`0` = hard edge, the
+default). Any value above `0` produces a soft shadow and requires an **MTSDF**
+atlas; on a plain MSDF font it is ignored with a one-time console warning. The
+maximum usable blur is bounded by the atlas `distanceRange` — for very soft
+shadows regenerate with a larger `-pxrange`.
 
 ### Per-character display callback
 

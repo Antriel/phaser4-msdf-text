@@ -15,10 +15,11 @@ export class ShadowTestScene extends Phaser.Scene {
   private currentTime = 0;
 
   private params = {
-    offsetX: 3,
-    offsetY: 3,
-    alpha:   0.7,
-    color:   'Black',
+    offsetX:  3,
+    offsetY:  3,
+    alpha:    0.7,
+    color:    'Black',
+    softness: 0,
   };
 
   constructor() {
@@ -66,6 +67,8 @@ export class ShadowTestScene extends Phaser.Scene {
       label: 'Color',
       options: Object.fromEntries(COLOR_PRESETS.map(p => [p.label, p.label])),
     }).on('change', () => this.applyParams());
+    pane.addBinding(this.params, 'softness', { label: 'Softness (MTSDF)', min: 0, max: 16, step: 0.5 })
+      .on('change', () => this.applyParams());
 
     pane.addButton({ title: 'Remove shadow' }).on('click', () => {
       this.params.offsetX = 0;
@@ -78,7 +81,7 @@ export class ShadowTestScene extends Phaser.Scene {
   private applyParams() {
     const preset = COLOR_PRESETS.find(p => p.label === this.params.color) ?? COLOR_PRESETS[0];
     for (const t of this.dynamicTexts) {
-      t.setShadow(this.params.offsetX, this.params.offsetY, preset.color, this.params.alpha);
+      t.setShadow(this.params.offsetX, this.params.offsetY, preset.color, this.params.alpha, { softness: this.params.softness });
     }
   }
 

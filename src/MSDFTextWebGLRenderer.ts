@@ -95,19 +95,26 @@ function MSDFTextWebGLRenderer(
     batchHandler.setPxRange(src.fontData.distanceField.distanceRange);
     batchHandler.setAtlasSize(src.fontData.atlasSize.width, src.fontData.atlasSize.height);
 
+    // Rounded outlines and soft shadows read the true-SDF alpha channel, which
+    // only carries usable data on MTSDF atlases. On a plain MSDF font they are
+    // forced off here so the effects degrade to the standard look.
+    const isMtsdf = src.fontData.distanceField.fieldType === 'mtsdf';
+    const shadowSoftness = (isMtsdf && src._shadowSoftness > 0) ? src._shadowSoftness : 0;
+
     // Outline state — flush if it changed since the last batch.
     if (src.hasOutline()) {
         const outline = src._outlineColor;
         const width = src._outlineWidth;
-        if (batchHandler.hasOutlineChanged(width, outline.r, outline.g, outline.b, outline.a)) {
+        const rounded = (isMtsdf && src._outlineRounded) ? 1 : 0;
+        if (batchHandler.hasOutlineChanged(width, outline.r, outline.g, outline.b, outline.a, rounded)) {
             batchHandler.run(drawingContext);
         }
-        batchHandler.setOutline(width, outline.r, outline.g, outline.b, outline.a);
+        batchHandler.setOutline(width, outline.r, outline.g, outline.b, outline.a, rounded);
     } else {
-        if (batchHandler.hasOutlineChanged(0, 0, 0, 0, 0)) {
+        if (batchHandler.hasOutlineChanged(0, 0, 0, 0, 0, 0)) {
             batchHandler.run(drawingContext);
         }
-        batchHandler.setOutline(0, 0, 0, 0, 0);
+        batchHandler.setOutline(0, 0, 0, 0, 0, 0);
     }
 
     // Combine per-corner tint (Components.Tint), per-corner alpha (Components.Alpha),
@@ -138,6 +145,13 @@ function MSDFTextWebGLRenderer(
 
         const shadowOffsetX = originOffsetX + shadowOffset.x;
         const shadowOffsetY = originOffsetY + shadowOffset.y;
+
+        // Shadow softness is a per-pass uniform; flush any pending batch so the
+        // shadow quads render with it before the main pass resets it to 0.
+        if (batchHandler.hasShadowSoftnessChanged(shadowSoftness)) {
+            batchHandler.run(drawingContext);
+        }
+        batchHandler.setShadowSoftness(shadowSoftness);
 
         // Shadow tint is solid; modulate by each corner's alpha so it follows
         // per-corner alpha on the text.
@@ -243,7 +257,12 @@ function MSDFTextWebGLRenderer(
         }
     }
 
-    // Main text pass.
+    // Main text pass — reset shadow softness so text uses the crisp MSDF path.
+    if (batchHandler.hasShadowSoftnessChanged(0)) {
+        batchHandler.run(drawingContext);
+    }
+    batchHandler.setShadowSoftness(0);
+
     for (let i = 0; i < characterCount; i++) {
         const char = characters[i];
         if (!char || char.w === 0 || char.h === 0) {

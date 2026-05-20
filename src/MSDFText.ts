@@ -36,6 +36,57 @@ export type TextAlign = 'left' | 'center' | 'right';
 export type ColorValue = number | string | Phaser.Types.Display.InputColorObject | Phaser.Display.Color;
 
 /**
+ * Options for {@link MSDFText.setOutline}.
+ */
+export interface MSDFOutlineOptions {
+    /**
+     * Round the outline's outer corners using the atlas's true signed distance
+     * field. Requires an MTSDF font atlas (`-type mtsdf`); on a plain MSDF font
+     * it is ignored with a one-time console warning. Default `false` (sharp,
+     * mitred corners).
+     */
+    rounded?: boolean;
+}
+
+/**
+ * Options for {@link MSDFText.setShadow}.
+ */
+export interface MSDFShadowOptions {
+    /**
+     * Shadow blur, in screen pixels. `0` is a hard-edged shadow (the default).
+     * Any value above `0` produces a soft shadow and requires an MTSDF font
+     * atlas (`-type mtsdf`); on a plain MSDF font it is ignored with a one-time
+     * console warning. The maximum usable blur is bounded by the atlas
+     * `distanceRange` — for very soft shadows regenerate with a larger
+     * `-pxrange`. A soft shadow with zero offset reads as a glow.
+     */
+    softness?: number;
+}
+
+/**
+ * Warn (once per effect, per text object) when an MTSDF-only effect is used on
+ * a non-MTSDF atlas. Returns whether the loaded font actually supports it.
+ */
+function warnNeedsMtsdf(text: any, effectName: string): boolean {
+    const fieldType = text.fontData ? text.fontData.distanceField.fieldType : undefined;
+    if (fieldType === 'mtsdf') {
+        return true;
+    }
+    if (!text._mtsdfWarnings) {
+        text._mtsdfWarnings = {};
+    }
+    if (!text._mtsdfWarnings[effectName]) {
+        text._mtsdfWarnings[effectName] = true;
+        console.warn(
+            `[MSDFText] "${effectName}" needs an MTSDF font atlas. The font ` +
+            `"${text.font}" is "${fieldType}", so the effect falls back to the ` +
+            `standard look. Regenerate the atlas with msdf-atlas-gen "-type mtsdf".`
+        );
+    }
+    return false;
+}
+
+/**
  * Per-corner tint data for display callbacks
  */
 export interface DisplayCallbackTint {
@@ -118,9 +169,11 @@ export interface MSDFTextInstance extends
     wordWrapCharCode: number;
     _outlineWidth: number;
     _outlineColor: { r: number; g: number; b: number; a: number };
+    _outlineRounded: boolean;
     _shadowOffset: { x: number; y: number };
     _shadowColor: { r: number; g: number; b: number };
     _shadowAlpha: number;
+    _shadowSoftness: number;
     _characters: CharacterData[];
     _width: number;
     _height: number;
@@ -154,10 +207,10 @@ export interface MSDFTextInstance extends
     setDisplaySize(width: number, height: number): this;
     setDisplayCallback(callback: DisplayCallback | undefined): this;
     clearDisplayCallback(): this;
-    setOutline(width: number, color?: ColorValue, alpha?: number): this;
+    setOutline(width: number, color?: ColorValue, alpha?: number, options?: MSDFOutlineOptions): this;
     clearOutline(): this;
     hasOutline(): boolean;
-    setShadow(offsetX: number, offsetY: number, color?: ColorValue, alpha?: number): this;
+    setShadow(offsetX: number, offsetY: number, color?: ColorValue, alpha?: number, options?: MSDFShadowOptions): this;
     clearShadow(): this;
     hasShadow(): boolean;
     getTextWidth(): number;
@@ -255,11 +308,13 @@ export const MSDFText = new Class({
         // Outline properties (Phase 5.4)
         this._outlineWidth = 0;
         this._outlineColor = { r: 0, g: 0, b: 0, a: 0 };
+        this._outlineRounded = false;
 
         // Shadow properties (Phase 5.4)
         this._shadowOffset = { x: 0, y: 0 };
         this._shadowColor = { r: 0, g: 0, b: 0 };
         this._shadowAlpha = 0.5;
+        this._shadowSoftness = 0;
 
         // Character layout data (not GameObjects!)
         this._characters = [];
@@ -553,11 +608,17 @@ export const MSDFText = new Class({
      * @param width Outline width in distance field units
      * @param color Outline color (number, hex/rgb string, or {r,g,b,a?} object). Defaults to black.
      * @param alpha Outline alpha (0-1). Overrides any alpha in `color`.
+     * @param options Extra outline options. `rounded: true` rounds the outer
+     *   corners using the true SDF and requires an MTSDF atlas.
      */
-    setOutline: function (width: number, color: ColorValue = 0x000000, alpha: number = 1) {
+    setOutline: function (width: number, color: ColorValue = 0x000000, alpha: number = 1, options?: MSDFOutlineOptions) {
         this._outlineWidth = width;
         const c = (Phaser.Display.Color.ValueToColor as any)(color);
         this._outlineColor = { r: c.redGL, g: c.greenGL, b: c.blueGL, a: alpha };
+        this._outlineRounded = !!(options && options.rounded);
+        if (this._outlineRounded && width > 0) {
+            warnNeedsMtsdf(this, 'rounded outline');
+        }
         return this;
     },
 
@@ -566,6 +627,7 @@ export const MSDFText = new Class({
      */
     clearOutline: function () {
         this._outlineWidth = 0;
+        this._outlineRounded = false;
         return this;
     },
 
@@ -582,12 +644,21 @@ export const MSDFText = new Class({
      * @param offsetY Shadow Y offset in pixels
      * @param color Shadow color (number, hex/rgb string, or {r,g,b,a?} object). Defaults to black.
      * @param alpha Shadow alpha (0-1)
+     * @param options Extra shadow options. `softness` (screen pixels, default 0)
+     *   produces a soft shadow and requires an MTSDF atlas. A soft shadow with
+     *   zero offset reads as a glow.
      */
-    setShadow: function (offsetX: number, offsetY: number, color: ColorValue = 0x000000, alpha: number = 0.5) {
+    setShadow: function (offsetX: number, offsetY: number, color: ColorValue = 0x000000, alpha: number = 0.5, options?: MSDFShadowOptions) {
         this._shadowOffset = { x: offsetX, y: offsetY };
         const c = (Phaser.Display.Color.ValueToColor as any)(color);
         this._shadowColor = { r: c.redGL, g: c.greenGL, b: c.blueGL };
         this._shadowAlpha = alpha;
+        this._shadowSoftness = options && typeof options.softness === 'number'
+            ? Math.max(0, options.softness)
+            : 0;
+        if (this._shadowSoftness > 0) {
+            warnNeedsMtsdf(this, 'soft shadow');
+        }
         return this;
     },
 
@@ -596,6 +667,7 @@ export const MSDFText = new Class({
      */
     clearShadow: function () {
         this._shadowOffset = { x: 0, y: 0 };
+        this._shadowSoftness = 0;
         return this;
     },
 
@@ -603,7 +675,7 @@ export const MSDFText = new Class({
      * Check if shadow is enabled
      */
     hasShadow: function (): boolean {
-        return this._shadowOffset.x !== 0 || this._shadowOffset.y !== 0;
+        return this._shadowOffset.x !== 0 || this._shadowOffset.y !== 0 || this._shadowSoftness > 0;
     },
 
     // ========================================================================

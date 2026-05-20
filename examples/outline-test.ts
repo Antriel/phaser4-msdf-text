@@ -17,6 +17,7 @@ export class OutlineTestScene extends Phaser.Scene {
     width: 1.5,
     color: 'Black',
     alpha: 1.0,
+    rounded: false,
   };
 
   constructor() {
@@ -62,6 +63,9 @@ export class OutlineTestScene extends Phaser.Scene {
     pane.addBinding(this.params, 'alpha', { label: 'Alpha', min: 0, max: 1, step: 0.05 })
       .on('change', () => this.applyOutlines());
 
+    pane.addBinding(this.params, 'rounded', { label: 'Rounded (MTSDF)' })
+      .on('change', () => this.applyOutlines());
+
     pane.addButton({ title: 'Remove outline' }).on('click', () => {
       this.params.width = 0;
       pane.refresh();
@@ -73,7 +77,7 @@ export class OutlineTestScene extends Phaser.Scene {
     const preset = COLOR_PRESETS.find(p => p.label === this.params.color) ?? COLOR_PRESETS[0];
     for (const t of this.texts) {
       if (this.params.width > 0) {
-        t.setOutline(this.params.width, preset.color, this.params.alpha);
+        t.setOutline(this.params.width, preset.color, this.params.alpha, { rounded: this.params.rounded });
       } else {
         t.clearOutline();
       }

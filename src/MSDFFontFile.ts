@@ -108,14 +108,47 @@ export const MSDFFontFile = new Class({
             const image = this.files[0];
             const json = this.files[1];
 
-            // Add texture to Phaser's texture manager
-            image.addToCache();
-
-            // Get the texture
             const textureKey = image.key;
-            const texture = image.cache.get(textureKey);
 
-            if (!texture) {
+            // Upload the atlas ourselves with premultiplied alpha DISABLED.
+            //
+            // Phaser's default image path (ImageFile.addToCache -> TextureManager.addImage)
+            // always uploads with UNPACK_PREMULTIPLY_ALPHA_WEBGL = true. For an MTSDF
+            // atlas the alpha channel carries a true signed distance field, not opacity;
+            // premultiplying would multiply the MSDF data in RGB by it and destroy the
+            // glyph edges. So we build the WebGLTextureWrapper directly with pma = false
+            // and register it via addGLTexture. pma = false is a no-op for plain RGB
+            // MSDF atlases (alpha is 255 everywhere), so this single path is correct
+            // for both field types.
+            const textureManager: any = this.loader.textureManager;
+            const renderer: any = this.loader.systems.renderer;
+
+            if (renderer && renderer.gl && !textureManager.exists(textureKey)) {
+                const gl = renderer.gl;
+                const img = image.data;
+                const wrap = gl.CLAMP_TO_EDGE;
+
+                const glTexture = renderer.createTexture2D(
+                    0,                    // mipLevel
+                    gl.LINEAR,            // minFilter — MSDF requires linear filtering
+                    gl.LINEAR,            // magFilter
+                    wrap, wrap,           // wrapT, wrapS
+                    gl.RGBA,              // format
+                    img,                  // source image element
+                    img.width, img.height,
+                    false,                // pma — do NOT premultiply (preserves the SDF alpha)
+                    false,                // forceSize
+                    true                  // flipY — matches Phaser's default for loaded images
+                );
+
+                textureManager.addGLTexture(textureKey, glTexture);
+            } else {
+                // No WebGL renderer (or the key is already taken) — fall back to the
+                // default path. Plain MSDF still renders; MTSDF effects would not.
+                image.addToCache();
+            }
+
+            if (!textureManager.exists(textureKey)) {
                 console.error(`[MSDFFontFile] Failed to load texture for key: ${textureKey}`);
                 return;
             }

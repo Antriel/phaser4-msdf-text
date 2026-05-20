@@ -43,6 +43,8 @@ const SimpleFragmentShader = [
     'uniform float uPxRange;',      // distanceRange from the font JSON.
     'uniform float uOutlineWidth;',
     'uniform vec4 uOutlineColor;',
+    'uniform float uOutlineRounded;',  // 0 = sharp outline, 1 = rounded (true SDF).
+    'uniform float uShadowSoftness;',  // > 0 = soft shadow pass; screen pixels of blur.
     '',
     'varying vec2 outTexCoord;',
     'varying vec4 outTint;',
@@ -65,20 +67,33 @@ const SimpleFragmentShader = [
     '',
     'void main()',
     '{',
-    '    vec3 textureSample = texture2D(uMainSampler, outTexCoord).rgb;',
+    '    vec4 textureSample = texture2D(uMainSampler, outTexCoord);',
     '    float dist = median(textureSample.r, textureSample.g, textureSample.b);',
+    '    float tsdf = textureSample.a;',  // True SDF — meaningful only on MTSDF atlases.
     '    float pxRange = screenPxRange();',
     '',
-    '    if (uOutlineWidth > 0.0)',
+    '    if (uShadowSoftness > 0.0)',
+    '    {',
+    '        // Soft shadow / glow: spread the true-SDF edge over uShadowSoftness',
+    '        // screen pixels, capped at what the distance field can represent.',
+    '        float spread = clamp(uShadowSoftness, 1.0, pxRange);',
+    '        float alpha = clamp(pxRange * (tsdf - 0.5) / spread + 0.5, 0.0, 1.0);',
+    '        float a = alpha * outTint.a;',
+    '        gl_FragColor = vec4(outTint.rgb * a, a);',
+    '    }',
+    '    else if (uOutlineWidth > 0.0)',
     '    {',
     '        float textEdge = 0.5;',
     '        float outlineEdge = 0.5 - (uOutlineWidth / uPxRange);',
     '',
-    '        float coverage = clamp(pxRange * (dist - outlineEdge) + 0.5, 0.0, 1.0);',
-    '        float textMix  = clamp(pxRange * (dist - textEdge   ) + 0.5, 0.0, 1.0);',
+    '        // Outline edge from the true SDF (rounded corners) or the MSDF (sharp).',
+    '        float outlineDist = mix(dist, tsdf, uOutlineRounded);',
+    '',
+    '        float coverage = clamp(pxRange * (outlineDist - outlineEdge) + 0.5, 0.0, 1.0);',
+    '        float textMix  = clamp(pxRange * (dist        - textEdge   ) + 0.5, 0.0, 1.0);',
     '',
     '        // Guard against haze in the deep background at extreme minification.',
-    '        float backgroundFade = smoothstep(0.0, 0.2, dist);',
+    '        float backgroundFade = smoothstep(0.0, 0.2, outlineDist);',
     '',
     '        vec3 rgb = mix(uOutlineColor.rgb, outTint.rgb, textMix);',
     '        float a  = coverage * mix(uOutlineColor.a, outTint.a, textMix) * backgroundFade;',
@@ -106,6 +121,8 @@ interface MSDFBatchHandlerInstance {
     _atlasSize: [number, number];
     _outlineWidth: number;
     _outlineColor: [number, number, number, number];
+    _outlineRounded: number;
+    _shadowSoftness: number;
 
     instanceCount: number;
     instancesPerBatch: number;
@@ -118,8 +135,10 @@ interface MSDFBatchHandlerInstance {
 
     setPxRange(pxRange: number): void;
     setAtlasSize(width: number, height: number): void;
-    setOutline(width: number, r: number, g: number, b: number, a: number): void;
-    hasOutlineChanged(width: number, r: number, g: number, b: number, a: number): boolean;
+    setOutline(width: number, r: number, g: number, b: number, a: number, rounded: number): void;
+    hasOutlineChanged(width: number, r: number, g: number, b: number, a: number, rounded: number): boolean;
+    setShadowSoftness(softness: number): void;
+    hasShadowSoftnessChanged(softness: number): boolean;
     setupUniforms(drawingContext: DrawingContext): void;
     run(drawingContext: DrawingContext): void;
     batch(
@@ -167,6 +186,8 @@ class MSDFBatchHandler extends PhaserBatchHandler {
         self._atlasSize = [512, 512];
         self._outlineWidth = 0;
         self._outlineColor = [0, 0, 0, 0];
+        self._outlineRounded = 0;
+        self._shadowSoftness = 0;
     }
 
     setPxRange(pxRange: number): void {
@@ -179,19 +200,29 @@ class MSDFBatchHandler extends PhaserBatchHandler {
         self._atlasSize[1] = height;
     }
 
-    setOutline(width: number, r: number, g: number, b: number, a: number): void {
+    setOutline(width: number, r: number, g: number, b: number, a: number, rounded: number): void {
         const self = this as unknown as MSDFBatchHandlerInstance;
         self._outlineWidth = width;
         self._outlineColor = [r, g, b, a];
+        self._outlineRounded = rounded;
     }
 
-    hasOutlineChanged(width: number, r: number, g: number, b: number, a: number): boolean {
+    hasOutlineChanged(width: number, r: number, g: number, b: number, a: number, rounded: number): boolean {
         const self = this as unknown as MSDFBatchHandlerInstance;
         return self._outlineWidth !== width ||
             self._outlineColor[0] !== r ||
             self._outlineColor[1] !== g ||
             self._outlineColor[2] !== b ||
-            self._outlineColor[3] !== a;
+            self._outlineColor[3] !== a ||
+            self._outlineRounded !== rounded;
+    }
+
+    setShadowSoftness(softness: number): void {
+        (this as unknown as MSDFBatchHandlerInstance)._shadowSoftness = softness;
+    }
+
+    hasShadowSoftnessChanged(softness: number): boolean {
+        return (this as unknown as MSDFBatchHandlerInstance)._shadowSoftness !== softness;
     }
 
     _generateElementIndices(instances: number): ArrayBuffer {
@@ -221,6 +252,8 @@ class MSDFBatchHandler extends PhaserBatchHandler {
         programManager.setUniform('uAtlasSize', self._atlasSize);
         programManager.setUniform('uOutlineWidth', self._outlineWidth);
         programManager.setUniform('uOutlineColor', self._outlineColor);
+        programManager.setUniform('uOutlineRounded', self._outlineRounded);
+        programManager.setUniform('uShadowSoftness', self._shadowSoftness);
 
         drawingContext.renderer.setProjectionMatrixFromDrawingContext(drawingContext);
         programManager.setUniform('uProjectionMatrix', drawingContext.renderer.projectionMatrix.val);

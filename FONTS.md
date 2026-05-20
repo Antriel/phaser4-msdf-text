@@ -43,7 +43,7 @@ this.load.msdfFont('myfont', 'assets/fonts/MyFont.png', 'assets/fonts/MyFont.jso
 | Parameter | Suggested | Purpose |
 |---|---|---|
 | `-font` | — | Input `.ttf` / `.otf` file |
-| `-type msdf` | required | Multi-channel SDF (best quality) |
+| `-type` | `msdf` or `mtsdf` | `msdf` for crisp text; `mtsdf` also enables rounded outlines and soft shadows (see below) |
 | `-size` | 42 | Base glyph size (px per em); higher = more atlas detail |
 | `-pxrange` | 4 | Distance-field range (2–8). Read from the JSON at runtime; outline width scales with it |
 | `-outerpxpadding` | 2 | Gutter between glyphs; prevents neighbour-glyph bleed under LINEAR sampling. Raise to 4+ for heavy stretching |
@@ -54,6 +54,35 @@ this.load.msdfFont('myfont', 'assets/fonts/MyFont.png', 'assets/fonts/MyFont.jso
 
 Useful extras: `-chars "[32,126]"` limits the character set, `-allglyphs`
 includes every glyph in the font, `-nokerning` drops kerning pairs.
+
+## MTSDF: rounded outlines and soft shadows
+
+Generate with `-type mtsdf` to enable `setOutline(..., { rounded: true })` and
+`setShadow(..., { softness })`. MTSDF keeps the same 3-channel MSDF in the RGB
+channels (text stays exactly as crisp) and adds a *true* signed distance field
+in the alpha channel — that extra channel is what rounds outline corners and
+softens/blurs shadows.
+
+```bash
+msdf-atlas-gen \
+  -font MyFont.ttf \
+  -type mtsdf \
+  -size 42 \
+  -pxrange 8 \
+  -outerpxpadding 2 \
+  -potr \
+  -yorigin top \
+  -imageout MyFont.png \
+  -json MyFont.json
+```
+
+The atlas PNG becomes RGBA. The runtime detects the `mtsdf` type from the JSON
+and loads the texture **without** premultiplied alpha, so the distance field in
+the alpha channel is preserved — no extra setup needed. Effect softness (shadow
+blur, outline corner radius) is bounded by `distanceRange`, so pick a larger
+`-pxrange` (8–16) than you would for plain MSDF if you want generous soft
+shadows. Requesting a rounded outline or soft shadow on a plain `msdf` atlas is
+ignored with a one-time console warning.
 
 ## Troubleshooting
 

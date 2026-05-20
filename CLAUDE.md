@@ -15,7 +15,8 @@ from a single texture per font. Published as the npm package
 ## How it works
 
 **MSDF rendering**
-- The atlas PNG stores a distance field in its RGB channels.
+- The atlas PNG stores a distance field in its RGB channels. MTSDF atlases
+  additionally carry a true (single-channel) SDF in the alpha channel.
 - The fragment shader takes the `median()` of the three channels to recover
   the signed distance, then derives coverage from it.
 - Anti-aliasing uses the canonical msdfgen `screenPxRange()` method: the
@@ -28,11 +29,25 @@ from a single texture per font. Published as the npm package
   from the font JSON at runtime and feed both the plain AA path and the
   outline path.
 
+**MTSDF effects** — atlases generated with `-type mtsdf` carry a true SDF in
+the alpha channel alongside the MSDF in RGB. The shader uses `median(rgb)` for
+crisp text (corners preserved) and the alpha SDF for effects that need rounded
+or soft edges:
+- Rounded outline (`setOutline(..., { rounded: true })`) — the outline edge
+  comes from the alpha SDF, which rounds outer corners; the letterform edge
+  still uses `median(rgb)`, so glyphs stay sharp.
+- Soft shadow / glow (`setShadow(..., { softness })`) — the shadow pass uses
+  the alpha SDF with a widened transition. `uShadowSoftness` is a per-pass
+  uniform, so `MSDFTextWebGLRenderer` flushes the batch between the shadow and
+  main passes. Softness is bounded by `pxRange`.
+- Both are forced off on plain `msdf` atlases (`MSDFTextWebGLRenderer` checks
+  `fieldType`); `MSDFText` warns once if they are requested on such a font.
+
 **Shaders** — inline string arrays in `src/MSDFBatchHandler.ts`:
 - Vertex: uniform `uProjectionMatrix`; attributes `inPosition`, `inTexCoord`,
   `inTint`.
 - Fragment: uniforms `uMainSampler`, `uAtlasSize`, `uPxRange`,
-  `uOutlineWidth`, `uOutlineColor`.
+  `uOutlineWidth`, `uOutlineColor`, `uOutlineRounded`, `uShadowSoftness`.
 - Output is premultiplied alpha (`vec4(rgb * a, a)`) — required by Phaser 4's
   batched pipeline.
 - Uses `#extension GL_OES_standard_derivatives : enable` for `fwidth`.
@@ -71,7 +86,13 @@ public/assets/fonts/       # Sample fonts for the dev app only (not shipped to n
 - **FONTS.md** — generating MSDF font atlases
 
 ## Gotchas / invariants
-- **Premultiplied alpha** — all shader output must be `vec4(rgb * a, a)`.
+- **Premultiplied alpha (shader output)** — all shader output must be
+  `vec4(rgb * a, a)`.
+- **Atlas upload (no premultiply)** — `MSDFFontFile` uploads the atlas itself
+  via `createTexture2D` + `addGLTexture` with `pma = false`. Phaser's default
+  image path premultiplies on upload, which would multiply an MTSDF atlas's
+  alpha SDF into RGB and corrupt it. `pma = false` is a no-op for plain MSDF
+  (alpha is 255 everywhere), so the single path serves both.
 - **LINEAR filtering** — MSDF relies on linear interpolation of the distance
   field; NEAREST breaks it. Phaser's default LINEAR is correct.
 - **V coordinates** — `MSDFFontParser` flips V based on the atlas `yOrigin`

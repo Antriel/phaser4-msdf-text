@@ -46,7 +46,13 @@ export type {
     DisplayCallbackData,
     DisplayCallbackTint,
     MSDFTextInstance,
+    MSDFOutlineOptions,
+    MSDFShadowOptions,
     CharacterData
 } from './MSDFText';
 export type { MSDFFontFileConfig } from './MSDFFontFile';
-export type { MSDFTextConfig } from './MSDFTextCreator';
+export type {
+    MSDFTextConfig,
+    MSDFTextOutlineConfig,
+    MSDFTextShadowConfig
+} from './MSDFTextCreator';
