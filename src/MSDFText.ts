@@ -137,6 +137,7 @@ export interface CharacterData {
     tint?: number;          // Per-character tint override
     data?: any;             // Custom user data
     charCode?: number;      // Character code (for callbacks)
+    line?: number;          // Line index (used by alignment)
 }
 
 /**
@@ -869,9 +870,13 @@ export const MSDFText = new Class({
             textToRender = this.wrapText(this._text, this._maxWidth);
         }
 
-        // Layout characters
+        // Layout characters.
+        // y = 0 is the top of the text block (matching BitmapText), so each
+        // line's baseline sits `baselineOffset` below its own top edge.
+        const baselineOffset = this.fontData.getBaselineOffset(this._fontSize);
         let cursorX = 0;
         let cursorY = 0;
+        let lineIndex = 0;
         let prevCharCode = 0;
 
         for (let i = 0; i < textToRender.length; i++) {
@@ -881,6 +886,7 @@ export const MSDFText = new Class({
             if (charCode === 10) { // '\n'
                 cursorX = 0;
                 cursorY += this.fontData.getLineHeight(this._fontSize) + this._lineSpacing;
+                lineIndex++;
                 prevCharCode = 0;
                 continue;
             }
@@ -905,9 +911,11 @@ export const MSDFText = new Class({
                 continue;
             }
 
-            // Calculate character position (using normalized offsets scaled by fontSize)
+            // Calculate character position (using normalized offsets scaled by
+            // fontSize). charY is measured from the top of the line:
+            // line top + baseline offset + the glyph's baseline-relative offset.
             const charX = cursorX + char.xOffset * this._fontSize;
-            const charY = cursorY + char.yOffset * this._fontSize;
+            const charY = cursorY + baselineOffset + char.yOffset * this._fontSize;
 
             // Calculate character size (using normalized dimensions scaled by fontSize)
             const charWidth = (char.normalizedWidth || (char.width / this.fontData.baseSize)) * this._fontSize;
@@ -930,6 +938,7 @@ export const MSDFText = new Class({
                 u1: char.u1,
                 v1: char.v0,   // Swap v0 and v1 to flip orientation
                 charCode: charCode,  // Store for callback access
+                line: lineIndex,     // Line index, used by applyAlignment
                 originalX: charX,    // Store original position
                 originalY: charY
             });
@@ -939,10 +948,7 @@ export const MSDFText = new Class({
             prevCharCode = charCode;
         }
 
-        // Apply alignment
-        this.applyAlignment(textToRender);
-
-        // Cache local bounds and refresh display origin so getBounds/origin work.
+        // Cache local bounds. measureLines also drives per-line alignment below.
         // Clear dirty BEFORE updateDisplayOrigin so the width/height getters
         // it reads don't re-enter rebuildText.
         const lineData = this.fontData.measureLines(
@@ -950,30 +956,43 @@ export const MSDFText = new Class({
         );
         this._width = lineData.totalWidth;
         this._height = lineData.totalHeight;
+
+        // Apply alignment now that line widths are known.
+        this.applyAlignment(lineData);
+
         this._dirty = false;
         this.updateDisplayOrigin();
     },
 
     /**
-     * Apply text alignment to character positions
+     * Apply text alignment to character positions.
+     *
+     * Matches BitmapText: the text block's left edge always stays at x = 0,
+     * and alignment only shifts each line *within* the block relative to the
+     * longest line. Use `originX` to position the block as a whole.
+     *
+     * @param lineData Per-line measurement from `MSDFFont.measureLines`.
      */
-    applyAlignment: function (textToRender: string) {
+    applyAlignment: function (lineData: { widths: number[]; totalWidth: number }) {
         if (this._align === 'left' || this._characters.length === 0) {
             return;
         }
 
-        const textWidth = this.fontData.measureText(textToRender, this._fontSize, this._letterSpacing).width;
-        let offset = 0;
+        const longest = lineData.totalWidth;
 
-        if (this._align === 'center') {
-            offset = -textWidth / 2;
-        } else if (this._align === 'right') {
-            offset = -textWidth;
-        }
-
-        // Offset all character positions
         for (const char of this._characters) {
+            const lineWidth = lineData.widths[char.line as number] || 0;
+            let offset = 0;
+
+            if (this._align === 'center') {
+                offset = (longest - lineWidth) / 2;
+            } else if (this._align === 'right') {
+                offset = longest - lineWidth;
+            }
+
+            // Keep originalX in sync so display callbacks see the aligned position.
             char.x += offset;
+            char.originalX = (char.originalX as number) + offset;
         }
     },
 

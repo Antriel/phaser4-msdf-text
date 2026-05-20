@@ -6,6 +6,7 @@ export class BatchedTestScene extends Phaser.Scene {
   private text2?: MSDFTextInstance;
   private text3?: MSDFTextInstance;
   private fpsText?: MSDFTextInstance;
+  private boundsGraphics?: Phaser.GameObjects.Graphics;
 
   constructor() {
     super({ key: "BatchedTestScene" });
@@ -73,6 +74,11 @@ export class BatchedTestScene extends Phaser.Scene {
 
     this.fpsText = this.add.msdfText(10, 10, "Roboto_Regular", "FPS: --", 20);
     this.fpsText.setColor("#ff0000");
+
+    // Debug overlay: drawn on top of the text each frame to visualize
+    // getBounds() for every MSDFText object.
+    this.boundsGraphics = this.add.graphics();
+    this.boundsGraphics.setDepth(1000);
   }
 
   update() {
@@ -80,6 +86,18 @@ export class BatchedTestScene extends Phaser.Scene {
     if (this.text2) {
       const hue = (this.time.now / 10) % 360;
       this.text2.setColor(Phaser.Display.Color.HSVToRGB(hue / 360, 1, 1));
+    }
+
+    // Debug: redraw getBounds() for each text every frame.
+    const g = this.boundsGraphics;
+    if (g) {
+      g.clear();
+      g.lineStyle(1, 0xff00ff, 1);
+      for (const text of [this.text1, this.text2, this.text3, this.fpsText]) {
+        if (!text) continue;
+        const b = text.getBounds();
+        g.strokeRect(b.x, b.y, b.width, b.height);
+      }
     }
   }
 }
