@@ -92,6 +92,23 @@ const text = this.make.msdfText({
 });
 ```
 
+## Examples
+
+Live, interactive demos — each link opens that example directly:
+
+| Example | What it shows |
+|---|---|
+| [Crisp at Any Scale](https://antriel.github.io/phaser4-msdf-text/#crisp) | MSDF vs. bitmap fonts under extreme zoom — no pixelation |
+| [Outline](https://antriel.github.io/phaser4-msdf-text/#outline) | Sharp and rounded shader outlines |
+| [Glow & Drop Shadow](https://antriel.github.io/phaser4-msdf-text/#glow) | Hard shadows, soft shadows, and glow |
+| [Animated Effects](https://antriel.github.io/phaser4-msdf-text/#effects) | Per-character display callbacks — wave, rainbow, jiggle |
+| [Text Layout](https://antriel.github.io/phaser4-msdf-text/#layout) | Alignment, word wrap, and line spacing |
+| [Performance](https://antriel.github.io/phaser4-msdf-text/#performance) | Draw-call count under a heavy text load |
+| [Game UI Showcase](https://antriel.github.io/phaser4-msdf-text/#gameui) | A mock game HUD — score counter, combo meter, damage numbers |
+| [RPG Loot Cards](https://antriel.github.io/phaser4-msdf-text/#loot) | Procedural item cards — mixed fonts, rarity-keyed outline & glow, crisp through every tilt |
+
+Each example's source is in [`examples/scenes/`](./examples/scenes).
+
 ## API
 
 ### Text properties
