@@ -45,12 +45,12 @@ interface Rarity {
 
 /** The classic loot ramp — index doubles as the "force rarity" control value. */
 const RARITIES: Rarity[] = [
-  { name: "Common", color: 0xb8c0cc, weight: 20, statCount: 2 },
-  { name: "Uncommon", color: 0x57d361, weight: 24, statCount: 3 },
-  { name: "Rare", color: 0x4d9bff, weight: 22, statCount: 3 },
-  { name: "Epic", color: 0xc44dff, weight: 18, statCount: 4 },
-  { name: "Legendary", color: 0xff9d2a, weight: 12, statCount: 5 },
-  { name: "Mythic", color: 0xff3b6b, weight: 4, statCount: 6 },
+  { name: "Common", color: 0xb8c0cc, weight: 10, statCount: 2 },
+  { name: "Uncommon", color: 0x57d361, weight: 10, statCount: 3 },
+  { name: "Rare", color: 0x4d9bff, weight: 10, statCount: 3 },
+  { name: "Epic", color: 0xc44dff, weight: 10, statCount: 4 },
+  { name: "Legendary", color: 0xff9d2a, weight: 10, statCount: 5 },
+  { name: "Mythic", color: 0xff3b6b, weight: 10, statCount: 6 },
 ];
 
 interface BaseType {
@@ -249,9 +249,8 @@ class LootCard {
     const top = -CARD_H / 2;
     this.drawPanel(color);
 
-    // Name — Anton, rarity colour, auto-shrunk to fit beside the gem.
+    // Name — Anton, rarity colour.
     this.nameText = this.text(0, top + 29, "Anton", item.name, 30, color).setOrigin(0.5);
-    fitWidth(this.nameText, CARD_W - 70);
 
     // Sub-line — rarity + item category, small caps.
     const sub = this.text(
@@ -314,6 +313,8 @@ class LootCard {
     );
 
     this.applyNameEffect(effects);
+    // Shrink after letter spacing.
+    fitWidth(this.nameText, CARD_W - 70);
   }
 
   /** Brief white flash on the name, settling to its rarity colour. */
@@ -339,6 +340,8 @@ class LootCard {
       const s = (Math.sin(time * 0.005) + 1) / 2;
       this.nameText.dropShadowSoftness = 5 + s * 6;
       this.nameText.dropShadowAlpha = 0.5 + s * 0.4;
+      this.nameText.dropShadowX = 2 + s * 2;
+      this.nameText.dropShadowY = 3 + s * 2;
     }
     // Affix power — two out-of-step sines give the glow an irregular flicker.
     if (this.powerText && this.powerText.hasDropShadow()) {
@@ -404,8 +407,15 @@ class LootCard {
     if (!effects) return;
 
     const tier = RARITIES.indexOf(this.item.rarity);
-    if (tier >= 1) name.setOutline(tier >= 4 ? 3.5 : 2.6, OUTLINE, 1, tier >= 4);
-    if (tier === 3) name.setDropShadow(0, 3, 0x000000, 0.6, 2);
+    if (tier >= 1)
+      name
+        .setOutline(tier >= 4 ? 3.5 : 2.6, OUTLINE, 1, tier >= 4)
+        .setLetterSpacing(tier >= 4 ? 2 : 1);
+    if (tier === 3) {
+      name.setDropShadow(0, 3, 0x000000, 0.8, 4);
+      name.dropShadowX = 4;
+      name.dropShadowY = 4;
+    }
     if (tier >= 4) {
       // Legendary & mythic: a warm glow, pulsed each frame in update().
       name.setDropShadow(0, 0, this.item.rarity.color, 0.8, 8);
