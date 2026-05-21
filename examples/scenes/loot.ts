@@ -21,6 +21,13 @@ function packABGR(r: number, g: number, b: number): number {
   return ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0;
 }
 
+/**
+ * Scratch RGB target reused by the flame display callback. `HSVToRGB` mints a
+ * fresh object when given no `out`, which — at four corners per glyph per frame
+ * — churns the GC hard; this hands it a buffer to write into instead.
+ */
+const emberRGB: Phaser.Types.Display.ColorObject = { r: 0, g: 0, b: 0, a: 255, color: 0 };
+
 /** Linear blend between two `0xRRGGBB` colours. */
 function lerpColor(from: number, to: number, t: number): number {
   const r = Math.round(((from >> 16) & 0xff) + (((to >> 16) & 0xff) - ((from >> 16) & 0xff)) * t);
@@ -219,6 +226,17 @@ const EMBER_GLOW = 0xff5a1e; // affix-power flame glow
 const MYTHIC_TINT = packABGR(0xff, 0x3b, 0x6b);
 const SHIMMER_TINT = packABGR(0xff, 0xe6, 0x9c);
 
+// Card text is sorted by font before it renders, so same-font glyphs sit
+// consecutively and the MSDF batch handler keeps one draw call across them
+// instead of switching the atlas texture per text object. The Graphics panel
+// keeps the default depth 0, so it stays behind every text line.
+const FONT_DEPTH: Record<string, number> = {
+  Anton: 1,
+  Inter: 2,
+  JetBrainsMono: 3,
+  RobotoCondensed: 4,
+};
+
 /**
  * One loot card: a Phaser container holding a Graphics panel and a stack of
  * MSDFText objects. `setItem` tears the text down and rebuilds it for a new
@@ -315,6 +333,12 @@ class LootCard {
     this.applyNameEffect(effects);
     // Shrink after letter spacing.
     fitWidth(this.nameText, CARD_W - 70);
+
+    // Group children by font so the MSDF batch survives across text objects
+    // instead of breaking on every atlas switch — the stat band especially,
+    // which is built as alternating Inter labels and JetBrainsMono values. The
+    // sort is stable, so rows keep their top-to-bottom order within each font.
+    this.container.sort("depth");
   }
 
   /** Brief white flash on the name, settling to its rarity colour. */
@@ -365,6 +389,7 @@ class LootCard {
     color: number,
   ): MSDFTextInstance {
     const t = this.scene.add.msdfText(x, y, font, content, size).setColor(color);
+    t.setDepth(FONT_DEPTH[font]); // batch key — see container.sort in setItem
     this.parts.push(t);
     this.container.add(t);
     return t;
@@ -450,8 +475,8 @@ class LootCard {
       const wave = Math.sin(d.index * 0.55 - t * 4.5 + phase);
       const hue = 0.015 + warm * 0.09 + 0.02 * wave;
       const value = Math.min(1, (0.68 + warm * 0.32) * flicker);
-      const c = Phaser.Display.Color.HSVToRGB(hue, 1, value) as Phaser.Types.Display.ColorObject;
-      return packABGR(c.r, c.g, c.b);
+      Phaser.Display.Color.HSVToRGB(hue, 1, value, emberRGB);
+      return packABGR(emberRGB.r, emberRGB.g, emberRGB.b);
     };
     d.tint.topLeft = ember(0, 0);
     d.tint.topRight = ember(0, 0.8);
