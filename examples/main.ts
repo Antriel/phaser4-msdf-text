@@ -12,6 +12,7 @@ import { EffectsScene } from "./scenes/effects";
 import { LayoutScene } from "./scenes/layout";
 import { PerformanceScene } from "./scenes/performance";
 import { GameUIScene } from "./scenes/gameui";
+import { LootScene } from "./scenes/loot";
 
 interface Example {
   key: string;
@@ -28,6 +29,7 @@ const examples: Example[] = [
   { key: "layout", title: "Text Layout", scene: LayoutScene },
   { key: "performance", title: "Performance", scene: PerformanceScene },
   { key: "gameui", title: "Game UI Showcase", scene: GameUIScene },
+  { key: "loot", title: "RPG Loot Cards", scene: LootScene },
 ];
 
 // ── DOM refs ──────────────────────────────────────────────────
