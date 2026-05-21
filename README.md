@@ -247,7 +247,7 @@ The plugin throws a clear error during `init()` if the extension is missing.
 
 ## License
 
-MIT (project planned). Inspired by the MIT-licensed
+MIT. Inspired by the MIT-licensed
 [Ceramic Engine](https://github.com/ceramic-engine/ceramic) MSDF
 implementation.
 

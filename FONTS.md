@@ -12,6 +12,7 @@ your font, choose the **MSDF** distance-field mode, and export using the
 **MSDF Atlas JSON** option (not the AngelCode/BMFont export — that schema is
 different and won't load). You get a `.png` + `.json` pair with no toolchain to
 install.
+Note that in my testing `snowb` can have bad exports for some fonts.
 
 ## Command line: msdf-atlas-gen
 
@@ -27,7 +28,6 @@ msdf-atlas-gen \
   -pxrange 4 \
   -outerpxpadding 2 \
   -potr \
-  -yorigin top \
   -imageout MyFont.png \
   -json MyFont.json
 ```
@@ -48,7 +48,6 @@ this.load.msdfFont('myfont', 'assets/fonts/MyFont.png', 'assets/fonts/MyFont.jso
 | `-pxrange` | 4 | Distance-field range (2–8). Read from the JSON at runtime; outline width scales with it |
 | `-outerpxpadding` | 2 | Gutter between glyphs; prevents neighbour-glyph bleed under LINEAR sampling. Raise to 4+ for heavy stretching |
 | `-potr` | — | Power-of-two atlas dimensions |
-| `-yorigin top` | — | Y-axis origin. Either `top` or `bottom` works — the loader handles both |
 | `-imageout` | — | Atlas PNG output |
 | `-json` | — | Layout/metrics JSON output |
 
@@ -71,7 +70,6 @@ msdf-atlas-gen \
   -pxrange 8 \
   -outerpxpadding 2 \
   -potr \
-  -yorigin top \
   -imageout MyFont.png \
   -json MyFont.json
 ```
@@ -96,3 +94,6 @@ LINEAR sampling to stay inside a glyph's slot.
 **Outlines won't get thicker** — shader outlines saturate past roughly
 `distanceRange / 2`. Regenerate the atlas with a larger `-pxrange` rather than
 pushing the runtime outline width higher.
+
+**Missing kerning data** — some fonts store kerning data in GPOS, which
+`msdf-atlas-gen` does not read.
