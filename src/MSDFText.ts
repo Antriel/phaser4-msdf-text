@@ -83,7 +83,18 @@ export interface DisplayCallbackData {
     y: number;             // Character Y position (can be modified)
     scale: number;         // Character scale (can be modified)
     rotation: number;      // Character rotation in radians (can be modified)
-    tint: DisplayCallbackTint;  // Per-corner tint values (can be modified)
+    /**
+     * Per-corner tint, each packed `0xAARRGGBB` (the format Phaser's
+     * `getTintAppendFloatAlpha` produces). Assign `0xRRGGBB` colours back — the
+     * renderer re-applies the object's per-corner alpha itself.
+     */
+    tint: DisplayCallbackTint;
+    /**
+     * `0xRRGGBB` shorthand that recolours all four corners at once. Reset to `0`
+     * before every call; leave it `0` to use `tint` instead. As in Phaser, a
+     * literal black `0x000000` reads as "unset" — use `tint` for solid black.
+     */
+    color: number;
     data: any;             // Custom user data
 }
 
@@ -373,6 +384,7 @@ export const MSDFText: MSDFTextStatic = new Class({
                 bottomLeft: 0xffffffff,
                 bottomRight: 0xffffffff
             },
+            color: 0,
             data: undefined
         };
 

@@ -16,11 +16,6 @@ import type { MSDFTextInstance, DisplayCallbackData } from "../../src";
 const between = Phaser.Math.Between;
 const pick = <T>(a: readonly T[]): T => a[between(0, a.length - 1)];
 
-/** Pack 0-255 RGB channels into the ABGR u32 a display-callback tint expects. */
-function packABGR(r: number, g: number, b: number): number {
-  return ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0;
-}
-
 /**
  * Scratch RGB target reused by the flame display callback. `HSVToRGB` mints a
  * fresh object when given no `out`, which — at four corners per glyph per frame
@@ -223,8 +218,8 @@ const EMBER_GLOW = 0xff5a1e; // affix-power flame glow
 // Mythic shimmer: base name colour is white, so the per-glyph tint paints the
 // red letterform and a gold band sweeping along it (a multiply tint can darken
 // but not brighten, so the bright state has to be the base).
-const MYTHIC_TINT = packABGR(0xff, 0x3b, 0x6b);
-const SHIMMER_TINT = packABGR(0xff, 0xe6, 0x9c);
+const MYTHIC_TINT = 0xff3b6b;
+const SHIMMER_TINT = 0xffe69c;
 
 // Card text is sorted by font before it renders, so same-font glyphs sit
 // consecutively and the MSDF batch handler keeps one draw call across them
@@ -455,8 +450,8 @@ class LootCard {
   /** Mythic display callback — paints the name red with a travelling highlight. */
   private shimmer = (d: DisplayCallbackData): DisplayCallbackData => {
     const sweep = Math.sin(d.index * 0.55 - (this.scene.time.now / 1000) * 3.5);
-    const c = sweep > 0.6 ? SHIMMER_TINT : MYTHIC_TINT;
-    d.tint.topLeft = d.tint.topRight = d.tint.bottomLeft = d.tint.bottomRight = c;
+    // `color` is the 0xRRGGBB shorthand for all four corners.
+    d.color = sweep > 0.6 ? SHIMMER_TINT : MYTHIC_TINT;
     return d;
   };
 
@@ -476,7 +471,7 @@ class LootCard {
       const hue = 0.015 + warm * 0.09 + 0.02 * wave;
       const value = Math.min(1, (0.68 + warm * 0.32) * flicker);
       Phaser.Display.Color.HSVToRGB(hue, 1, value, emberRGB);
-      return packABGR(emberRGB.r, emberRGB.g, emberRGB.b);
+      return Phaser.Display.Color.GetColor(emberRGB.r, emberRGB.g, emberRGB.b);
     };
     d.tint.topLeft = ember(0, 0);
     d.tint.topRight = ember(0, 0.8);

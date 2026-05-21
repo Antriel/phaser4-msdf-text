@@ -3,11 +3,6 @@ import type { Pane } from "tweakpane";
 import { ExampleScene } from "../harness/ExampleScene";
 import type { MSDFTextInstance, DisplayCallbackData } from "../../src";
 
-/** Pack 0-255 RGB channels into the ABGR u32 a display callback tint expects. */
-function packABGR(r: number, g: number, b: number): number {
-  return ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0;
-}
-
 const WORD = "EFFECTS";
 
 const EFFECT_OPTIONS = {
@@ -64,8 +59,8 @@ export class EffectsScene extends ExampleScene {
         const hueBot = (hue + 0.18) % 1;
         const ct = Phaser.Display.Color.HSVToRGB(hue, 1, 1) as Phaser.Types.Display.ColorObject;
         const cb = Phaser.Display.Color.HSVToRGB(hueBot, 1, 1) as Phaser.Types.Display.ColorObject;
-        const top = packABGR(ct.r, ct.g, ct.b);
-        const bot = packABGR(cb.r, cb.g, cb.b);
+        const top = Phaser.Display.Color.GetColor(ct.r, ct.g, ct.b);
+        const bot = Phaser.Display.Color.GetColor(cb.r, cb.g, cb.b);
         d.tint.topLeft = d.tint.topRight = top;
         d.tint.bottomLeft = d.tint.bottomRight = bot;
         break;
@@ -94,8 +89,8 @@ export class EffectsScene extends ExampleScene {
       }
 
       case "gradient":
-        d.tint.topLeft = d.tint.topRight = packABGR(0xff, 0x5d, 0xa8);
-        d.tint.bottomLeft = d.tint.bottomRight = packABGR(0x5d, 0xb8, 0xff);
+        d.tint.topLeft = d.tint.topRight = 0xff5da8;
+        d.tint.bottomLeft = d.tint.bottomRight = 0x5db8ff;
         break;
     }
 

@@ -6,8 +6,14 @@
  * pass first (if enabled), then main text pass on top.
  *
  * Per-corner tint comes from `Components.Tint` (`tintTopLeft`, etc.) multiplied
- * by `_color` and per-corner alpha (`_alphaTL` etc.). Only `tintMode === MULTIPLY`
- * is honored — the MSDF shader doesn't implement FILL/ADD/SCREEN/OVERLAY/HARD_LIGHT.
+ * by the base colour `_color` and per-corner alpha (`_alphaTL` etc.). The MSDF
+ * shader only multiplies, so `tintFill` / non-multiply tint modes are ignored.
+ *
+ * Display callbacks see tint the Phaser-idiomatic way: each `tint` corner is a
+ * `0xAARRGGBB` value (as `Utils.getTintAppendFloatAlpha` produces) and `color`
+ * is a `0xRRGGBB` shorthand for all four corners. The renderer repacks whatever
+ * the callback returns into the batch's ABGR layout and re-applies the object's
+ * per-corner alpha, so a callback can't override alpha through `tint`.
  */
 
 import * as Phaser from "phaser";
@@ -24,6 +30,11 @@ const tempTintData = {
     tintBottomRight: 0xffffffff
 };
 
+// Reusable per-character tint buffers for the display-callback paths, so a
+// callback can recolour a glyph without allocating four corners each frame.
+const callbackTintData = { tintTopLeft: 0, tintTopRight: 0, tintBottomLeft: 0, tintBottomRight: 0 };
+const shadowCallbackTintData = { tintTopLeft: 0, tintTopRight: 0, tintBottomLeft: 0, tintBottomRight: 0 };
+
 const tempCharData = {
     x: 0,
     y: 0,
@@ -38,23 +49,37 @@ const tempCharData = {
 const tempCharMatrix = new TransformMatrix();
 
 /**
- * Pack a corner: 0xRRGGBB tint × float color (0-1) × float alpha (0-1) → ABGR u32.
+ * Pack an effective `0xRRGGBB` colour and a 0-1 alpha into the ABGR u32 the MSDF
+ * batch buffer expects — red in the low byte, so the shader samples `.rgb`
+ * directly. (Phaser's own batches pack `0xAARRGGBB` and swizzle `.bgr` in the
+ * shader instead; same result, the work is split differently.)
  */
-function packCornerTint(
-    cornerTint: number,
-    colorR: number, colorG: number, colorB: number, colorA: number,
-    cornerAlpha: number
-): number {
-    const tintR = ((cornerTint >> 16) & 0xff) / 255;
-    const tintG = ((cornerTint >> 8) & 0xff) / 255;
-    const tintB = (cornerTint & 0xff) / 255;
-
-    const r = Math.floor(colorR * tintR * 255);
-    const g = Math.floor(colorG * tintG * 255);
-    const b = Math.floor(colorB * tintB * 255);
-    const a = Math.floor(colorA * cornerAlpha * 255);
-
+function packBatchTint(rgb: number, alpha: number): number {
+    const r = (rgb >> 16) & 0xff;
+    const g = (rgb >> 8) & 0xff;
+    const b = rgb & 0xff;
+    const a = Math.floor(alpha * 255);
     return ((a << 24) | (b << 16) | (g << 8) | r) >>> 0;
+}
+
+/**
+ * Multiply a `0xRRGGBB` corner tint by the base text colour floats (0-1),
+ * yielding the effective `0xRRGGBB` for that corner.
+ */
+function multiplyTint(cornerTint: number, colorR: number, colorG: number, colorB: number): number {
+    const r = Math.floor(((cornerTint >> 16) & 0xff) * colorR);
+    const g = Math.floor(((cornerTint >> 8) & 0xff) * colorG);
+    const b = Math.floor((cornerTint & 0xff) * colorB);
+    return (r << 16) | (g << 8) | b;
+}
+
+/**
+ * Append a 0-1 alpha as the high byte of a `0xRRGGBB` colour, producing the
+ * `0xAARRGGBB` value display callbacks see — mirrors Phaser's
+ * `Utils.getTintAppendFloatAlpha`, so a BitmapText callback ports unchanged.
+ */
+function appendAlpha(rgb: number, alpha: number): number {
+    return (((Math.floor(alpha * 255) & 0xff) << 24) | rgb) >>> 0;
 }
 
 function MSDFTextWebGLRenderer(
@@ -124,23 +149,30 @@ function MSDFTextWebGLRenderer(
         batchHandler.setOutline(0, 0, 0, 0, 0, 0);
     }
 
-    // Combine per-corner tint (Components.Tint), per-corner alpha (Components.Alpha),
-    // and the base text color (_color) into four packed ABGR u32 corner values.
+    // Effective per-corner colour for the main pass: each Tint-component corner
+    // (0xRRGGBB) times the base text colour (`_color`). The effective per-corner
+    // alpha is kept separate so a display callback can recolour a glyph without
+    // having to know — or preserve — the object's alpha.
     const textColor = src._color;
     const cR = textColor.r;
     const cG = textColor.g;
     const cB = textColor.b;
     const cA = textColor.a;
 
-    const tintTL = packCornerTint(src.tintTopLeft,     cR, cG, cB, cA, src._alphaTL);
-    const tintTR = packCornerTint(src.tintTopRight,    cR, cG, cB, cA, src._alphaTR);
-    const tintBL = packCornerTint(src.tintBottomLeft,  cR, cG, cB, cA, src._alphaBL);
-    const tintBR = packCornerTint(src.tintBottomRight, cR, cG, cB, cA, src._alphaBR);
+    const rgbTL = multiplyTint(src.tintTopLeft, cR, cG, cB);
+    const rgbTR = multiplyTint(src.tintTopRight, cR, cG, cB);
+    const rgbBL = multiplyTint(src.tintBottomLeft, cR, cG, cB);
+    const rgbBR = multiplyTint(src.tintBottomRight, cR, cG, cB);
 
-    tempTintData.tintTopLeft = tintTL;
-    tempTintData.tintTopRight = tintTR;
-    tempTintData.tintBottomLeft = tintBL;
-    tempTintData.tintBottomRight = tintBR;
+    const alphaTL = cA * src._alphaTL;
+    const alphaTR = cA * src._alphaTR;
+    const alphaBL = cA * src._alphaBL;
+    const alphaBR = cA * src._alphaBR;
+
+    tempTintData.tintTopLeft = packBatchTint(rgbTL, alphaTL);
+    tempTintData.tintTopRight = packBatchTint(rgbTR, alphaTR);
+    tempTintData.tintBottomLeft = packBatchTint(rgbBL, alphaBL);
+    tempTintData.tintBottomRight = packBatchTint(rgbBR, alphaBR);
 
     const hasCallback = src.displayCallback && typeof src.displayCallback === 'function';
 
@@ -149,9 +181,6 @@ function MSDFTextWebGLRenderer(
         const dsx = src.dropShadowX;
         const dsy = src.dropShadowY;
         const sColor = src.dropShadowColor;
-        const sR = ((sColor >> 16) & 0xff) / 255;
-        const sG = ((sColor >> 8) & 0xff) / 255;
-        const sB = (sColor & 0xff) / 255;
         const shadowAlpha = src.dropShadowAlpha;
 
         const shadowOffsetX = originOffsetX + dsx;
@@ -164,13 +193,18 @@ function MSDFTextWebGLRenderer(
         }
         batchHandler.setShadowSoftness(shadowSoftness);
 
-        // Shadow tint is solid; modulate by each corner's alpha so it follows
-        // per-corner alpha on the text.
+        // Shadow tint is a solid colour; the effective per-corner alpha follows
+        // the text's per-corner alpha so the shadow fades with it.
+        const shadowAlphaTL = shadowAlpha * src._alphaTL;
+        const shadowAlphaTR = shadowAlpha * src._alphaTR;
+        const shadowAlphaBL = shadowAlpha * src._alphaBL;
+        const shadowAlphaBR = shadowAlpha * src._alphaBR;
+
         const shadowTintData = {
-            tintTopLeft:     packCornerTint(0xffffff, sR, sG, sB, shadowAlpha, src._alphaTL),
-            tintTopRight:    packCornerTint(0xffffff, sR, sG, sB, shadowAlpha, src._alphaTR),
-            tintBottomLeft:  packCornerTint(0xffffff, sR, sG, sB, shadowAlpha, src._alphaBL),
-            tintBottomRight: packCornerTint(0xffffff, sR, sG, sB, shadowAlpha, src._alphaBR)
+            tintTopLeft:     packBatchTint(sColor, shadowAlphaTL),
+            tintTopRight:    packBatchTint(sColor, shadowAlphaTR),
+            tintBottomLeft:  packBatchTint(sColor, shadowAlphaBL),
+            tintBottomRight: packBatchTint(sColor, shadowAlphaBR)
         };
 
         for (let i = 0; i < characterCount; i++) {
@@ -198,10 +232,11 @@ function MSDFTextWebGLRenderer(
                 callbackData.rotation = char.rotation || 0;
                 callbackData.data = char.data;
 
-                callbackData.tint.topLeft = shadowTintData.tintTopLeft;
-                callbackData.tint.topRight = shadowTintData.tintTopRight;
-                callbackData.tint.bottomLeft = shadowTintData.tintBottomLeft;
-                callbackData.tint.bottomRight = shadowTintData.tintBottomRight;
+                callbackData.color = 0;
+                callbackData.tint.topLeft = appendAlpha(sColor, shadowAlphaTL);
+                callbackData.tint.topRight = appendAlpha(sColor, shadowAlphaTR);
+                callbackData.tint.bottomLeft = appendAlpha(sColor, shadowAlphaBL);
+                callbackData.tint.bottomRight = appendAlpha(sColor, shadowAlphaBR);
 
                 const result = src.displayCallback(callbackData);
 
@@ -249,19 +284,21 @@ function MSDFTextWebGLRenderer(
                     shadowOffY = originOffsetY;
                 }
 
-                const tintChanged = result.tint.topLeft !== shadowTintData.tintTopLeft ||
-                    result.tint.topRight !== shadowTintData.tintTopRight ||
-                    result.tint.bottomLeft !== shadowTintData.tintBottomLeft ||
-                    result.tint.bottomRight !== shadowTintData.tintBottomRight;
-
-                if (tintChanged) {
-                    shadowTint = {
-                        tintTopLeft: result.tint.topLeft,
-                        tintTopRight: result.tint.topRight,
-                        tintBottomLeft: result.tint.bottomLeft,
-                        tintBottomRight: result.tint.bottomRight
-                    };
+                // Repack whatever the callback left in `color` / `tint` into the
+                // batch's ABGR layout, re-applying each corner's shadow alpha.
+                if (result.color) {
+                    const rgb = result.color & 0xffffff;
+                    shadowCallbackTintData.tintTopLeft = packBatchTint(rgb, shadowAlphaTL);
+                    shadowCallbackTintData.tintTopRight = packBatchTint(rgb, shadowAlphaTR);
+                    shadowCallbackTintData.tintBottomLeft = packBatchTint(rgb, shadowAlphaBL);
+                    shadowCallbackTintData.tintBottomRight = packBatchTint(rgb, shadowAlphaBR);
+                } else {
+                    shadowCallbackTintData.tintTopLeft = packBatchTint(result.tint.topLeft & 0xffffff, shadowAlphaTL);
+                    shadowCallbackTintData.tintTopRight = packBatchTint(result.tint.topRight & 0xffffff, shadowAlphaTR);
+                    shadowCallbackTintData.tintBottomLeft = packBatchTint(result.tint.bottomLeft & 0xffffff, shadowAlphaBL);
+                    shadowCallbackTintData.tintBottomRight = packBatchTint(result.tint.bottomRight & 0xffffff, shadowAlphaBR);
                 }
+                shadowTint = shadowCallbackTintData;
             }
 
             BatchMSDFChar(drawingContext, batchHandler, texture, shadowCharData, shadowOffX, shadowOffY, shadowMatrix, shadowTint);
@@ -298,10 +335,11 @@ function MSDFTextWebGLRenderer(
             callbackData.rotation = char.rotation || 0;
             callbackData.data = char.data;
 
-            callbackData.tint.topLeft = tintTL;
-            callbackData.tint.topRight = tintTR;
-            callbackData.tint.bottomLeft = tintBL;
-            callbackData.tint.bottomRight = tintBR;
+            callbackData.color = 0;
+            callbackData.tint.topLeft = appendAlpha(rgbTL, alphaTL);
+            callbackData.tint.topRight = appendAlpha(rgbTR, alphaTR);
+            callbackData.tint.bottomLeft = appendAlpha(rgbBL, alphaBL);
+            callbackData.tint.bottomRight = appendAlpha(rgbBR, alphaBR);
 
             const result = src.displayCallback(callbackData);
 
@@ -348,20 +386,21 @@ function MSDFTextWebGLRenderer(
                     charData = tempCharData;
                 }
 
-                const tintChanged =
-                    result.tint.topLeft !== tintTL ||
-                    result.tint.topRight !== tintTR ||
-                    result.tint.bottomLeft !== tintBL ||
-                    result.tint.bottomRight !== tintBR;
-
-                if (tintChanged) {
-                    charTint = {
-                        tintTopLeft: result.tint.topLeft,
-                        tintTopRight: result.tint.topRight,
-                        tintBottomLeft: result.tint.bottomLeft,
-                        tintBottomRight: result.tint.bottomRight
-                    };
+                // Repack whatever the callback left in `color` / `tint` into the
+                // batch's ABGR layout, re-applying each corner's alpha.
+                if (result.color) {
+                    const rgb = result.color & 0xffffff;
+                    callbackTintData.tintTopLeft = packBatchTint(rgb, alphaTL);
+                    callbackTintData.tintTopRight = packBatchTint(rgb, alphaTR);
+                    callbackTintData.tintBottomLeft = packBatchTint(rgb, alphaBL);
+                    callbackTintData.tintBottomRight = packBatchTint(rgb, alphaBR);
+                } else {
+                    callbackTintData.tintTopLeft = packBatchTint(result.tint.topLeft & 0xffffff, alphaTL);
+                    callbackTintData.tintTopRight = packBatchTint(result.tint.topRight & 0xffffff, alphaTR);
+                    callbackTintData.tintBottomLeft = packBatchTint(result.tint.bottomLeft & 0xffffff, alphaBL);
+                    callbackTintData.tintBottomRight = packBatchTint(result.tint.bottomRight & 0xffffff, alphaBR);
                 }
+                charTint = callbackTintData;
             }
         }
 

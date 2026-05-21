@@ -188,10 +188,20 @@ text.setDisplayCallback((data) => {
 text.clearDisplayCallback();
 ```
 
-The callback receives mutable position, scale, rotation, and per-corner tint
-for each character every frame. Reuses a single shared object — don't hold a
-reference to `data` between calls.
+The callback receives mutable position, scale, rotation, and tint for each
+character every frame, and must return the (modified) object.
 
+Tinting follows Phaser's `BitmapText` display-callback convention:
+
+- `data.color` — a `0xRRGGBB` shorthand that recolours all four corners. It
+  resets to `0` before every call; assign a colour to use it. As in Phaser, a
+  literal black `0x000000` reads as "unset" — use `data.tint` for solid black.
+- `data.tint` — `{ topLeft, topRight, bottomLeft, bottomRight }` for a
+  per-corner gradient. Each corner is handed in as a packed `0xAARRGGBB` value;
+  assign plain `0xRRGGBB` colours back. The object's per-corner alpha is
+  re-applied by the renderer, so `tint` can't override alpha.
+
+`data` is a single shared object — don't hold a reference to it between calls.
 Shadows automatically follow callback transforms.
 
 ## Loading details
