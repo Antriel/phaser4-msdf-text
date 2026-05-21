@@ -1,6 +1,11 @@
-# phaser4-msdf-font
+# phaser4-msdf-text
+
+[![npm](https://img.shields.io/npm/v/phaser4-msdf-text)](https://www.npmjs.com/package/phaser4-msdf-text)
+[![license](https://img.shields.io/npm/l/phaser4-msdf-text)](./LICENSE)
 
 MSDF (Multi-channel Signed Distance Field) font rendering for [Phaser 4](https://phaser.io).
+
+[**Live examples →**](https://antriel.github.io/phaser4-msdf-text/)
 
 - Crisp text at any scale (no pixelation when zooming, single texture per font)
 - Batched rendering — 1–2 draw calls per text object, regardless of length
@@ -12,7 +17,7 @@ MSDF (Multi-channel Signed Distance Field) font rendering for [Phaser 4](https:/
 ## Install
 
 ```bash
-npm install phaser4-msdf-font
+npm install phaser4-msdf-text
 ```
 
 Phaser 4 is a peer dependency — install it alongside if you haven't already:
@@ -29,7 +34,7 @@ Register the global plugin in your Phaser game config. The plugin wires up the
 
 ```ts
 import * as Phaser from 'phaser';
-import { MSDFPlugin } from 'phaser4-msdf-font';
+import { MSDFPlugin } from 'phaser4-msdf-text';
 
 new Phaser.Game({
     type: Phaser.WEBGL,

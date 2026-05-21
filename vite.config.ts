@@ -37,6 +37,9 @@ export default defineConfig(({ command, mode }) => {
   if (command === 'serve' || mode === 'examples') {
     return {
       define: globalShim,
+      // Dev server runs at the root; the deployed examples build lives under
+      // the GitHub Pages project path (https://<user>.github.io/<repo>/).
+      base: command === 'build' ? '/phaser4-msdf-text/' : '/',
       resolve: {
         alias: { ...srcAliases, ...phaserDebugAlias }
       },
@@ -66,8 +69,8 @@ export default defineConfig(({ command, mode }) => {
       copyPublicDir: false,
       lib: {
         entry: path.resolve(__dirname, 'src/index.ts'),
-        name: 'Phaser4MSDFFont',
-        fileName: (format) => `phaser4-msdf-font.${format === 'es' ? 'js' : 'cjs'}`,
+        name: 'Phaser4MSDFText',
+        fileName: (format) => `phaser4-msdf-text.${format === 'es' ? 'js' : 'cjs'}`,
         formats: ['es', 'cjs']
       },
       rollupOptions: {

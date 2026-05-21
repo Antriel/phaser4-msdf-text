@@ -5,7 +5,7 @@
  * Recommended registration via game config — no separate `renderNodes` entry
  * needed; the plugin wires it up automatically:
  *
- *   import { MSDFPlugin } from 'phaser4-msdf-font';
+ *   import { MSDFPlugin } from 'phaser4-msdf-text';
  *
  *   new Phaser.Game({
  *       type: Phaser.WEBGL,

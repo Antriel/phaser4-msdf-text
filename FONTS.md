@@ -1,6 +1,6 @@
 # Generating MSDF Fonts
 
-`phaser4-msdf-font` loads a `.png` atlas plus a `.json` layout file in
+`phaser4-msdf-text` loads a `.png` atlas plus a `.json` layout file in
 [`msdf-atlas-gen`](https://github.com/Chlumsky/msdf-atlas-gen) format. You can
 produce that pair either online with SnowB or from the command line with
 `msdf-atlas-gen` itself.

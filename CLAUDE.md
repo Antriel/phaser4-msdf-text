@@ -4,7 +4,7 @@
 MSDF (Multi-channel Signed Distance Field) font rendering plugin for the
 Phaser 4 game engine. MSDF fonts stay crisp at any scale without pixelation,
 from a single texture per font. Published as the npm package
-`phaser4-msdf-font`.
+`phaser4-msdf-text`.
 
 ## Technology stack
 - **Engine**: Phaser 4 (TypeScript), WebGL renderer

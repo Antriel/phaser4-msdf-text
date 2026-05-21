@@ -1,16 +1,16 @@
 {
-  "name": "phaser4-msdf-font",
+  "name": "phaser4-msdf-text",
   "version": "0.1.0",
   "description": "MSDF (Multi-channel Signed Distance Field) font rendering plugin for Phaser 4",
   "type": "module",
-  "main": "./dist/phaser4-msdf-font.cjs",
-  "module": "./dist/phaser4-msdf-font.js",
+  "main": "./dist/phaser4-msdf-text.cjs",
+  "module": "./dist/phaser4-msdf-text.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/phaser4-msdf-font.js",
-      "require": "./dist/phaser4-msdf-font.cjs"
+      "import": "./dist/phaser4-msdf-text.js",
+      "require": "./dist/phaser4-msdf-text.cjs"
     }
   },
   "files": [
@@ -20,8 +20,8 @@
     "FONTS.md"
   ],
   "sideEffects": [
-    "./dist/phaser4-msdf-font.js",
-    "./dist/phaser4-msdf-font.cjs",
+    "./dist/phaser4-msdf-text.js",
+    "./dist/phaser4-msdf-text.cjs",
     "./src/index.ts",
     "./src/MSDFTextFactory.ts",
     "./src/MSDFTextCreator.ts",
@@ -31,7 +31,8 @@
     "dev": "vite",
     "build": "vite build && tsc -p tsconfig.build.json",
     "build:examples": "vite build --mode examples",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "phaser",
@@ -46,6 +47,14 @@
   ],
   "author": "Peter Achberger",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Antriel/phaser4-msdf-text.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Antriel/phaser4-msdf-text/issues"
+  },
+  "homepage": "https://antriel.github.io/phaser4-msdf-text/",
   "peerDependencies": {
     "phaser": "^4.1.0"
   },

@@ -35,7 +35,7 @@ export class CrispScene extends ExampleScene {
     this.msdf = this.add
       .msdfText(SAMPLE_X, ROW_Y[0], this.params.font, this.params.word, this.params.fontSize)
       .setOrigin(0.5);
-    this.rowLabel(ROW_Y[0], "MSDF", "phaser4-msdf-font · always crisp", "#4ade80");
+    this.rowLabel(ROW_Y[0], "MSDF", "phaser4-msdf-text · always crisp", "#4ade80");
 
     this.bitmap = this.add
       .bitmapText(SAMPLE_X, ROW_Y[1], fontByKey(this.params.font).bitmapKey, this.params.word, this.params.fontSize)

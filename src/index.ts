@@ -6,7 +6,7 @@
  *
  * Usage (recommended, via game config):
  *
- *   import { MSDFPlugin } from 'phaser4-msdf-font';
+ *   import { MSDFPlugin } from 'phaser4-msdf-text';
  *
  *   new Phaser.Game({
  *       type: Phaser.WEBGL,
