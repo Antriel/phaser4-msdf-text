@@ -44,7 +44,7 @@ const SimpleFragmentShader = [
     'uniform float uOutlineWidth;',
     'uniform vec4 uOutlineColor;',
     'uniform float uOutlineRounded;',  // 0 = sharp outline, 1 = rounded (true SDF).
-    'uniform float uShadowSoftness;',  // > 0 = soft shadow pass; screen pixels of blur.
+    'uniform float uShadowSoftness;',  // > 0 = soft shadow pass; distance-field units of blur.
     '',
     'varying vec2 outTexCoord;',
     'varying vec4 outTint;',
@@ -74,10 +74,12 @@ const SimpleFragmentShader = [
     '',
     '    if (uShadowSoftness > 0.0)',
     '    {',
-    '        // Soft shadow / glow: spread the true-SDF edge over uShadowSoftness',
-    '        // screen pixels, capped at what the distance field can represent.',
-    '        float spread = clamp(uShadowSoftness, 1.0, pxRange);',
-    '        float alpha = clamp(pxRange * (tsdf - 0.5) / spread + 0.5, 0.0, 1.0);',
+    '        // Soft shadow / glow: spread the true-SDF edge by uShadowSoftness',
+    '        // distance-field units, so the blur scales with the text just like',
+    '        // the outline does. The 1-screen-pixel floor keeps the edge',
+    '        // anti-aliased when the text is very small.',
+    '        float soft = max(uShadowSoftness, uPxRange / pxRange);',
+    '        float alpha = clamp(uPxRange * (tsdf - 0.5) / soft + 0.5, 0.0, 1.0);',
     '        float a = alpha * outTint.a;',
     '        gl_FragColor = vec4(outTint.rgb * a, a);',
     '    }',

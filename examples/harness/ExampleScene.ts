@@ -34,6 +34,30 @@ export abstract class ExampleScene extends Phaser.Scene {
     /* overridden by subclasses that need their own controls */
   }
 
+  /**
+   * Add a centred title + subtitle at the top of the design area. Drawn behind
+   * the scene content (`depth -1`). Call once from {@link build}.
+   */
+  protected heading(title: string, sub: string): void {
+    const cx = this.designWidth / 2;
+    this.add.msdfText(cx, 50, "Inter", title, 30).setColor("#ffffff").setOrigin(0.5).setDepth(-1);
+    this.add.msdfText(cx, 88, "Inter", sub, 16).setColor("#9aa0aa").setOrigin(0.5).setDepth(-1);
+  }
+
+  /**
+   * Add a centred caption near the bottom of the design area — one short
+   * explanatory line. Drawn behind the scene content (`depth -1`).
+   */
+  protected caption(text: string): void {
+    this.add
+      .msdfText(this.designWidth / 2, this.designHeight - 38, "Inter", text, 15)
+      .setColor("#828893")
+      .setOrigin(0.5)
+      .setMaxWidth(this.designWidth - 160)
+      .setCenterAlign()
+      .setDepth(-1);
+  }
+
   create(): void {
     this.build();
     this.fitCamera();

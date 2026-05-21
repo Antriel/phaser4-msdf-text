@@ -23,7 +23,10 @@ function buildTextFolder(pane: Pane, scene: ExampleScene): void {
   const params = {
     font: first.font,
     fontSize: first.fontSize,
-    color: "#ffffff",
+    // Seed from the live text colour (MSDFText.color getter) so the picker
+    // reflects whatever build() set, rather than always starting white.
+    color: "#" + first.color.toString(16).padStart(6, "0"),
+    alpha: first.alpha,
     scale: first.scaleX,
     rotation: 0,
     letterSpacing: first.letterSpacing,
@@ -39,6 +42,8 @@ function buildTextFolder(pane: Pane, scene: ExampleScene): void {
     .on("change", (e) => targets.forEach((t) => t.setFontSize(e.value)));
   f.addBinding(params, "color", { view: "color" })
     .on("change", (e) => targets.forEach((t) => t.setColor(e.value)));
+  f.addBinding(params, "alpha", { min: 0, max: 1, step: 0.05 })
+    .on("change", (e) => targets.forEach((t) => t.setAlpha(e.value)));
   f.addBinding(params, "scale", { min: 0.1, max: 8, step: 0.1 })
     .on("change", (e) => targets.forEach((t) => t.setScale(e.value)));
   f.addBinding(params, "rotation", { min: -180, max: 180, step: 1 })

@@ -39,7 +39,9 @@ or soft edges:
 - Soft shadow / glow (`setDropShadow(..., softness)`) — the shadow pass uses
   the alpha SDF with a widened transition. `uShadowSoftness` is a per-pass
   uniform, so `MSDFTextWebGLRenderer` flushes the batch between the shadow and
-  main passes. Softness is bounded by `pxRange`.
+  main passes. Softness is measured in **distance-field units** (like
+  `outlineWidth`), so the blur scales with the text at any size; it is bounded
+  by `pxRange` (the atlas `distanceRange`), with a 1-screen-pixel AA floor.
 - Both are forced off on plain `msdf` atlases (`MSDFTextWebGLRenderer` checks
   `fieldType`); `MSDFText` warns once if they are requested on such a font.
 

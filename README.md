@@ -156,7 +156,7 @@ themselves stay crisp either way — only the outline edge rounds.
 
 ```ts
 text.setDropShadow(4, 4, 0x000000, 0.5);          // x, y, color, alpha
-text.setDropShadow(4, 4, 0x000000, 0.5, 6);       // soft shadow, 6 px blur (MTSDF atlas only)
+text.setDropShadow(4, 4, 0x000000, 0.5, 6);       // soft shadow, 6-unit blur (MTSDF atlas only)
 text.setDropShadow(0, 0, 0x33ccff, 0.8, 8);       // zero offset + softness reads as a glow
 text.clearDropShadow();
 text.hasDropShadow();
@@ -167,14 +167,15 @@ text.dropShadowX = 4;
 text.dropShadowY = 4;
 text.dropShadowColor = 0x000000;                  // packed 0xRRGGBB
 text.dropShadowAlpha = 0.5;
-text.dropShadowSoftness = 6;                      // MTSDF atlas only
+text.dropShadowSoftness = 6;                      // distance-field units, MTSDF atlas only
 ```
 
-`softness` is the shadow blur in screen pixels (`0` = hard edge, the
-default). Any value above `0` produces a soft shadow and requires an **MTSDF**
-atlas; on a plain MSDF font it is ignored with a one-time console warning. The
-maximum usable blur is bounded by the atlas `distanceRange` — for very soft
-shadows regenerate with a larger `-pxrange`.
+`softness` is the shadow blur in **distance-field units** (`0` = hard edge,
+the default) — the same units as `outlineWidth`, so the blur scales with the
+text at any size. Any value above `0` produces a soft shadow and requires an
+**MTSDF** atlas; on a plain MSDF font it is ignored with a one-time console
+warning. The maximum usable blur is the atlas `distanceRange` — for softer
+shadows than that, regenerate with a larger `-pxrange`.
 
 ### Per-character display callback
 

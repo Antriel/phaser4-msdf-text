@@ -108,7 +108,10 @@ function MSDFTextWebGLRenderer(
         const oR = ((oColor >> 16) & 0xff) / 255;
         const oG = ((oColor >> 8) & 0xff) / 255;
         const oB = (oColor & 0xff) / 255;
-        const oA = src.outlineAlpha;
+        // The outline colour is a per-batch uniform, so the object's alpha
+        // (per-vertex on the fill) must be folded in here — otherwise the
+        // outline stays opaque while the glyph fill fades out.
+        const oA = src.outlineAlpha * src.alpha;
         const rounded = (isMtsdf && src.outlineRounded) ? 1 : 0;
         if (batchHandler.hasOutlineChanged(width, oR, oG, oB, oA, rounded)) {
             batchHandler.run(drawingContext);

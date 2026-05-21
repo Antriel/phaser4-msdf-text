@@ -6,6 +6,12 @@ import { PreloadScene, PRELOAD_DONE } from "./harness/PreloadScene";
 import type { ExampleScene } from "./harness/ExampleScene";
 
 import { CrispScene } from "./scenes/crisp-at-any-scale";
+import { OutlineScene } from "./scenes/outline";
+import { GlowScene } from "./scenes/glow";
+import { EffectsScene } from "./scenes/effects";
+import { LayoutScene } from "./scenes/layout";
+import { PerformanceScene } from "./scenes/performance";
+import { GameUIScene } from "./scenes/gameui";
 
 interface Example {
   key: string;
@@ -16,6 +22,12 @@ interface Example {
 // The example registry. The scene `key` is also the URL hash for deep links.
 const examples: Example[] = [
   { key: "crisp", title: "Crisp at Any Scale", scene: CrispScene },
+  { key: "outline", title: "Outline", scene: OutlineScene },
+  { key: "glow", title: "Glow & Drop Shadow", scene: GlowScene },
+  { key: "effects", title: "Animated Effects", scene: EffectsScene },
+  { key: "layout", title: "Text Layout", scene: LayoutScene },
+  { key: "performance", title: "Performance", scene: PerformanceScene },
+  { key: "gameui", title: "Game UI Showcase", scene: GameUIScene },
 ];
 
 // ── DOM refs ──────────────────────────────────────────────────

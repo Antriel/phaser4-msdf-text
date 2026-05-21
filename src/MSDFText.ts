@@ -128,6 +128,7 @@ export interface MSDFTextInstance extends
     Phaser.GameObjects.Components.Alpha,
     Phaser.GameObjects.Components.BlendMode,
     Phaser.GameObjects.Components.Depth,
+    Phaser.GameObjects.Components.Filters,
     Phaser.GameObjects.Components.GetBounds,
     Phaser.GameObjects.Components.Origin,
     Phaser.GameObjects.Components.ScrollFactor,
@@ -164,7 +165,10 @@ export interface MSDFTextInstance extends
     dropShadowColor: number;
     /** Drop shadow alpha, 0-1. */
     dropShadowAlpha: number;
-    /** Drop shadow blur in screen pixels (MTSDF atlas only). `0` is a hard edge. */
+    /**
+     * Drop shadow blur in distance-field units — scales with the text, like
+     * `outlineWidth` (MTSDF atlas only). `0` is a hard edge.
+     */
     dropShadowSoftness: number;
 
     /** Optional per-character display callback. */
@@ -186,6 +190,12 @@ export interface MSDFTextInstance extends
     lineSpacing: number;
     letterSpacing: number;
     maxWidth: number;
+    /**
+     * Text color as a packed `0xRRGGBB` number. The getter recovers it from the
+     * stored color; the setter routes through `setColor`, preserving the current
+     * color alpha. To change the alpha too, use `setColor(color, alpha)`.
+     */
+    color: number;
 
     // Chainable setters
     setText(text: string | string[]): this;
@@ -516,6 +526,28 @@ export const MSDFText: MSDFTextStatic = new Class({
     },
 
     /**
+     * Text color as a packed `0xRRGGBB` number.
+     *
+     * The getter recovers it from the stored color. The setter routes through
+     * `setColor`, preserving the current color alpha — pass `setColor(color,
+     * alpha)` to change the alpha too. Color is consumed directly at render
+     * time, so changing it does not trigger a layout rebuild.
+     */
+    color: {
+        get: function (this: any): number {
+            const c = this._color;
+            return (
+                (Math.round(c.r * 255) << 16) |
+                (Math.round(c.g * 255) << 8) |
+                Math.round(c.b * 255)
+            );
+        },
+        set: function (this: any, value: ColorValue) {
+            this.setColor(value, this._color.a);
+        }
+    },
+
+    /**
      * Line alignment for multi-line text: 0 (left), 1 (center) or 2 (right).
      * See the `MSDFText.ALIGN_LEFT/ALIGN_CENTER/ALIGN_RIGHT` constants and the
      * `setLeftAlign` / `setCenterAlign` / `setRightAlign` chainable helpers.
@@ -700,10 +732,11 @@ export const MSDFText: MSDFTextStatic = new Class({
      * @param y        Shadow Y offset in pixels. Defaults to 0.
      * @param color    Shadow color (number, hex/rgb string, or {r,g,b,a?} object). Defaults to black.
      * @param alpha    Shadow alpha (0-1). Defaults to 0.5.
-     * @param softness Shadow blur in screen pixels. Defaults to 0 (hard edge).
-     *   Any value above 0 requires an MTSDF atlas; ignored with a one-time
-     *   warning on a plain MSDF font. A soft shadow with zero offset reads as
-     *   a glow. The maximum usable blur is bounded by the atlas `distanceRange`.
+     * @param softness Shadow blur in distance-field units — so it scales with
+     *   the text, like outline width. Defaults to 0 (hard edge). Any value
+     *   above 0 requires an MTSDF atlas; ignored with a one-time warning on a
+     *   plain MSDF font. A soft shadow with zero offset reads as a glow. The
+     *   maximum usable blur is the atlas `distanceRange`.
      */
     setDropShadow: function (x: number = 0, y: number = 0, color: ColorValue = 0x000000, alpha: number = 0.5, softness: number = 0) {
         this.dropShadowX = x;

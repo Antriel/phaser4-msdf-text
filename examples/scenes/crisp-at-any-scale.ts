@@ -9,17 +9,16 @@ const ROW_Y = [190, 400, 610];
 const SAMPLE_X = 640;
 
 /**
- * The hero demo: one word rendered three ways — MSDF (this plugin), Phaser
- * BitmapText, and Phaser canvas Text — under a single zoom slider. MSDF stays
- * razor-sharp at any scale; the other two pixelate or blur.
+ * The hero demo: one word rendered three ways under a font-size slider.
+ * MSDF stays crisp at any size. BitmapText blurs when scaled away from its
+ * atlas size. Canvas Text re-renders sharply but is slower.
  */
 export class CrispScene extends ExampleScene {
   private msdf!: MSDFTextInstance;
   private bitmap!: Phaser.GameObjects.BitmapText;
   private canvasText!: Phaser.GameObjects.Text;
 
-  private readonly baseSize = 48;
-  private params = { word: "Sharp", font: "Anton", zoom: 3, autoZoom: false };
+  private params = { word: "Sharp", font: "Anton", fontSize: 100, rotation: 0 };
 
   constructor() {
     super({ key: "crisp" });
@@ -30,34 +29,27 @@ export class CrispScene extends ExampleScene {
 
     this.heading(
       "Crisp at Any Scale",
-      "Same word, three renderers. Crank the zoom - only MSDF keeps clean edges.",
+      "Same word, three renderers. Change the size - MSDF stays crisp; BitmapText blurs; canvas Text re-renders.",
     );
 
     this.msdf = this.add
-      .msdfText(SAMPLE_X, ROW_Y[0], this.params.font, this.params.word, this.baseSize)
+      .msdfText(SAMPLE_X, ROW_Y[0], this.params.font, this.params.word, this.params.fontSize)
       .setOrigin(0.5);
-    this.rowLabel(ROW_Y[0], "MSDF", "phaser4-msdf-font", "#4ade80");
+    this.rowLabel(ROW_Y[0], "MSDF", "phaser4-msdf-font · always crisp", "#4ade80");
 
     this.bitmap = this.add
-      .bitmapText(SAMPLE_X, ROW_Y[1], fontByKey(this.params.font).bitmapKey, this.params.word, this.baseSize)
+      .bitmapText(SAMPLE_X, ROW_Y[1], fontByKey(this.params.font).bitmapKey, this.params.word, this.params.fontSize)
       .setOrigin(0.5);
-    this.rowLabel(ROW_Y[1], "BitmapText", "Phaser - pixelates", "#f87171");
+    this.rowLabel(ROW_Y[1], "BitmapText", "fixed atlas · blurs off native size", "#f87171");
 
     this.canvasText = this.add
       .text(SAMPLE_X, ROW_Y[2], this.params.word, {
         fontFamily: this.params.font,
-        fontSize: `${this.baseSize}px`,
+        fontSize: `${this.params.fontSize}px`,
         color: "#ffffff",
       })
       .setOrigin(0.5);
-    this.rowLabel(ROW_Y[2], "Text", "Phaser canvas - blurs", "#f87171");
-
-    this.applyZoom();
-  }
-
-  private heading(title: string, sub: string): void {
-    this.add.msdfText(SAMPLE_X, 50, "Inter", title, 30).setColor("#ffffff").setOrigin(0.5).setDepth(-1);
-    this.add.msdfText(SAMPLE_X, 88, "Inter", sub, 16).setColor("#9aa0aa").setOrigin(0.5).setDepth(-1);
+    this.rowLabel(ROW_Y[2], "Text", "re-renders at each size · slower · more memory", "#fbbf24");
   }
 
   private rowLabel(y: number, name: string, sub: string, color: string): void {
@@ -65,10 +57,16 @@ export class CrispScene extends ExampleScene {
     this.add.msdfText(44, y + 16, "Inter", sub, 14).setColor("#9aa0aa").setOrigin(0, 0.5).setDepth(-1);
   }
 
-  private applyZoom(): void {
-    this.msdf.setScale(this.params.zoom);
-    this.bitmap.setScale(this.params.zoom);
-    this.canvasText.setScale(this.params.zoom);
+  private applyFontSize(): void {
+    this.msdf.setFontSize(this.params.fontSize);
+    this.bitmap.setFontSize(this.params.fontSize);
+    this.canvasText.setFontSize(`${this.params.fontSize}px`);
+  }
+
+  private applyRotation(): void {
+    this.msdf.setAngle(this.params.rotation);
+    this.bitmap.setAngle(this.params.rotation);
+    this.canvasText.setAngle(this.params.rotation);
   }
 
   protected addControls(pane: Pane): void {
@@ -83,15 +81,10 @@ export class CrispScene extends ExampleScene {
       this.canvasText.setFontFamily(e.value);
     });
     pane
-      .addBinding(this.params, "zoom", { min: 0.5, max: 8, step: 0.1 })
-      .on("change", () => this.applyZoom());
-    pane.addBinding(this.params, "autoZoom", { label: "auto zoom" });
-  }
-
-  update(): void {
-    if (this.params.autoZoom) {
-      this.params.zoom = 4.25 + 3.5 * Math.sin(this.time.now * 0.0006);
-      this.applyZoom();
-    }
+      .addBinding(this.params, "fontSize", { min: 12, max: 180, step: 1, label: "font size" })
+      .on("change", () => this.applyFontSize());
+    pane
+      .addBinding(this.params, "rotation", { min: -10, max: 10, step: 0.1 })
+      .on("change", () => this.applyRotation());
   }
 }
