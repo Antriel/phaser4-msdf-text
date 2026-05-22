@@ -104,9 +104,9 @@ const SimpleFragmentShader = [
     '    }',
     '    else',
     '    {',
-    '        float alpha = clamp(pxRange * (dist - 0.5) + 0.5, 0.0, 1.0);',
-    '        vec4 color = outTint;',
-    '        gl_FragColor = vec4(color.rgb * alpha, alpha * color.a);',
+    '        float coverage = clamp(pxRange * (dist - 0.5) + 0.5, 0.0, 1.0);',
+    '        float a = coverage * outTint.a;',
+    '        gl_FragColor = vec4(outTint.rgb * a, a);',
     '    }',
     '}'
 ].join('\n');
