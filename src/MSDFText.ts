@@ -165,6 +165,16 @@ export interface MSDFTextInstance extends
     outlineAlpha: number;
     /** Round the outline's outer corners using the true SDF (MTSDF atlas only). */
     outlineRounded: boolean;
+    /**
+     * Draw the outline in two passes — every glyph's outline silhouette first,
+     * then every glyph's fill on top — so a thick outline never overlaps the
+     * neighbouring glyph. Costs a second set of glyph quads (≈2× the outline's
+     * fragment work) and composites the outline under the fill, so partially
+     * transparent text shows the outline faintly through the fill. Leave `false`
+     * (the default, single combined pass) unless the outline is thick enough to
+     * overlap. No effect when there is no outline.
+     */
+    outlineLayered: boolean;
 
     // Drop shadow — plain fields, matching Phaser's BitmapText naming, so they
     // can be assigned or tweened directly. `setDropShadow` is a wrapper.
@@ -222,7 +232,7 @@ export interface MSDFTextInstance extends
     setDisplaySize(width: number, height: number): this;
     setDisplayCallback(callback: DisplayCallback | undefined): this;
     clearDisplayCallback(): this;
-    setOutline(width: number, color?: ColorValue, alpha?: number, rounded?: boolean): this;
+    setOutline(width: number, color?: ColorValue, alpha?: number, rounded?: boolean, layered?: boolean): this;
     clearOutline(): this;
     hasOutline(): boolean;
     setDropShadow(x?: number, y?: number, color?: ColorValue, alpha?: number, softness?: number): this;
@@ -353,6 +363,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         this.outlineColor = 0x000000;
         this.outlineAlpha = 1;
         this.outlineRounded = false;
+        this.outlineLayered = false;
 
         // Drop shadow — BitmapText-style plain fields.
         this.dropShadowX = 0;
@@ -702,12 +713,17 @@ export const MSDFText: MSDFTextStatic = new Class({
      * @param alpha   Outline alpha (0-1). Defaults to 1.
      * @param rounded Round the outer corners using the true SDF. Requires an
      *   MTSDF atlas; ignored with a one-time warning on a plain MSDF font.
+     * @param layered Draw the outline as a separate silhouette pass under the
+     *   fill so a thick outline does not overlap the neighbouring glyph. See
+     *   {@link MSDFTextInstance.outlineLayered} for the cost and the
+     *   transparent-text caveat. Defaults to `false`.
      */
-    setOutline: function (width: number, color: ColorValue = 0x000000, alpha: number = 1, rounded: boolean = false) {
+    setOutline: function (width: number, color: ColorValue = 0x000000, alpha: number = 1, rounded: boolean = false, layered: boolean = false) {
         this.outlineWidth = width;
         this.outlineColor = toColorInt(color);
         this.outlineAlpha = alpha;
         this.outlineRounded = !!rounded;
+        this.outlineLayered = !!layered;
         if (this.outlineRounded && width > 0) {
             warnNeedsMtsdf(this, 'rounded outline');
         }

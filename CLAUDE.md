@@ -29,6 +29,16 @@ from a single texture per font. Published as the npm package
   from the font JSON at runtime and feed both the plain AA path and the
   outline path.
 
+**Outline** — by default outline+fill render in one pass per glyph (`uMode` 1).
+Because that is per-glyph, a thick outline can spill over the previous glyph.
+Setting `outlineLayered` switches to a two-pass render: the outline silhouette
+(whole glyph blob in outline colour, `uMode` 2) is drawn for every glyph first,
+then every glyph's fill (`uMode` 0) on top, so neighbouring outlines never cover
+a glyph's face. Tradeoffs: a second set of glyph quads, and the outline now
+composites under the fill, so translucent text shows the outline through the
+fill. Works on plain MSDF and MTSDF. The renderer's per-glyph submit loop is
+shared by every pass via `submitTextChars` in `MSDFTextWebGLRenderer.ts`.
+
 **MTSDF effects** — atlases generated with `-type mtsdf` carry a true SDF in
 the alpha channel alongside the MSDF in RGB. The shader uses `median(rgb)` for
 crisp text (corners preserved) and the alpha SDF for effects that need rounded
@@ -49,7 +59,12 @@ or soft edges:
 - Vertex: uniform `uProjectionMatrix`; attributes `inPosition`, `inTexCoord`,
   `inTint`.
 - Fragment: uniforms `uMainSampler`, `uAtlasSize`, `uPxRange`,
-  `uOutlineWidth`, `uOutlineColor`, `uOutlineRounded`, `uShadowSoftness`.
+  `uOutlineWidth`, `uOutlineColor`, `uOutlineRounded`, `uShadowSoftness`,
+  `uMode`. `uMode` selects the per-pass branch: `0` plain fill (also the fill
+  pass of a layered outline and the hard drop shadow), `1` combined
+  outline+fill, `2` outline silhouette (layered pass 1), `3` soft shadow.
+  Constants live in `MSDFMode` (`MSDFBatchHandler.ts`); the renderer sets the
+  mode per pass through `configurePass`, which flushes the batch on any change.
 - Output is premultiplied alpha (`vec4(rgb * a, a)`) — required by Phaser 4's
   batched pipeline.
 - Uses `#extension GL_OES_standard_derivatives : enable` for `fwidth`.

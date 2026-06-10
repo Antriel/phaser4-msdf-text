@@ -11,6 +11,23 @@
 
 import * as Phaser from "phaser";
 
+/**
+ * Fragment shader render modes, selected per pass via the `uMode` uniform.
+ * `OUTLINE_SILHOUETTE` + `PLAIN` are the two passes of a layered outline; the
+ * silhouette (whole glyph in outline colour) is drawn for every glyph first,
+ * then the fill on top, so a thick outline can't overlap a neighbouring glyph.
+ */
+export const MSDFMode = {
+    /** Plain glyph fill. Also the fill pass of a layered outline and the hard drop shadow. */
+    PLAIN: 0,
+    /** Outline + fill in one pass (per-glyph; outlines may overlap neighbours). */
+    OUTLINE_COMBINED: 1,
+    /** Layered outline, pass 1: the whole glyph blob in outline colour. */
+    OUTLINE_SILHOUETTE: 2,
+    /** Soft shadow / glow (needs the true-SDF alpha channel of an MTSDF atlas). */
+    SOFT_SHADOW: 3
+} as const;
+
 const SimpleVertexShader = [
     'precision mediump float;',
     '',
@@ -44,7 +61,8 @@ const SimpleFragmentShader = [
     'uniform float uOutlineWidth;',
     'uniform vec4 uOutlineColor;',
     'uniform float uOutlineRounded;',  // 0 = sharp outline, 1 = rounded (true SDF).
-    'uniform float uShadowSoftness;',  // > 0 = soft shadow pass; distance-field units of blur.
+    'uniform float uShadowSoftness;',  // distance-field units of blur (soft shadow mode).
+    'uniform float uMode;',            // 0 plain/fill, 1 combined outline, 2 outline silhouette, 3 soft shadow.
     '',
     'varying vec2 outTexCoord;',
     'varying vec4 outTint;',
@@ -72,19 +90,19 @@ const SimpleFragmentShader = [
     '    float tsdf = textureSample.a;',  // True SDF — meaningful only on MTSDF atlases.
     '    float pxRange = screenPxRange();',
     '',
-    '    if (uShadowSoftness > 0.0)',
+    '    if (uMode < 0.5)',
     '    {',
-    '        // Soft shadow / glow: spread the true-SDF edge by uShadowSoftness',
-    '        // distance-field units, so the blur scales with the text just like',
-    '        // the outline does. The 1-screen-pixel floor keeps the edge',
-    '        // anti-aliased when the text is very small.',
-    '        float soft = max(uShadowSoftness, uPxRange / pxRange);',
-    '        float alpha = clamp(uPxRange * (tsdf - 0.5) / soft + 0.5, 0.0, 1.0);',
-    '        float a = alpha * outTint.a;',
+    '        // Plain text fill. Also the fill pass of a layered outline and the',
+    '        // hard (non-soft) drop shadow — both are just a glyph in some colour.',
+    '        float coverage = clamp(pxRange * (dist - 0.5) + 0.5, 0.0, 1.0);',
+    '        float a = coverage * outTint.a;',
     '        gl_FragColor = vec4(outTint.rgb * a, a);',
     '    }',
-    '    else if (uOutlineWidth > 0.0)',
+    '    else if (uMode < 1.5)',
     '    {',
+    '        // Combined outline + fill in a single pass (mode 1). The outline is',
+    '        // per-glyph, so a thick outline can overlap a neighbouring glyph —',
+    '        // use the layered mode (silhouette + fill passes) to avoid that.',
     '        float textEdge = 0.5;',
     '        float outlineEdge = 0.5 - (uOutlineWidth / uPxRange);',
     '',
@@ -102,10 +120,27 @@ const SimpleFragmentShader = [
     '',
     '        gl_FragColor = vec4(rgb * a, a);',
     '    }',
+    '    else if (uMode < 2.5)',
+    '    {',
+    '        // Outline silhouette pass (mode 2, layered outline): the whole glyph',
+    '        // blob in outline colour. All silhouettes are drawn before any fill,',
+    '        // so a neighbouring glyph\'s outline can never cover this glyph\'s fill.',
+    '        float outlineEdge = 0.5 - (uOutlineWidth / uPxRange);',
+    '        float outlineDist = mix(dist, tsdf, uOutlineRounded);',
+    '        float coverage = clamp(pxRange * (outlineDist - outlineEdge) + 0.5, 0.0, 1.0);',
+    '        float backgroundFade = smoothstep(0.0, 0.2, outlineDist);',
+    '        float a = coverage * uOutlineColor.a * backgroundFade;',
+    '        gl_FragColor = vec4(uOutlineColor.rgb * a, a);',
+    '    }',
     '    else',
     '    {',
-    '        float coverage = clamp(pxRange * (dist - 0.5) + 0.5, 0.0, 1.0);',
-    '        float a = coverage * outTint.a;',
+    '        // Soft shadow / glow (mode 3): spread the true-SDF edge by',
+    '        // uShadowSoftness distance-field units, so the blur scales with the',
+    '        // text just like the outline does. The 1-screen-pixel floor keeps the',
+    '        // edge anti-aliased when the text is very small.',
+    '        float soft = max(uShadowSoftness, uPxRange / pxRange);',
+    '        float alpha = clamp(uPxRange * (tsdf - 0.5) / soft + 0.5, 0.0, 1.0);',
+    '        float a = alpha * outTint.a;',
     '        gl_FragColor = vec4(outTint.rgb * a, a);',
     '    }',
     '}'
@@ -125,6 +160,7 @@ interface MSDFBatchHandlerInstance {
     _outlineColor: [number, number, number, number];
     _outlineRounded: number;
     _shadowSoftness: number;
+    _mode: number;
 
     instanceCount: number;
     instancesPerBatch: number;
@@ -141,6 +177,8 @@ interface MSDFBatchHandlerInstance {
     hasOutlineChanged(width: number, r: number, g: number, b: number, a: number, rounded: number): boolean;
     setShadowSoftness(softness: number): void;
     hasShadowSoftnessChanged(softness: number): boolean;
+    setMode(mode: number): void;
+    hasModeChanged(mode: number): boolean;
     setupUniforms(drawingContext: DrawingContext): void;
     run(drawingContext: DrawingContext): void;
     batch(
@@ -190,6 +228,7 @@ class MSDFBatchHandler extends PhaserBatchHandler {
         self._outlineColor = [0, 0, 0, 0];
         self._outlineRounded = 0;
         self._shadowSoftness = 0;
+        self._mode = MSDFMode.PLAIN;
     }
 
     setPxRange(pxRange: number): void {
@@ -227,6 +266,14 @@ class MSDFBatchHandler extends PhaserBatchHandler {
         return (this as unknown as MSDFBatchHandlerInstance)._shadowSoftness !== softness;
     }
 
+    setMode(mode: number): void {
+        (this as unknown as MSDFBatchHandlerInstance)._mode = mode;
+    }
+
+    hasModeChanged(mode: number): boolean {
+        return (this as unknown as MSDFBatchHandlerInstance)._mode !== mode;
+    }
+
     _generateElementIndices(instances: number): ArrayBuffer {
         const buffer = new ArrayBuffer(instances * 6 * 2);
         const indices = new Uint16Array(buffer);
@@ -256,6 +303,7 @@ class MSDFBatchHandler extends PhaserBatchHandler {
         programManager.setUniform('uOutlineColor', self._outlineColor);
         programManager.setUniform('uOutlineRounded', self._outlineRounded);
         programManager.setUniform('uShadowSoftness', self._shadowSoftness);
+        programManager.setUniform('uMode', self._mode);
 
         drawingContext.renderer.setProjectionMatrixFromDrawingContext(drawingContext);
         programManager.setUniform('uProjectionMatrix', drawingContext.renderer.projectionMatrix.val);

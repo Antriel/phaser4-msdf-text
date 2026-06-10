@@ -7,11 +7,23 @@ import type { MSDFTextInstance } from "../../src";
  * so it stays clean at any size. `rounded` rounds the outer corners using the
  * true SDF in the alpha channel (MTSDF atlases only — all five sample fonts
  * qualify).
+ *
+ * `layered` draws the outline as a silhouette pass under the fill, so a thick
+ * outline never spills over the neighbouring glyph. The bottom line uses tight
+ * letter spacing to make that overlap obvious — toggle `layered` to see it
+ * appear and vanish.
  */
 export class OutlineScene extends ExampleScene {
   private headline!: MSDFTextInstance;
   private small!: MSDFTextInstance;
-  private params = { width: 4, color: "#101018", alpha: 1, rounded: true };
+  private tight!: MSDFTextInstance;
+  private params = {
+    width: 4,
+    color: "#101018",
+    alpha: 1,
+    rounded: true,
+    layered: true,
+  };
 
   constructor() {
     super({ key: "outline" });
@@ -20,45 +32,69 @@ export class OutlineScene extends ExampleScene {
   protected build(): void {
     // Mid-tone background so a dark or light outline both read.
     this.cameras.main.setBackgroundColor(0x3a3a4a);
-    this.heading("Outline", "A distance-field border that holds up at any scale.");
+    this.heading(
+      "Outline",
+      "A distance-field border that holds up at any scale.",
+    );
 
     this.headline = this.add
-      .msdfText(640, 300, "Anton", "OUTLINE", 140)
+      .msdfText(640, 260, "Anton", "OUTLINE", 140)
       .setColor("#ffd24a")
       .setOrigin(0.5)
       .setLetterSpacing(13);
 
     this.small = this.add
-      .msdfText(640, 450, "Anton", "crisp down to small sizes", 40)
+      .msdfText(640, 400, "Anton", "crisp down to small sizes", 40)
       .setColor("#ffffff")
       .setOrigin(0.5)
       .setLetterSpacing(4);
 
+    // Deliberately tight spacing so a thick outline overlaps the next glyph —
+    // the artifact `layered` removes.
+    this.tight = this.add
+      .msdfText(640, 500, "Anton", "LAYERED", 90)
+      .setColor("#ffd24a")
+      .setOrigin(0.5)
+      .setLetterSpacing(-2);
+
     this.applyOutline();
     this.caption(
-      "Outline width is in distance-field units; the usable maximum is about half the atlas distanceRange.",
+      "Outline width is in distance-field units; the usable maximum is about half the atlas distanceRange. " +
+        "Toggle 'layered' to stop a thick outline overlapping the neighbouring glyph (bottom line).",
     );
 
     // The shared Text folder drives the headline.
     this.commonTargets.push(this.headline);
   }
 
-  /** Push the current outline params onto both texts. */
+  /** Push the current outline params onto every text. */
   private applyOutline(): void {
-    const { width, color, alpha, rounded } = this.params;
-    this.headline.setOutline(width, color, alpha, rounded);
-    this.small.setOutline(width, color, alpha, rounded);
+    const { width, color, alpha, rounded, layered } = this.params;
+    this.headline.setOutline(width, color, alpha, rounded, layered);
+    this.small.setOutline(width, color, alpha, rounded, layered);
+    this.tight.setOutline(width, color, alpha, rounded, layered);
   }
 
   protected addControls(pane: Pane): void {
     const f = pane.addFolder({ title: "Outline" });
-    f.addBinding(this.params, "width", { min: 0, max: 8, step: 0.1 })
-      .on("change", () => this.applyOutline());
-    f.addBinding(this.params, "color", { view: "color" })
-      .on("change", () => this.applyOutline());
-    f.addBinding(this.params, "alpha", { min: 0, max: 1, step: 0.05 })
-      .on("change", () => this.applyOutline());
-    f.addBinding(this.params, "rounded", { label: "rounded corners" })
-      .on("change", () => this.applyOutline());
+    f.addBinding(this.params, "width", { min: 0, max: 8, step: 0.1 }).on(
+      "change",
+      () => this.applyOutline(),
+    );
+    f.addBinding(this.params, "color", { view: "color" }).on("change", () =>
+      this.applyOutline(),
+    );
+    f.addBinding(this.params, "alpha", { min: 0, max: 1, step: 0.05 }).on(
+      "change",
+      () => this.applyOutline(),
+    );
+    f.addBinding(this.params, "rounded", { label: "rounded corners" }).on(
+      "change",
+      () => this.applyOutline(),
+    );
+    f.addBinding(this.params, "layered", { label: "layered (no overlap)" }).on(
+      "change",
+      () => this.applyOutline(),
+    );
   }
 }

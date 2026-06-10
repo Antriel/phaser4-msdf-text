@@ -2,8 +2,12 @@
  * MSDF Text WebGL Renderer
  *
  * Iterates each character of an MSDFText and submits it to the MSDF batch
- * handler, optionally running a per-character display callback. Renders shadow
- * pass first (if enabled), then main text pass on top.
+ * handler. Passes run back-to-front: drop shadow first, then the text itself.
+ * An outline is drawn either in a single combined pass (`uMode` 1) or, when
+ * `outlineLayered` is set, as two passes — every glyph's outline silhouette
+ * first, then every glyph's fill on top — so a thick outline can't overlap a
+ * neighbouring glyph. Each pass sets `uMode` (and its uniforms) via
+ * `configurePass`, which flushes the pending batch whenever they change.
  *
  * Per-corner tint comes from `Components.Tint` (`tintTopLeft`, etc.) multiplied
  * by the base colour `_color` and per-corner alpha (`_alphaTL` etc.). The MSDF
@@ -18,22 +22,27 @@
 
 import * as Phaser from "phaser";
 import BatchMSDFChar from './BatchMSDFChar';
-import type { MSDFBatchHandlerInstance } from './MSDFBatchHandler';
+import { MSDFMode, type MSDFBatchHandlerInstance } from './MSDFBatchHandler';
 
 const GetCalcMatrix = (Phaser as any).GameObjects.GetCalcMatrix;
 const TransformMatrix = (Phaser as any).GameObjects.Components.TransformMatrix;
 
-const tempTintData = {
-    tintTopLeft: 0xffffffff,
-    tintTopRight: 0xffffffff,
-    tintBottomLeft: 0xffffffff,
-    tintBottomRight: 0xffffffff
-};
+interface TintData {
+    tintTopLeft: number;
+    tintTopRight: number;
+    tintBottomLeft: number;
+    tintBottomRight: number;
+}
 
-// Reusable per-character tint buffers for the display-callback paths, so a
-// callback can recolour a glyph without allocating four corners each frame.
-const callbackTintData = { tintTopLeft: 0, tintTopRight: 0, tintBottomLeft: 0, tintBottomRight: 0 };
-const shadowCallbackTintData = { tintTopLeft: 0, tintTopRight: 0, tintBottomLeft: 0, tintBottomRight: 0 };
+// Reusable per-pass tint buffers. The text pass (fill / combined / silhouette)
+// and the shadow pass each get their own so a layered render — which runs the
+// text pass twice — doesn't clobber the other pass's data mid-frame.
+const textTintData: TintData = { tintTopLeft: 0, tintTopRight: 0, tintBottomLeft: 0, tintBottomRight: 0 };
+const shadowTintData: TintData = { tintTopLeft: 0, tintTopRight: 0, tintBottomLeft: 0, tintBottomRight: 0 };
+// Reusable buffers for the display-callback paths, so a callback can recolour a
+// glyph without allocating four corners each frame.
+const textCallbackTintData: TintData = { tintTopLeft: 0, tintTopRight: 0, tintBottomLeft: 0, tintBottomRight: 0 };
+const shadowCallbackTintData: TintData = { tintTopLeft: 0, tintTopRight: 0, tintBottomLeft: 0, tintBottomRight: 0 };
 
 const tempCharData = {
     x: 0,
@@ -82,6 +91,165 @@ function appendAlpha(rgb: number, alpha: number): number {
     return (((Math.floor(alpha * 255) & 0xff) << 24) | rgb) >>> 0;
 }
 
+/**
+ * Select the shader mode (and its uniforms) for the next pass, flushing any
+ * pending batch first if anything changed — uniforms are applied per draw, so
+ * already-queued quads must render with the old values before we switch.
+ */
+function configurePass(
+    batchHandler: MSDFBatchHandlerInstance,
+    drawingContext: any,
+    mode: number,
+    outlineWidth: number,
+    oR: number, oG: number, oB: number, oA: number,
+    rounded: number,
+    shadowSoftness: number
+): void {
+    if (batchHandler.hasModeChanged(mode) ||
+        batchHandler.hasOutlineChanged(outlineWidth, oR, oG, oB, oA, rounded) ||
+        batchHandler.hasShadowSoftnessChanged(shadowSoftness)) {
+        batchHandler.run(drawingContext);
+    }
+    batchHandler.setMode(mode);
+    batchHandler.setOutline(outlineWidth, oR, oG, oB, oA, rounded);
+    batchHandler.setShadowSoftness(shadowSoftness);
+}
+
+/**
+ * Submit every glyph of one pass to the batch. Shared by the shadow, combined,
+ * silhouette and fill passes — they differ only in mode/uniforms (set by the
+ * caller via `configurePass`) and in the tint/offset arguments here.
+ *
+ * `extraOffsetX/Y` is the shadow offset (0 for the text passes); it is folded
+ * into the no-callback position and into the position the callback sees, so a
+ * callback returning its input unchanged reproduces the pass offset exactly.
+ * `originOffsetX/Y` (the displayOrigin shift) is applied to callback-repositioned
+ * glyphs. Seed colours/alphas feed the callback and the no-callback default
+ * tint; for the silhouette pass the tint is unused (colour comes from the
+ * outline uniform) but the callback still runs so glyph positions stay in sync.
+ */
+function submitTextChars(
+    src: any,
+    characters: any[],
+    characterCount: number,
+    drawingContext: any,
+    batchHandler: MSDFBatchHandlerInstance,
+    texture: any,
+    hasCallback: boolean,
+    calcMatrix: any,
+    originOffsetX: number,
+    originOffsetY: number,
+    extraOffsetX: number,
+    extraOffsetY: number,
+    defaultTint: TintData,
+    seedRgbTL: number, seedRgbTR: number, seedRgbBL: number, seedRgbBR: number,
+    alphaTL: number, alphaTR: number, alphaBL: number, alphaBR: number,
+    cbTint: TintData
+): void {
+    const baseOffsetX = originOffsetX + extraOffsetX;
+    const baseOffsetY = originOffsetY + extraOffsetY;
+
+    for (let i = 0; i < characterCount; i++) {
+        const char = characters[i];
+        if (!char || char.w === 0 || char.h === 0) {
+            continue;
+        }
+
+        let charData: any = char;
+        let offX = baseOffsetX;
+        let offY = baseOffsetY;
+        let charMatrix = calcMatrix;
+        let charTint: TintData = defaultTint;
+
+        if (hasCallback) {
+            const callbackData = src.callbackData;
+            callbackData.index = i;
+            callbackData.charCode = char.charCode || 0;
+            const originalX = char.originalX !== undefined ? char.originalX : char.x;
+            const originalY = char.originalY !== undefined ? char.originalY : char.y;
+            callbackData.x = originalX + extraOffsetX;
+            callbackData.y = originalY + extraOffsetY;
+            callbackData.scale = char.scale || 1;
+            callbackData.rotation = char.rotation || 0;
+            callbackData.data = char.data;
+
+            callbackData.color = 0;
+            callbackData.tint.topLeft = appendAlpha(seedRgbTL, alphaTL);
+            callbackData.tint.topRight = appendAlpha(seedRgbTR, alphaTR);
+            callbackData.tint.bottomLeft = appendAlpha(seedRgbBL, alphaBL);
+            callbackData.tint.bottomRight = appendAlpha(seedRgbBR, alphaBR);
+
+            const result = src.displayCallback(callbackData);
+
+            if (result) {
+                const posChanged = result.x !== (originalX + extraOffsetX) || result.y !== (originalY + extraOffsetY);
+                const scaleChanged = result.scale !== 1;
+                const rotationChanged = result.rotation !== 0;
+
+                if (scaleChanged || rotationChanged) {
+                    const centerX = char.w / 2;
+                    const centerY = char.h / 2;
+
+                    tempCharMatrix.copyFrom(calcMatrix);
+                    tempCharMatrix.translate(result.x + centerX + originOffsetX, result.y + centerY + originOffsetY);
+
+                    if (rotationChanged) {
+                        tempCharMatrix.rotate(result.rotation);
+                    }
+                    if (scaleChanged) {
+                        tempCharMatrix.scale(result.scale, result.scale);
+                    }
+
+                    tempCharData.x = -centerX;
+                    tempCharData.y = -centerY;
+                    tempCharData.w = char.w;
+                    tempCharData.h = char.h;
+                    tempCharData.u0 = char.u0;
+                    tempCharData.v0 = char.v0;
+                    tempCharData.u1 = char.u1;
+                    tempCharData.v1 = char.v1;
+                    charData = tempCharData;
+                    charMatrix = tempCharMatrix;
+                    offX = 0;
+                    offY = 0;
+                } else if (posChanged) {
+                    // The shadow offset is already baked into result.x/y via the
+                    // seed above, so only the origin shift remains to apply.
+                    tempCharData.x = result.x;
+                    tempCharData.y = result.y;
+                    tempCharData.w = char.w;
+                    tempCharData.h = char.h;
+                    tempCharData.u0 = char.u0;
+                    tempCharData.v0 = char.v0;
+                    tempCharData.u1 = char.u1;
+                    tempCharData.v1 = char.v1;
+                    charData = tempCharData;
+                    offX = originOffsetX;
+                    offY = originOffsetY;
+                }
+
+                // Repack whatever the callback left in `color` / `tint` into the
+                // batch's ABGR layout, re-applying each corner's alpha.
+                if (result.color) {
+                    const rgb = result.color & 0xffffff;
+                    cbTint.tintTopLeft = packBatchTint(rgb, alphaTL);
+                    cbTint.tintTopRight = packBatchTint(rgb, alphaTR);
+                    cbTint.tintBottomLeft = packBatchTint(rgb, alphaBL);
+                    cbTint.tintBottomRight = packBatchTint(rgb, alphaBR);
+                } else {
+                    cbTint.tintTopLeft = packBatchTint(result.tint.topLeft & 0xffffff, alphaTL);
+                    cbTint.tintTopRight = packBatchTint(result.tint.topRight & 0xffffff, alphaTR);
+                    cbTint.tintBottomLeft = packBatchTint(result.tint.bottomLeft & 0xffffff, alphaBL);
+                    cbTint.tintBottomRight = packBatchTint(result.tint.bottomRight & 0xffffff, alphaBR);
+                }
+                charTint = cbTint;
+            }
+        }
+
+        BatchMSDFChar(drawingContext, batchHandler, texture, charData, offX, offY, charMatrix, charTint);
+    }
+}
+
 function MSDFTextWebGLRenderer(
     _renderer: any,
     src: any,
@@ -126,33 +294,25 @@ function MSDFTextWebGLRenderer(
     const isMtsdf = src.fontData.distanceField.fieldType === 'mtsdf';
     const shadowSoftness = (isMtsdf && src.dropShadowSoftness > 0) ? src.dropShadowSoftness : 0;
 
-    // Outline state — flush if it changed since the last batch.
-    if (src.hasOutline()) {
-        const width = src.outlineWidth;
-        const oColor = src.outlineColor;
-        const oR = ((oColor >> 16) & 0xff) / 255;
-        const oG = ((oColor >> 8) & 0xff) / 255;
-        const oB = (oColor & 0xff) / 255;
-        // The outline colour is a per-batch uniform, so the object's alpha
-        // (per-vertex on the fill) must be folded in here — otherwise the
-        // outline stays opaque while the glyph fill fades out.
-        const oA = src.outlineAlpha * src.alpha;
-        const rounded = (isMtsdf && src.outlineRounded) ? 1 : 0;
-        if (batchHandler.hasOutlineChanged(width, oR, oG, oB, oA, rounded)) {
-            batchHandler.run(drawingContext);
-        }
-        batchHandler.setOutline(width, oR, oG, oB, oA, rounded);
-    } else {
-        if (batchHandler.hasOutlineChanged(0, 0, 0, 0, 0, 0)) {
-            batchHandler.run(drawingContext);
-        }
-        batchHandler.setOutline(0, 0, 0, 0, 0, 0);
-    }
+    // Outline uniform values, shared by the combined and silhouette passes.
+    const hasOutline = src.hasOutline();
+    const outlineWidth = src.outlineWidth;
+    const oColor = src.outlineColor;
+    const oR = ((oColor >> 16) & 0xff) / 255;
+    const oG = ((oColor >> 8) & 0xff) / 255;
+    const oB = (oColor & 0xff) / 255;
+    // The outline colour is a per-batch uniform, so the object's alpha (per-vertex
+    // on the fill) must be folded in here — otherwise the outline stays opaque
+    // while the glyph fill fades out.
+    const oA = src.outlineAlpha * src.alpha;
+    const outlineRounded = (isMtsdf && src.outlineRounded) ? 1 : 0;
+    const layered = hasOutline && src.outlineLayered;
 
-    // Effective per-corner colour for the main pass: each Tint-component corner
+    // Effective per-corner colour for the text pass: each Tint-component corner
     // (0xRRGGBB) times the base text colour (`_color`). The effective per-corner
     // alpha is kept separate so a display callback can recolour a glyph without
-    // having to know — or preserve — the object's alpha.
+    // having to know — or preserve — the object's alpha. `_alphaTL` etc. already
+    // include the object's global alpha (Phaser's Alpha component mirrors it).
     const textColor = src._color;
     const cR = textColor.r;
     const cG = textColor.g;
@@ -169,29 +329,24 @@ function MSDFTextWebGLRenderer(
     const alphaBL = cA * src._alphaBL;
     const alphaBR = cA * src._alphaBR;
 
-    tempTintData.tintTopLeft = packBatchTint(rgbTL, alphaTL);
-    tempTintData.tintTopRight = packBatchTint(rgbTR, alphaTR);
-    tempTintData.tintBottomLeft = packBatchTint(rgbBL, alphaBL);
-    tempTintData.tintBottomRight = packBatchTint(rgbBR, alphaBR);
+    textTintData.tintTopLeft = packBatchTint(rgbTL, alphaTL);
+    textTintData.tintTopRight = packBatchTint(rgbTR, alphaTR);
+    textTintData.tintBottomLeft = packBatchTint(rgbBL, alphaBL);
+    textTintData.tintBottomRight = packBatchTint(rgbBR, alphaBR);
 
     const hasCallback = src.displayCallback && typeof src.displayCallback === 'function';
 
-    // Shadow pass — render shadow behind the text.
+    // ── Shadow pass — render shadow behind the text. ────────────────────────
     if (src.hasDropShadow()) {
         const dsx = src.dropShadowX;
         const dsy = src.dropShadowY;
         const sColor = src.dropShadowColor;
         const shadowAlpha = src.dropShadowAlpha;
 
-        const shadowOffsetX = originOffsetX + dsx;
-        const shadowOffsetY = originOffsetY + dsy;
-
-        // Shadow softness is a per-pass uniform; flush any pending batch so the
-        // shadow quads render with it before the main pass resets it to 0.
-        if (batchHandler.hasShadowSoftnessChanged(shadowSoftness)) {
-            batchHandler.run(drawingContext);
-        }
-        batchHandler.setShadowSoftness(shadowSoftness);
+        // A hard shadow is just a glyph in shadow colour (PLAIN); only a soft
+        // shadow needs the dedicated mode and its true-SDF blur.
+        const shadowMode = shadowSoftness > 0 ? MSDFMode.SOFT_SHADOW : MSDFMode.PLAIN;
+        configurePass(batchHandler, drawingContext, shadowMode, 0, 0, 0, 0, 0, 0, shadowSoftness);
 
         // Shadow tint is a solid colour; the effective per-corner alpha follows
         // the text's per-corner alpha so the shadow fades with it.
@@ -200,212 +355,51 @@ function MSDFTextWebGLRenderer(
         const shadowAlphaBL = shadowAlpha * src._alphaBL;
         const shadowAlphaBR = shadowAlpha * src._alphaBR;
 
-        const shadowTintData = {
-            tintTopLeft:     packBatchTint(sColor, shadowAlphaTL),
-            tintTopRight:    packBatchTint(sColor, shadowAlphaTR),
-            tintBottomLeft:  packBatchTint(sColor, shadowAlphaBL),
-            tintBottomRight: packBatchTint(sColor, shadowAlphaBR)
-        };
+        shadowTintData.tintTopLeft = packBatchTint(sColor, shadowAlphaTL);
+        shadowTintData.tintTopRight = packBatchTint(sColor, shadowAlphaTR);
+        shadowTintData.tintBottomLeft = packBatchTint(sColor, shadowAlphaBL);
+        shadowTintData.tintBottomRight = packBatchTint(sColor, shadowAlphaBR);
 
-        for (let i = 0; i < characterCount; i++) {
-            const char = characters[i];
-            if (!char || char.w === 0 || char.h === 0) {
-                continue;
-            }
-
-            let shadowCharData: typeof tempCharData | any = char;
-            let shadowOffX = shadowOffsetX;
-            let shadowOffY = shadowOffsetY;
-            let shadowMatrix = calcMatrix;
-            let shadowTint = shadowTintData;
-
-            if (hasCallback) {
-                const callbackData = src.callbackData;
-                callbackData.index = i;
-                callbackData.charCode = char.charCode || 0;
-                const originalX = char.originalX !== undefined ? char.originalX : char.x;
-                const originalY = char.originalY !== undefined ? char.originalY : char.y;
-
-                callbackData.x = originalX + dsx;
-                callbackData.y = originalY + dsy;
-                callbackData.scale = char.scale || 1;
-                callbackData.rotation = char.rotation || 0;
-                callbackData.data = char.data;
-
-                callbackData.color = 0;
-                callbackData.tint.topLeft = appendAlpha(sColor, shadowAlphaTL);
-                callbackData.tint.topRight = appendAlpha(sColor, shadowAlphaTR);
-                callbackData.tint.bottomLeft = appendAlpha(sColor, shadowAlphaBL);
-                callbackData.tint.bottomRight = appendAlpha(sColor, shadowAlphaBR);
-
-                const result = src.displayCallback(callbackData);
-
-                const posChanged = result.x !== (originalX + dsx) || result.y !== (originalY + dsy);
-                const scaleChanged = result.scale !== 1;
-                const rotationChanged = result.rotation !== 0;
-
-                if (scaleChanged || rotationChanged) {
-                    const centerX = char.w / 2;
-                    const centerY = char.h / 2;
-
-                    tempCharMatrix.copyFrom(calcMatrix);
-                    tempCharMatrix.translate(result.x + centerX + originOffsetX, result.y + centerY + originOffsetY);
-
-                    if (rotationChanged) {
-                        tempCharMatrix.rotate(result.rotation);
-                    }
-                    if (scaleChanged) {
-                        tempCharMatrix.scale(result.scale, result.scale);
-                    }
-
-                    tempCharData.x = -centerX;
-                    tempCharData.y = -centerY;
-                    tempCharData.w = char.w;
-                    tempCharData.h = char.h;
-                    tempCharData.u0 = char.u0;
-                    tempCharData.v0 = char.v0;
-                    tempCharData.u1 = char.u1;
-                    tempCharData.v1 = char.v1;
-                    shadowCharData = tempCharData;
-                    shadowMatrix = tempCharMatrix;
-                    shadowOffX = 0;
-                    shadowOffY = 0;
-                } else if (posChanged) {
-                    tempCharData.x = result.x;
-                    tempCharData.y = result.y;
-                    tempCharData.w = char.w;
-                    tempCharData.h = char.h;
-                    tempCharData.u0 = char.u0;
-                    tempCharData.v0 = char.v0;
-                    tempCharData.u1 = char.u1;
-                    tempCharData.v1 = char.v1;
-                    shadowCharData = tempCharData;
-                    shadowOffX = originOffsetX;
-                    shadowOffY = originOffsetY;
-                }
-
-                // Repack whatever the callback left in `color` / `tint` into the
-                // batch's ABGR layout, re-applying each corner's shadow alpha.
-                if (result.color) {
-                    const rgb = result.color & 0xffffff;
-                    shadowCallbackTintData.tintTopLeft = packBatchTint(rgb, shadowAlphaTL);
-                    shadowCallbackTintData.tintTopRight = packBatchTint(rgb, shadowAlphaTR);
-                    shadowCallbackTintData.tintBottomLeft = packBatchTint(rgb, shadowAlphaBL);
-                    shadowCallbackTintData.tintBottomRight = packBatchTint(rgb, shadowAlphaBR);
-                } else {
-                    shadowCallbackTintData.tintTopLeft = packBatchTint(result.tint.topLeft & 0xffffff, shadowAlphaTL);
-                    shadowCallbackTintData.tintTopRight = packBatchTint(result.tint.topRight & 0xffffff, shadowAlphaTR);
-                    shadowCallbackTintData.tintBottomLeft = packBatchTint(result.tint.bottomLeft & 0xffffff, shadowAlphaBL);
-                    shadowCallbackTintData.tintBottomRight = packBatchTint(result.tint.bottomRight & 0xffffff, shadowAlphaBR);
-                }
-                shadowTint = shadowCallbackTintData;
-            }
-
-            BatchMSDFChar(drawingContext, batchHandler, texture, shadowCharData, shadowOffX, shadowOffY, shadowMatrix, shadowTint);
-        }
+        submitTextChars(
+            src, characters, characterCount, drawingContext, batchHandler, texture, hasCallback,
+            calcMatrix, originOffsetX, originOffsetY, dsx, dsy,
+            shadowTintData,
+            sColor, sColor, sColor, sColor,
+            shadowAlphaTL, shadowAlphaTR, shadowAlphaBL, shadowAlphaBR,
+            shadowCallbackTintData
+        );
     }
 
-    // Main text pass — reset shadow softness so text uses the crisp MSDF path.
-    if (batchHandler.hasShadowSoftnessChanged(0)) {
-        batchHandler.run(drawingContext);
+    // ── Outline silhouette pass (layered only) — every glyph's outline blob, ─
+    // drawn before any fill so neighbouring outlines can't cover a glyph's fill.
+    if (layered) {
+        configurePass(batchHandler, drawingContext, MSDFMode.OUTLINE_SILHOUETTE, outlineWidth, oR, oG, oB, oA, outlineRounded, 0);
+        submitTextChars(
+            src, characters, characterCount, drawingContext, batchHandler, texture, hasCallback,
+            calcMatrix, originOffsetX, originOffsetY, 0, 0,
+            textTintData,
+            rgbTL, rgbTR, rgbBL, rgbBR,
+            alphaTL, alphaTR, alphaBL, alphaBR,
+            textCallbackTintData
+        );
     }
-    batchHandler.setShadowSoftness(0);
 
-    for (let i = 0; i < characterCount; i++) {
-        const char = characters[i];
-        if (!char || char.w === 0 || char.h === 0) {
-            continue;
-        }
-
-        let charData: any = char;
-        let offX = originOffsetX;
-        let offY = originOffsetY;
-        let charMatrix = calcMatrix;
-        let charTint = tempTintData;
-
-        if (hasCallback) {
-            const callbackData = src.callbackData;
-            callbackData.index = i;
-            callbackData.charCode = char.charCode || 0;
-            const originalX = char.originalX !== undefined ? char.originalX : char.x;
-            const originalY = char.originalY !== undefined ? char.originalY : char.y;
-            callbackData.x = originalX;
-            callbackData.y = originalY;
-            callbackData.scale = char.scale || 1;
-            callbackData.rotation = char.rotation || 0;
-            callbackData.data = char.data;
-
-            callbackData.color = 0;
-            callbackData.tint.topLeft = appendAlpha(rgbTL, alphaTL);
-            callbackData.tint.topRight = appendAlpha(rgbTR, alphaTR);
-            callbackData.tint.bottomLeft = appendAlpha(rgbBL, alphaBL);
-            callbackData.tint.bottomRight = appendAlpha(rgbBR, alphaBR);
-
-            const result = src.displayCallback(callbackData);
-
-            if (result) {
-                const posChanged = result.x !== originalX || result.y !== originalY;
-                const scaleChanged = result.scale !== 1;
-                const rotationChanged = result.rotation !== 0;
-
-                if (scaleChanged || rotationChanged) {
-                    const centerX = char.w / 2;
-                    const centerY = char.h / 2;
-
-                    tempCharMatrix.copyFrom(calcMatrix);
-                    tempCharMatrix.translate(result.x + centerX + originOffsetX, result.y + centerY + originOffsetY);
-
-                    if (rotationChanged) {
-                        tempCharMatrix.rotate(result.rotation);
-                    }
-                    if (scaleChanged) {
-                        tempCharMatrix.scale(result.scale, result.scale);
-                    }
-
-                    tempCharData.x = -centerX;
-                    tempCharData.y = -centerY;
-                    tempCharData.w = char.w;
-                    tempCharData.h = char.h;
-                    tempCharData.u0 = char.u0;
-                    tempCharData.v0 = char.v0;
-                    tempCharData.u1 = char.u1;
-                    tempCharData.v1 = char.v1;
-                    charData = tempCharData;
-                    charMatrix = tempCharMatrix;
-                    offX = 0;
-                    offY = 0;
-                } else if (posChanged) {
-                    tempCharData.x = result.x;
-                    tempCharData.y = result.y;
-                    tempCharData.w = char.w;
-                    tempCharData.h = char.h;
-                    tempCharData.u0 = char.u0;
-                    tempCharData.v0 = char.v0;
-                    tempCharData.u1 = char.u1;
-                    tempCharData.v1 = char.v1;
-                    charData = tempCharData;
-                }
-
-                // Repack whatever the callback left in `color` / `tint` into the
-                // batch's ABGR layout, re-applying each corner's alpha.
-                if (result.color) {
-                    const rgb = result.color & 0xffffff;
-                    callbackTintData.tintTopLeft = packBatchTint(rgb, alphaTL);
-                    callbackTintData.tintTopRight = packBatchTint(rgb, alphaTR);
-                    callbackTintData.tintBottomLeft = packBatchTint(rgb, alphaBL);
-                    callbackTintData.tintBottomRight = packBatchTint(rgb, alphaBR);
-                } else {
-                    callbackTintData.tintTopLeft = packBatchTint(result.tint.topLeft & 0xffffff, alphaTL);
-                    callbackTintData.tintTopRight = packBatchTint(result.tint.topRight & 0xffffff, alphaTR);
-                    callbackTintData.tintBottomLeft = packBatchTint(result.tint.bottomLeft & 0xffffff, alphaBL);
-                    callbackTintData.tintBottomRight = packBatchTint(result.tint.bottomRight & 0xffffff, alphaBR);
-                }
-                charTint = callbackTintData;
-            }
-        }
-
-        BatchMSDFChar(drawingContext, batchHandler, texture, charData, offX, offY, charMatrix, charTint);
-    }
+    // ── Text pass — combined outline+fill, or the plain fill of a layered ────
+    // outline / a font with no outline.
+    const textMode = layered ? MSDFMode.PLAIN
+        : hasOutline ? MSDFMode.OUTLINE_COMBINED
+        : MSDFMode.PLAIN;
+    // The fill pass of a layered outline carries no outline of its own.
+    const passOutlineWidth = (textMode === MSDFMode.OUTLINE_COMBINED) ? outlineWidth : 0;
+    configurePass(batchHandler, drawingContext, textMode, passOutlineWidth, oR, oG, oB, oA, outlineRounded, 0);
+    submitTextChars(
+        src, characters, characterCount, drawingContext, batchHandler, texture, hasCallback,
+        calcMatrix, originOffsetX, originOffsetY, 0, 0,
+        textTintData,
+        rgbTL, rgbTR, rgbBL, rgbBR,
+        alphaTL, alphaTR, alphaBL, alphaBR,
+        textCallbackTintData
+    );
 }
 
 export default MSDFTextWebGLRenderer;

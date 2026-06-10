@@ -149,8 +149,9 @@ text.wordWrapCharCode = 32;        // Default: space. Use 45 for hyphen, etc.
 ### Outline (shader-based, no extra draw calls)
 
 ```ts
-text.setOutline(1.5, 0x000000, 1.0);          // width (distance-field units), color, alpha
-text.setOutline(1.5, 0x000000, 1.0, true);    // rounded outer corners (MTSDF atlas only)
+text.setOutline(1.5, 0x000000, 1.0);              // width (distance-field units), color, alpha
+text.setOutline(1.5, 0x000000, 1.0, true);        // rounded outer corners (MTSDF atlas only)
+text.setOutline(3, 0x000000, 1.0, false, true);   // layered — thick outline, no neighbour overlap
 text.clearOutline();
 text.hasOutline();                            // boolean
 
@@ -159,6 +160,7 @@ text.outlineWidth = 2;                        // distance-field units
 text.outlineColor = 0x000000;                 // packed 0xRRGGBB
 text.outlineAlpha = 1;
 text.outlineRounded = true;                   // MTSDF atlas only
+text.outlineLayered = true;                   // separate silhouette pass under the fill
 ```
 
 Practical outline widths are roughly 0.5–3.0. The shader can only represent
@@ -173,6 +175,17 @@ signed distance field. It requires an **MTSDF** atlas (generated with
 `-type mtsdf`; see [FONTS.md](FONTS.md)). On a plain MSDF font it is ignored
 with a one-time console warning and the outline stays sharp. The letterforms
 themselves stay crisp either way — only the outline edge rounds.
+
+`layered` fixes the one drawback of the default single-pass outline: because the
+outline is computed per glyph, a thick one can spill over and cover the previous
+glyph. With `layered`, every glyph's outline silhouette is drawn first and every
+glyph's fill goes on top, so neighbouring outlines never cover a glyph's face.
+The cost is a second set of glyph quads (≈2× the outline's fragment work, still
+within the same 1–2 draw calls), and because the outline now sits *under* the
+fill rather than being composited with it in one pass, partially transparent
+text shows the outline faintly through the fill. Leave it off (the default)
+unless the outline is actually thick enough to overlap. Works on plain MSDF and
+MTSDF alike, and combines with `rounded` and the drop shadow.
 
 ### Shadow (extra pass, still batched)
 
