@@ -85,8 +85,12 @@ export interface DisplayCallbackData {
     rotation: number;      // Character rotation in radians (can be modified)
     /**
      * Per-corner tint, each packed `0xAARRGGBB` (the format Phaser's
-     * `getTintAppendFloatAlpha` produces). Assign `0xRRGGBB` colours back — the
-     * renderer re-applies the object's per-corner alpha itself.
+     * `getTintAppendFloatAlpha` produces). The alpha byte is authoritative:
+     * seeded with the glyph's effective per-corner alpha, it is used as-is, so
+     * assign `0xAARRGGBB` (ARGB) back to control per-glyph/per-corner alpha —
+     * `0x00xxxxxx` renders fully transparent. To recolour without touching
+     * alpha, preserve the high byte (e.g. `(tint.topLeft & 0xff000000) | rgb`)
+     * or use {@link color}, which is RGB-only and keeps the object's alpha.
      */
     tint: DisplayCallbackTint;
     /**

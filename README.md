@@ -232,9 +232,13 @@ Tinting follows Phaser's `BitmapText` display-callback convention:
   resets to `0` before every call; assign a colour to use it. As in Phaser, a
   literal black `0x000000` reads as "unset" — use `data.tint` for solid black.
 - `data.tint` — `{ topLeft, topRight, bottomLeft, bottomRight }` for a
-  per-corner gradient. Each corner is handed in as a packed `0xAARRGGBB` value;
-  assign plain `0xRRGGBB` colours back. The object's per-corner alpha is
-  re-applied by the renderer, so `tint` can't override alpha.
+  per-corner gradient. Each corner is a packed `0xAARRGGBB` value, seeded with
+  the glyph's effective per-corner alpha. **Unlike Phaser's `BitmapText`, the
+  alpha byte is authoritative** — assign `0xAARRGGBB` (ARGB) back to set
+  per-glyph (or per-corner) alpha, with `0x00xxxxxx` rendering fully
+  transparent. To recolour without changing alpha, preserve the high byte
+  (`(data.tint.topLeft & 0xff000000) | rgb`) or use `data.color`, which is
+  RGB-only and keeps the object's alpha.
 
 `data` is a single shared object — don't hold a reference to it between calls.
 Shadows automatically follow callback transforms.

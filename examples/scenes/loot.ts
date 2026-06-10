@@ -473,10 +473,11 @@ class LootCard {
       Phaser.Display.Color.HSVToRGB(hue, 1, value, emberRGB);
       return Phaser.Display.Color.GetColor(emberRGB.r, emberRGB.g, emberRGB.b);
     };
-    d.tint.topLeft = ember(0, 0);
-    d.tint.topRight = ember(0, 0.8);
-    d.tint.bottomLeft = ember(1, 0);
-    d.tint.bottomRight = ember(1, 0.8);
+    // `tint` is authoritative ARGB — keep each corner's seeded alpha byte.
+    d.tint.topLeft = ember(0, 0) | (d.tint.topLeft & 0xff000000);
+    d.tint.topRight = ember(0, 0.8) | (d.tint.topRight & 0xff000000);
+    d.tint.bottomLeft = ember(1, 0) | (d.tint.bottomLeft & 0xff000000);
+    d.tint.bottomRight = ember(1, 0.8) | (d.tint.bottomRight & 0xff000000);
     return d;
   };
 }

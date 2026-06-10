@@ -16,8 +16,11 @@
  * Display callbacks see tint the Phaser-idiomatic way: each `tint` corner is a
  * `0xAARRGGBB` value (as `Utils.getTintAppendFloatAlpha` produces) and `color`
  * is a `0xRRGGBB` shorthand for all four corners. The renderer repacks whatever
- * the callback returns into the batch's ABGR layout and re-applies the object's
- * per-corner alpha, so a callback can't override alpha through `tint`.
+ * the callback returns into the batch's ABGR layout. Unlike Phaser's BitmapText,
+ * the `tint` corners' alpha byte is authoritative — it is seeded with the
+ * object's per-corner alpha but a callback may rewrite it for per-glyph (even
+ * per-corner) alpha, with `0x00` meaning fully transparent. The `color`
+ * shorthand carries no alpha, so it keeps the object's per-corner alpha.
  */
 
 import * as Phaser from "phaser";
@@ -229,7 +232,11 @@ function submitTextChars(
                 }
 
                 // Repack whatever the callback left in `color` / `tint` into the
-                // batch's ABGR layout, re-applying each corner's alpha.
+                // batch's ABGR layout. The `color` shorthand is RGB-only, so the
+                // object's per-corner alpha is re-applied. The `tint` corners are
+                // authoritative ARGB: their alpha byte (seeded with the object
+                // alpha) is the effective per-corner alpha, so a callback can set
+                // per-glyph alpha by rewriting it — `0x00` means fully transparent.
                 if (result.color) {
                     const rgb = result.color & 0xffffff;
                     cbTint.tintTopLeft = packBatchTint(rgb, alphaTL);
@@ -237,10 +244,14 @@ function submitTextChars(
                     cbTint.tintBottomLeft = packBatchTint(rgb, alphaBL);
                     cbTint.tintBottomRight = packBatchTint(rgb, alphaBR);
                 } else {
-                    cbTint.tintTopLeft = packBatchTint(result.tint.topLeft & 0xffffff, alphaTL);
-                    cbTint.tintTopRight = packBatchTint(result.tint.topRight & 0xffffff, alphaTR);
-                    cbTint.tintBottomLeft = packBatchTint(result.tint.bottomLeft & 0xffffff, alphaBL);
-                    cbTint.tintBottomRight = packBatchTint(result.tint.bottomRight & 0xffffff, alphaBR);
+                    const tTL = result.tint.topLeft;
+                    const tTR = result.tint.topRight;
+                    const tBL = result.tint.bottomLeft;
+                    const tBR = result.tint.bottomRight;
+                    cbTint.tintTopLeft = packBatchTint(tTL & 0xffffff, ((tTL >>> 24) & 0xff) / 255);
+                    cbTint.tintTopRight = packBatchTint(tTR & 0xffffff, ((tTR >>> 24) & 0xff) / 255);
+                    cbTint.tintBottomLeft = packBatchTint(tBL & 0xffffff, ((tBL >>> 24) & 0xff) / 255);
+                    cbTint.tintBottomRight = packBatchTint(tBR & 0xffffff, ((tBR >>> 24) & 0xff) / 255);
                 }
                 charTint = cbTint;
             }
