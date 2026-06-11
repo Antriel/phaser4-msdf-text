@@ -4,7 +4,7 @@ import type { ExampleScene } from "./ExampleScene";
 import { getResponsive } from "./responsive";
 import { FONT_OPTIONS } from "./fonts";
 
-const ALIGN_OPTIONS = { Left: 0, Center: 1, Right: 2 };
+const ALIGN_OPTIONS = { Left: "left", Center: "center", Right: "right" };
 
 /**
  * Append the controls shared by every example: a "Text" folder bound to the

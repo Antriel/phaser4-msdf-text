@@ -17,20 +17,20 @@
  * stable across the (potentially thousands of) per-glyph iterations.
  */
 
-import type { Corners } from './MSDFTint';
+import type { Corners } from './MSDFColor';
 
 /** Fill, shadow and outline each expose a per-corner colour + alpha. */
 export interface GlyphAspect {
     /** Per-corner colour, packed `0xRRGGBB`. */
-    tint: Corners;
+    color: Corners;
     /** Per-corner alpha, `0-1`. */
     alpha: Corners;
 }
 
 export interface GlyphShadow extends GlyphAspect {
-    /** Per-glyph shadow X offset in pixels (seeded from `dropShadowX`). */
+    /** Per-glyph shadow X offset in pixels (seeded from `shadowX`). */
     x: number;
-    /** Per-glyph shadow Y offset in pixels (seeded from `dropShadowY`). */
+    /** Per-glyph shadow Y offset in pixels (seeded from `shadowY`). */
     y: number;
 }
 
@@ -44,8 +44,10 @@ export interface GlyphState {
     x: number;
     /** Glyph Y in text space (seeded from layout). */
     y: number;
-    /** Glyph scale about its centre. `0` hides it. */
-    scale: number;
+    /** Horizontal glyph scale about its centre. `0` hides it. */
+    scaleX: number;
+    /** Vertical glyph scale about its centre. `0` hides it. */
+    scaleY: number;
     /** Glyph rotation about its centre, in radians. */
     rotation: number;
 
@@ -56,16 +58,18 @@ export interface GlyphState {
     /** Outline colour/alpha for this glyph (ignored if the text has no outline). */
     outline: GlyphAspect;
 
+    /** Set both axes of glyph scale. `setScale(v)` is uniform; `setScale(x, y)` is independent. */
+    setScale(x: number, y?: number): void;
     /** Set the fill colour (`0xRRGGBB`) on all four corners. */
-    setFill(rgb: number): void;
+    setFillColor(rgb: number): void;
     /** Set the fill alpha (`0-1`) on all four corners. */
     setFillAlpha(alpha: number): void;
     /** Set the shadow colour (`0xRRGGBB`) on all four corners. */
-    setShadow(rgb: number): void;
+    setShadowColor(rgb: number): void;
     /** Set the shadow alpha (`0-1`) on all four corners. */
     setShadowAlpha(alpha: number): void;
     /** Set the outline colour (`0xRRGGBB`) on all four corners. */
-    setOutline(rgb: number): void;
+    setOutlineColor(rgb: number): void;
     /** Set the outline alpha (`0-1`) on all four corners. */
     setOutlineAlpha(alpha: number): void;
 }
@@ -76,24 +80,28 @@ function corners(value: number): Corners {
 
 // Shared method implementations — one function object each, assigned to every
 // glyph state, so there is no per-glyph closure allocation.
-function setFill(this: GlyphState, rgb: number): void {
-    const t = this.fill.tint;
+function setScale(this: GlyphState, x: number, y?: number): void {
+    this.scaleX = x;
+    this.scaleY = y === undefined ? x : y;
+}
+function setFillColor(this: GlyphState, rgb: number): void {
+    const t = this.fill.color;
     t.topLeft = t.topRight = t.bottomLeft = t.bottomRight = rgb;
 }
 function setFillAlpha(this: GlyphState, alpha: number): void {
     const a = this.fill.alpha;
     a.topLeft = a.topRight = a.bottomLeft = a.bottomRight = alpha;
 }
-function setShadow(this: GlyphState, rgb: number): void {
-    const t = this.shadow.tint;
+function setShadowColor(this: GlyphState, rgb: number): void {
+    const t = this.shadow.color;
     t.topLeft = t.topRight = t.bottomLeft = t.bottomRight = rgb;
 }
 function setShadowAlpha(this: GlyphState, alpha: number): void {
     const a = this.shadow.alpha;
     a.topLeft = a.topRight = a.bottomLeft = a.bottomRight = alpha;
 }
-function setOutline(this: GlyphState, rgb: number): void {
-    const t = this.outline.tint;
+function setOutlineColor(this: GlyphState, rgb: number): void {
+    const t = this.outline.color;
     t.topLeft = t.topRight = t.bottomLeft = t.bottomRight = rgb;
 }
 function setOutlineAlpha(this: GlyphState, alpha: number): void {
@@ -108,16 +116,18 @@ export function createGlyphState(): GlyphState {
         charCode: 0,
         x: 0,
         y: 0,
-        scale: 1,
+        scaleX: 1,
+        scaleY: 1,
         rotation: 0,
-        fill: { tint: corners(0xffffff), alpha: corners(1) },
-        shadow: { tint: corners(0), alpha: corners(1), x: 0, y: 0 },
-        outline: { tint: corners(0), alpha: corners(1) },
-        setFill,
+        fill: { color: corners(0xffffff), alpha: corners(1) },
+        shadow: { color: corners(0), alpha: corners(1), x: 0, y: 0 },
+        outline: { color: corners(0), alpha: corners(1) },
+        setScale,
+        setFillColor,
         setFillAlpha,
-        setShadow,
+        setShadowColor,
         setShadowAlpha,
-        setOutline,
+        setOutlineColor,
         setOutlineAlpha
     };
 }

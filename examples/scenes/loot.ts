@@ -307,7 +307,7 @@ class LootCard {
       if (effects) {
         // White base so the per-corner fire tint reads at full strength.
         power.color = 0xffffff;
-        power.setDropShadow(0, 0, EMBER_GLOW, 0.7, 8).setDisplayCallback(this.fireShimmer);
+        power.setShadow(0, 0, EMBER_GLOW, 0.7, 8).setDisplayCallback(this.fireShimmer);
       }
       flavorY += power.height + 12;
     }
@@ -355,18 +355,18 @@ class LootCard {
   /** Per-frame: pulse the name glow, and flicker the affix-power flame. */
   update(time: number): void {
     // Legendary & mythic names carry a slow, even pulse.
-    if (RARITIES.indexOf(this.item.rarity) >= 4 && this.nameText.hasDropShadow()) {
+    if (RARITIES.indexOf(this.item.rarity) >= 4 && this.nameText.hasShadow()) {
       const s = (Math.sin(time * 0.005) + 1) / 2;
-      this.nameText.dropShadowSoftness = 5 + s * 6;
-      this.nameText.dropShadowAlpha = 0.5 + s * 0.4;
-      this.nameText.dropShadowX = 2 + s * 2;
-      this.nameText.dropShadowY = 3 + s * 2;
+      this.nameText.shadowSoftness = 5 + s * 6;
+      this.nameText.shadowAlpha = 0.5 + s * 0.4;
+      this.nameText.shadowX = 2 + s * 2;
+      this.nameText.shadowY = 3 + s * 2;
     }
     // Affix power — two out-of-step sines give the glow an irregular flicker.
-    if (this.powerText && this.powerText.hasDropShadow()) {
+    if (this.powerText && this.powerText.hasShadow()) {
       const f = 0.55 + 0.28 * Math.sin(time * 0.013) + 0.17 * Math.sin(time * 0.029);
-      this.powerText.dropShadowSoftness = 5 + f * 7;
-      this.powerText.dropShadowAlpha = 0.45 + f * 0.4;
+      this.powerText.shadowSoftness = 5 + f * 7;
+      this.powerText.shadowAlpha = 0.45 + f * 0.4;
     }
   }
 
@@ -423,7 +423,7 @@ class LootCard {
   /** Outline / shadow / glow on the name, escalating with rarity. */
   private applyNameEffect(effects: boolean): void {
     const name = this.nameText;
-    name.clearOutline().clearDropShadow().clearDisplayCallback();
+    name.clearOutline().clearShadow().clearDisplayCallback();
     if (!effects) return;
 
     const tier = RARITIES.indexOf(this.item.rarity);
@@ -432,13 +432,13 @@ class LootCard {
         .setOutline(tier >= 4 ? 3.5 : 2.6, OUTLINE, 1, tier >= 4)
         .setLetterSpacing(tier >= 4 ? 2 : 1);
     if (tier === 3) {
-      name.setDropShadow(0, 3, 0x000000, 0.8, 4);
-      name.dropShadowX = 4;
-      name.dropShadowY = 4;
+      name.setShadow(0, 3, 0x000000, 0.8, 4);
+      name.shadowX = 4;
+      name.shadowY = 4;
     }
     if (tier >= 4) {
       // Legendary & mythic: a warm glow, pulsed each frame in update().
-      name.setDropShadow(0, 0, this.item.rarity.color, 0.8, 8);
+      name.setShadow(0, 0, this.item.rarity.color, 0.8, 8);
     }
     if (tier === 5) {
       // Mythic: a gold shimmer sweeps the glyphs — see MYTHIC_TINT note above.
@@ -452,7 +452,7 @@ class LootCard {
     const now = this.scene.time.now / 1000;
     for (let i = 0; i < glyphs.length; i++) {
       const sweep = Math.sin(i * 0.55 - now * 3.5);
-      glyphs[i].setFill(sweep > 0.6 ? SHIMMER_TINT : MYTHIC_TINT);
+      glyphs[i].setFillColor(sweep > 0.6 ? SHIMMER_TINT : MYTHIC_TINT);
     }
   };
 
@@ -476,11 +476,11 @@ class LootCard {
     for (let i = 0; i < glyphs.length; i++) {
       const flicker = 0.82 + 0.18 * Math.sin(t * 19 + i * 2.3);
       // Colour only; alpha stays as seeded.
-      const tint = glyphs[i].fill.tint;
-      tint.topLeft = ember(i, flicker, 0, 0);
-      tint.topRight = ember(i, flicker, 0, 0.8);
-      tint.bottomLeft = ember(i, flicker, 1, 0);
-      tint.bottomRight = ember(i, flicker, 1, 0.8);
+      const color = glyphs[i].fill.color;
+      color.topLeft = ember(i, flicker, 0, 0);
+      color.topRight = ember(i, flicker, 0, 0.8);
+      color.bottomLeft = ember(i, flicker, 1, 0);
+      color.bottomRight = ember(i, flicker, 1, 0.8);
     }
   };
 }

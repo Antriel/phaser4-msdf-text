@@ -25,7 +25,7 @@
 import * as Phaser from "phaser";
 import BatchMSDFChar from './BatchMSDFChar';
 import { MSDFMode, type MSDFBatchHandlerInstance } from './MSDFBatchHandler';
-import { packBatchTint, multiplyTint, type Corners, type PackedCorners } from './MSDFTint';
+import { packColor, type Corners, type PackedCorners } from './MSDFColor';
 import type { GlyphState } from './MSDFGlyphState';
 
 const GetCalcMatrix = (Phaser as any).GameObjects.GetCalcMatrix;
@@ -37,21 +37,21 @@ const GLYPH_MODE_CALLBACK = 1;
 
 // Reusable packed-corner buffers. A pass uses at most two at once (fill + outline),
 // and passes run sequentially, so three plus a constant zero cover every case.
-const fillBuf: PackedCorners = { tintTopLeft: 0, tintTopRight: 0, tintBottomLeft: 0, tintBottomRight: 0 };
-const outlineBuf: PackedCorners = { tintTopLeft: 0, tintTopRight: 0, tintBottomLeft: 0, tintBottomRight: 0 };
-const shadowBuf: PackedCorners = { tintTopLeft: 0, tintTopRight: 0, tintBottomLeft: 0, tintBottomRight: 0 };
+const fillBuf: PackedCorners = { colorTopLeft: 0, colorTopRight: 0, colorBottomLeft: 0, colorBottomRight: 0 };
+const outlineBuf: PackedCorners = { colorTopLeft: 0, colorTopRight: 0, colorBottomLeft: 0, colorBottomRight: 0 };
+const shadowBuf: PackedCorners = { colorTopLeft: 0, colorTopRight: 0, colorBottomLeft: 0, colorBottomRight: 0 };
 // Outline attribute for passes that ignore it (plain fill, shadow): all-zero, harmless.
-const zeroOutline: PackedCorners = { tintTopLeft: 0, tintTopRight: 0, tintBottomLeft: 0, tintBottomRight: 0 };
+const zeroOutline: PackedCorners = { colorTopLeft: 0, colorTopRight: 0, colorBottomLeft: 0, colorBottomRight: 0 };
 
 const tempCharData = { x: 0, y: 0, w: 0, h: 0, u0: 0, v0: 0, u1: 0, v1: 0 };
 const tempCharMatrix = new TransformMatrix();
 
 /** Pack a per-corner colour + alpha pair into a batch buffer. */
-function packAspect(buf: PackedCorners, tint: Corners, alpha: Corners): void {
-    buf.tintTopLeft = packBatchTint(tint.topLeft, alpha.topLeft);
-    buf.tintTopRight = packBatchTint(tint.topRight, alpha.topRight);
-    buf.tintBottomLeft = packBatchTint(tint.bottomLeft, alpha.bottomLeft);
-    buf.tintBottomRight = packBatchTint(tint.bottomRight, alpha.bottomRight);
+function packAspect(buf: PackedCorners, color: Corners, alpha: Corners): void {
+    buf.colorTopLeft = packColor(color.topLeft, alpha.topLeft);
+    buf.colorTopRight = packColor(color.topRight, alpha.topRight);
+    buf.colorBottomLeft = packColor(color.bottomLeft, alpha.bottomLeft);
+    buf.colorBottomRight = packColor(color.bottomRight, alpha.bottomRight);
 }
 
 /**
@@ -89,22 +89,23 @@ function submitOneGlyph(
     char: any,
     x: number,
     y: number,
-    scale: number,
+    scaleX: number,
+    scaleY: number,
     rotation: number,
     calcMatrix: any,
     originOffsetX: number,
     originOffsetY: number,
-    tintData: PackedCorners,
+    colorData: PackedCorners,
     outlineData: PackedCorners
 ): void {
-    if (scale !== 1 || rotation !== 0) {
+    if (scaleX !== 1 || scaleY !== 1 || rotation !== 0) {
         const centerX = char.w / 2;
         const centerY = char.h / 2;
 
         tempCharMatrix.copyFrom(calcMatrix);
         tempCharMatrix.translate(x + centerX + originOffsetX, y + centerY + originOffsetY);
         if (rotation !== 0) tempCharMatrix.rotate(rotation);
-        if (scale !== 1) tempCharMatrix.scale(scale, scale);
+        if (scaleX !== 1 || scaleY !== 1) tempCharMatrix.scale(scaleX, scaleY);
 
         tempCharData.x = -centerX;
         tempCharData.y = -centerY;
@@ -114,12 +115,12 @@ function submitOneGlyph(
         tempCharData.v0 = char.v0;
         tempCharData.u1 = char.u1;
         tempCharData.v1 = char.v1;
-        BatchMSDFChar(drawingContext, batchHandler, texture, tempCharData, 0, 0, tempCharMatrix, tintData, outlineData);
+        BatchMSDFChar(drawingContext, batchHandler, texture, tempCharData, 0, 0, tempCharMatrix, colorData, outlineData);
     } else {
         // Reuse the char's geometry directly; fold the position delta into the offset.
         const offX = x - char.x + originOffsetX;
         const offY = y - char.y + originOffsetY;
-        BatchMSDFChar(drawingContext, batchHandler, texture, char, offX, offY, calcMatrix, tintData, outlineData);
+        BatchMSDFChar(drawingContext, batchHandler, texture, char, offX, offY, calcMatrix, colorData, outlineData);
     }
 }
 
@@ -165,13 +166,13 @@ function MSDFTextWebGLRenderer(
     // only carries usable data on MTSDF atlases. On a plain MSDF font they are
     // forced off here so the effects degrade to the standard look.
     const isMtsdf = src.fontData.distanceField.fieldType === 'mtsdf';
-    const shadowSoftness = (isMtsdf && src.dropShadowSoftness > 0) ? src.dropShadowSoftness : 0;
+    const shadowSoftness = (isMtsdf && src.shadowSoftness > 0) ? src.shadowSoftness : 0;
 
     const hasOutline = src.hasOutline();
     const outlineWidth = src.outlineWidth;
     const outlineRounded = (isMtsdf && src.outlineRounded) ? 1 : 0;
     const layered = hasOutline && src.outlineLayered;
-    const hasShadow = src.hasDropShadow();
+    const hasShadow = src.hasShadow();
 
     // ── Resolve per-glyph state ─────────────────────────────────────────────
     // Static mode keeps the object-level colours in shared buffers and never
@@ -182,29 +183,29 @@ function MSDFTextWebGLRenderer(
     let glyphs: GlyphState[] | null = null;
 
     if (glyphMode === GLYPH_MODE_STATIC) {
-        // Effective per-corner fill = Tint-component corner × base colour `_color`;
-        // alpha = colour alpha × per-corner object alpha. Outline and shadow reuse
-        // the object's single colour across all corners.
+        // Single base fill colour on every corner; alpha = colour alpha ×
+        // per-corner object alpha. Outline and shadow likewise use one colour.
         const c = src._color;
-        const cR = c.r, cG = c.g, cB = c.b, cA = c.a;
+        const cA = c.a;
         const aTL = cA * src._alphaTL, aTR = cA * src._alphaTR, aBL = cA * src._alphaBL, aBR = cA * src._alphaBR;
 
-        fillBuf.tintTopLeft = packBatchTint(multiplyTint(src.tintTopLeft, cR, cG, cB), aTL);
-        fillBuf.tintTopRight = packBatchTint(multiplyTint(src.tintTopRight, cR, cG, cB), aTR);
-        fillBuf.tintBottomLeft = packBatchTint(multiplyTint(src.tintBottomLeft, cR, cG, cB), aBL);
-        fillBuf.tintBottomRight = packBatchTint(multiplyTint(src.tintBottomRight, cR, cG, cB), aBR);
+        const fc = src.color;
+        fillBuf.colorTopLeft = packColor(fc, aTL);
+        fillBuf.colorTopRight = packColor(fc, aTR);
+        fillBuf.colorBottomLeft = packColor(fc, aBL);
+        fillBuf.colorBottomRight = packColor(fc, aBR);
 
         const oc = src.outlineColor, oA = src.outlineAlpha;
-        outlineBuf.tintTopLeft = packBatchTint(oc, oA * src._alphaTL);
-        outlineBuf.tintTopRight = packBatchTint(oc, oA * src._alphaTR);
-        outlineBuf.tintBottomLeft = packBatchTint(oc, oA * src._alphaBL);
-        outlineBuf.tintBottomRight = packBatchTint(oc, oA * src._alphaBR);
+        outlineBuf.colorTopLeft = packColor(oc, oA * src._alphaTL);
+        outlineBuf.colorTopRight = packColor(oc, oA * src._alphaTR);
+        outlineBuf.colorBottomLeft = packColor(oc, oA * src._alphaBL);
+        outlineBuf.colorBottomRight = packColor(oc, oA * src._alphaBR);
 
-        const sc = src.dropShadowColor, sA = src.dropShadowAlpha;
-        shadowBuf.tintTopLeft = packBatchTint(sc, sA * src._alphaTL);
-        shadowBuf.tintTopRight = packBatchTint(sc, sA * src._alphaTR);
-        shadowBuf.tintBottomLeft = packBatchTint(sc, sA * src._alphaBL);
-        shadowBuf.tintBottomRight = packBatchTint(sc, sA * src._alphaBR);
+        const sc = src.shadowColor, sA = src.shadowAlpha;
+        shadowBuf.colorTopLeft = packColor(sc, sA * src._alphaTL);
+        shadowBuf.colorTopRight = packColor(sc, sA * src._alphaTR);
+        shadowBuf.colorBottomLeft = packColor(sc, sA * src._alphaBL);
+        shadowBuf.colorBottomRight = packColor(sc, sA * src._alphaBR);
     } else {
         if (glyphMode === GLYPH_MODE_CALLBACK) {
             glyphs = src.prepareGlyphStates();
@@ -222,8 +223,8 @@ function MSDFTextWebGLRenderer(
         const shadowMode = shadowSoftness > 0 ? MSDFMode.SOFT_SHADOW : MSDFMode.PLAIN;
         configurePass(batchHandler, drawingContext, shadowMode, 0, 0, shadowSoftness);
 
-        const dsx = src.dropShadowX;
-        const dsy = src.dropShadowY;
+        const dsx = src.shadowX;
+        const dsy = src.shadowY;
 
         for (let i = 0; i < characterCount; i++) {
             const char = characters[i];
@@ -231,13 +232,13 @@ function MSDFTextWebGLRenderer(
 
             if (perGlyph) {
                 const g = glyphs![i];
-                packAspect(shadowBuf, g.shadow.tint, g.shadow.alpha);
+                packAspect(shadowBuf, g.shadow.color, g.shadow.alpha);
                 submitOneGlyph(drawingContext, batchHandler, texture, char,
-                    g.x + g.shadow.x, g.y + g.shadow.y, g.scale, g.rotation,
+                    g.x + g.shadow.x, g.y + g.shadow.y, g.scaleX, g.scaleY, g.rotation,
                     calcMatrix, originOffsetX, originOffsetY, shadowBuf, zeroOutline);
             } else {
                 submitOneGlyph(drawingContext, batchHandler, texture, char,
-                    char.x + dsx, char.y + dsy, 1, 0,
+                    char.x + dsx, char.y + dsy, 1, 1, 0,
                     calcMatrix, originOffsetX, originOffsetY, shadowBuf, zeroOutline);
             }
         }
@@ -254,13 +255,13 @@ function MSDFTextWebGLRenderer(
 
             if (perGlyph) {
                 const g = glyphs![i];
-                packAspect(outlineBuf, g.outline.tint, g.outline.alpha);
+                packAspect(outlineBuf, g.outline.color, g.outline.alpha);
                 submitOneGlyph(drawingContext, batchHandler, texture, char,
-                    g.x, g.y, g.scale, g.rotation,
+                    g.x, g.y, g.scaleX, g.scaleY, g.rotation,
                     calcMatrix, originOffsetX, originOffsetY, zeroOutline, outlineBuf);
             } else {
                 submitOneGlyph(drawingContext, batchHandler, texture, char,
-                    char.x, char.y, 1, 0,
+                    char.x, char.y, 1, 1, 0,
                     calcMatrix, originOffsetX, originOffsetY, zeroOutline, outlineBuf);
             }
         }
@@ -279,18 +280,18 @@ function MSDFTextWebGLRenderer(
 
         if (perGlyph) {
             const g = glyphs![i];
-            packAspect(fillBuf, g.fill.tint, g.fill.alpha);
+            packAspect(fillBuf, g.fill.color, g.fill.alpha);
             let outlineData = zeroOutline;
             if (combined) {
-                packAspect(outlineBuf, g.outline.tint, g.outline.alpha);
+                packAspect(outlineBuf, g.outline.color, g.outline.alpha);
                 outlineData = outlineBuf;
             }
             submitOneGlyph(drawingContext, batchHandler, texture, char,
-                g.x, g.y, g.scale, g.rotation,
+                g.x, g.y, g.scaleX, g.scaleY, g.rotation,
                 calcMatrix, originOffsetX, originOffsetY, fillBuf, outlineData);
         } else {
             submitOneGlyph(drawingContext, batchHandler, texture, char,
-                char.x, char.y, 1, 0,
+                char.x, char.y, 1, 1, 0,
                 calcMatrix, originOffsetX, originOffsetY, fillBuf, combined ? outlineBuf : zeroOutline);
         }
     }

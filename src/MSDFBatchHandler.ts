@@ -34,18 +34,18 @@ const SimpleVertexShader = [
     'uniform mat4 uProjectionMatrix;',
     'attribute vec2 inPosition;',
     'attribute vec2 inTexCoord;',
-    'attribute vec4 inTint;',
+    'attribute vec4 inColor;',
     'attribute vec4 inOutline;',  // Per-glyph outline colour (combined + silhouette passes).
     '',
     'varying vec2 outTexCoord;',
-    'varying vec4 outTint;',
+    'varying vec4 outColor;',
     'varying vec4 outOutline;',
     '',
     'void main()',
     '{',
     '    gl_Position = uProjectionMatrix * vec4(inPosition, 0.0, 1.0);',
     '    outTexCoord = inTexCoord;',
-    '    outTint = inTint;',
+    '    outColor = inColor;',
     '    outOutline = inOutline;',
     '}'
 ].join('\n');
@@ -67,7 +67,7 @@ const SimpleFragmentShader = [
     'uniform float uMode;',            // 0 plain/fill, 1 combined outline, 2 outline silhouette, 3 soft shadow.
     '',
     'varying vec2 outTexCoord;',
-    'varying vec4 outTint;',
+    'varying vec4 outColor;',
     'varying vec4 outOutline;',  // Per-glyph outline colour (replaces the old uOutlineColor uniform).
     '',
     'float median(float r, float g, float b)',
@@ -98,8 +98,8 @@ const SimpleFragmentShader = [
     '        // Plain text fill. Also the fill pass of a layered outline and the',
     '        // hard (non-soft) drop shadow — both are just a glyph in some colour.',
     '        float coverage = clamp(pxRange * (dist - 0.5) + 0.5, 0.0, 1.0);',
-    '        float a = coverage * outTint.a;',
-    '        gl_FragColor = vec4(outTint.rgb * a, a);',
+    '        float a = coverage * outColor.a;',
+    '        gl_FragColor = vec4(outColor.rgb * a, a);',
     '    }',
     '    else if (uMode < 1.5)',
     '    {',
@@ -118,8 +118,8 @@ const SimpleFragmentShader = [
     '        // Guard against haze in the deep background at extreme minification.',
     '        float backgroundFade = smoothstep(0.0, 0.2, outlineDist);',
     '',
-    '        vec3 rgb = mix(outOutline.rgb, outTint.rgb, textMix);',
-    '        float a  = coverage * mix(outOutline.a, outTint.a, textMix) * backgroundFade;',
+    '        vec3 rgb = mix(outOutline.rgb, outColor.rgb, textMix);',
+    '        float a  = coverage * mix(outOutline.a, outColor.a, textMix) * backgroundFade;',
     '',
     '        gl_FragColor = vec4(rgb * a, a);',
     '    }',
@@ -143,8 +143,8 @@ const SimpleFragmentShader = [
     '        // edge anti-aliased when the text is very small.',
     '        float soft = max(uShadowSoftness, uPxRange / pxRange);',
     '        float alpha = clamp(uPxRange * (tsdf - 0.5) / soft + 0.5, 0.0, 1.0);',
-    '        float a = alpha * outTint.a;',
-    '        gl_FragColor = vec4(outTint.rgb * a, a);',
+    '        float a = alpha * outColor.a;',
+    '        gl_FragColor = vec4(outColor.rgb * a, a);',
     '    }',
     '}'
 ].join('\n');
@@ -192,7 +192,7 @@ interface MSDFBatchHandlerInstance {
         x3: number, y3: number,
         u0: number, v0: number,
         u1: number, v1: number,
-        tintBL: number, tintTL: number, tintTR: number, tintBR: number,
+        colorBL: number, colorTL: number, colorTR: number, colorBR: number,
         outBL: number, outTL: number, outTR: number, outBR: number
     ): void;
 
@@ -212,7 +212,7 @@ const defaultConfig = {
         layout: [
             { name: 'inPosition', size: 2 },
             { name: 'inTexCoord', size: 2 },
-            { name: 'inTint', size: 4, type: 'UNSIGNED_BYTE', normalized: true },
+            { name: 'inColor', size: 4, type: 'UNSIGNED_BYTE', normalized: true },
             { name: 'inOutline', size: 4, type: 'UNSIGNED_BYTE', normalized: true }
         ]
     }
@@ -349,7 +349,7 @@ class MSDFBatchHandler extends PhaserBatchHandler {
         x3: number, y3: number,
         u0: number, v0: number,
         u1: number, v1: number,
-        tintBL: number, tintTL: number, tintTR: number, tintBR: number,
+        colorBL: number, colorTL: number, colorTR: number, colorBR: number,
         outBL: number, outTL: number, outTR: number, outBR: number
     ): void {
         const self = this as unknown as MSDFBatchHandlerInstance;
@@ -367,34 +367,34 @@ class MSDFBatchHandler extends PhaserBatchHandler {
         const vertexViewF32 = vertexBuffer.viewF32 as Float32Array;
         const vertexViewU32 = vertexBuffer.viewU32 as Uint32Array;
 
-        // Each vertex is 6 u32-slots: x, y, u, v (f32), tint (u32), outline (u32).
+        // Each vertex is 6 u32-slots: x, y, u, v (f32), color (u32), outline (u32).
         // Vertex order for degenerate triangle strip: BL, TL, BR, TR
         vertexViewF32[vertexOffset32 + 0] = x0;
         vertexViewF32[vertexOffset32 + 1] = y0;
         vertexViewF32[vertexOffset32 + 2] = u0;
         vertexViewF32[vertexOffset32 + 3] = v1;
-        vertexViewU32[vertexOffset32 + 4] = tintBL;
+        vertexViewU32[vertexOffset32 + 4] = colorBL;
         vertexViewU32[vertexOffset32 + 5] = outBL;
 
         vertexViewF32[vertexOffset32 + 6] = x1;
         vertexViewF32[vertexOffset32 + 7] = y1;
         vertexViewF32[vertexOffset32 + 8] = u0;
         vertexViewF32[vertexOffset32 + 9] = v0;
-        vertexViewU32[vertexOffset32 + 10] = tintTL;
+        vertexViewU32[vertexOffset32 + 10] = colorTL;
         vertexViewU32[vertexOffset32 + 11] = outTL;
 
         vertexViewF32[vertexOffset32 + 12] = x3;
         vertexViewF32[vertexOffset32 + 13] = y3;
         vertexViewF32[vertexOffset32 + 14] = u1;
         vertexViewF32[vertexOffset32 + 15] = v1;
-        vertexViewU32[vertexOffset32 + 16] = tintBR;
+        vertexViewU32[vertexOffset32 + 16] = colorBR;
         vertexViewU32[vertexOffset32 + 17] = outBR;
 
         vertexViewF32[vertexOffset32 + 18] = x2;
         vertexViewF32[vertexOffset32 + 19] = y2;
         vertexViewF32[vertexOffset32 + 20] = u1;
         vertexViewF32[vertexOffset32 + 21] = v0;
-        vertexViewU32[vertexOffset32 + 22] = tintTR;
+        vertexViewU32[vertexOffset32 + 22] = colorTR;
         vertexViewU32[vertexOffset32 + 23] = outTR;
 
         self.instanceCount++;

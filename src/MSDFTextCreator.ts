@@ -6,7 +6,7 @@
  */
 
 import * as Phaser from "phaser";
-import { MSDFText, ColorValue } from './MSDFText';
+import { MSDFText, type ColorValue, type MSDFAlign } from './MSDFText';
 
 // @ts-ignore - Phaser internals not fully typed
 const GameObjectCreator = Phaser.GameObjects.GameObjectCreator;
@@ -30,7 +30,7 @@ export interface MSDFTextOutlineConfig {
 }
 
 /**
- * Shadow configuration for {@link MSDFTextConfig}. Mirrors `setDropShadow`.
+ * Shadow configuration for {@link MSDFTextConfig}. Mirrors `setShadow`.
  */
 export interface MSDFTextShadowConfig {
     /** Shadow X offset in pixels. Defaults to 0. */
@@ -55,8 +55,8 @@ export interface MSDFTextConfig extends Phaser.Types.GameObjects.GameObjectConfi
     fontSize?: number;
     color?: ColorValue;
     colorAlpha?: number;
-    /** Line alignment: 0 (left), 1 (center) or 2 (right). See `MSDFText.ALIGN_*`. */
-    align?: number;
+    /** Line alignment: `'left'` (default), `'center'` or `'right'`. */
+    align?: MSDFAlign;
     lineSpacing?: number;
     letterSpacing?: number;
     maxWidth?: number;
@@ -139,7 +139,7 @@ GameObjectCreator.register('msdfText', function (
 
     const shadow = config.shadow;
     if (shadow) {
-        msdfText.setDropShadow(
+        msdfText.setShadow(
             shadow.offsetX || 0,
             shadow.offsetY || 0,
             shadow.color,

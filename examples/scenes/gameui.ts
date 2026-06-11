@@ -54,7 +54,7 @@ export class GameUIScene extends ExampleScene {
       .setColor("#ffffff")
       .setOrigin(0.5)
       .setOutline(2.5, "#10131c", 1)
-      .setDropShadow(0, 6, "#000000", 0.5, 4)
+      .setShadow(0, 6, "#000000", 0.5, 4)
       .setDepth(10);
 
     // Centre callout — outline + soft glow, hidden until triggered.
@@ -64,7 +64,7 @@ export class GameUIScene extends ExampleScene {
       .setOrigin(0.5)
       .setOutline(3, "#5a3a00", 1, true)
       .setLetterSpacing(10)
-      .setDropShadow(0, 0, "#ffae00", 0.9, 10)
+      .setShadow(0, 0, "#ffae00", 0.9, 10)
       .setDepth(5)
       .setScale(0);
 

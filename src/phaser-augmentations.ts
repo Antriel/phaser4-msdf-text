@@ -5,7 +5,7 @@
  * Phaser's type surface so consumers get autocomplete and type checking.
  */
 
-import type { MSDFTextInstance } from './MSDFText';
+import type { MSDFTextInstance, MSDFAlign } from './MSDFText';
 import type { MSDFTextConfig } from './MSDFTextCreator';
 import type { MSDFFontFileConfig } from './MSDFFontFile';
 
@@ -26,7 +26,7 @@ declare module 'phaser' {
                 font: string,
                 text?: string | string[],
                 fontSize?: number,
-                align?: number
+                align?: MSDFAlign
             ): MSDFTextInstance;
         }
 

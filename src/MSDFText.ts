@@ -6,8 +6,10 @@
  * typically renders in 1-2 draw calls.
  *
  * Uses Phaser's idiomatic Class system with component mixins for proper
- * integration with Phaser's GameObject ecosystem. The public surface mirrors
- * Phaser's `BitmapText` closely, so it is largely a drop-in replacement.
+ * integration with Phaser's GameObject ecosystem. The public surface is
+ * BitmapText-flavoured but not a drop-in replacement — colour is a single base
+ * `color` (no per-object Tint component), alignment is a string, and per-glyph
+ * effects go through the `GlyphState` array rather than character callbacks.
  *
  * Usage:
  *   const text = scene.add.msdfText(x, y, 'arial', 'Hello World', fontSize);
@@ -18,7 +20,6 @@
 import * as Phaser from "phaser";
 import { MSDFFont } from './MSDFFont';
 import MSDFTextWebGLRenderer from './MSDFTextWebGLRenderer';
-import { multiplyTint } from './MSDFTint';
 import { createGlyphState, type GlyphState } from './MSDFGlyphState';
 
 // Per-glyph state mode. Static = no per-glyph array (object colour used as-is);
@@ -42,6 +43,9 @@ const PhaserMap: any = (Phaser as any).Structs.Map;
  * - object: { r, g, b, a? } with channels in 0-255 (also accepts Phaser.Display.Color)
  */
 export type ColorValue = number | string | Phaser.Types.Display.InputColorObject | Phaser.Display.Color;
+
+/** Line alignment for multi-line text. */
+export type MSDFAlign = 'left' | 'center' | 'right';
 
 /** Convert any {@link ColorValue} to a packed `0xRRGGBB` number. */
 function toColorInt(value: ColorValue): number {
@@ -85,30 +89,6 @@ export type DisplayCallback = (glyphs: GlyphState[], parent: MSDFTextInstance) =
 export type { GlyphState } from './MSDFGlyphState';
 
 /**
- * Character layout data
- */
-export interface CharacterData {
-    x: number;       // X position in text space
-    y: number;       // Y position in text space
-    w: number;       // Width
-    h: number;       // Height
-    u0: number;      // UV left
-    v0: number;      // UV top
-    u1: number;      // UV right
-    v1: number;      // UV bottom
-
-    // Optional callback data
-    originalX?: number;     // Original X (before callback modifications)
-    originalY?: number;     // Original Y (before callback modifications)
-    scale?: number;         // Per-character scale
-    rotation?: number;      // Per-character rotation
-    tint?: number;          // Per-character tint override
-    data?: any;             // Custom user data
-    charCode?: number;      // Character code (for callbacks)
-    line?: number;          // Line index (used by alignment)
-}
-
-/**
  * Type interface for MSDFText instances.
  *
  * Use this for type annotations instead of the `MSDFText` Class constructor.
@@ -125,7 +105,6 @@ export interface MSDFTextInstance extends
     Phaser.GameObjects.Components.Origin,
     Phaser.GameObjects.Components.ScrollFactor,
     Phaser.GameObjects.Components.Texture,
-    Phaser.GameObjects.Components.Tint,
     Phaser.GameObjects.Components.Transform,
     Phaser.GameObjects.Components.Visible {
 
@@ -157,21 +136,21 @@ export interface MSDFTextInstance extends
      */
     outlineLayered: boolean;
 
-    // Drop shadow — plain fields, matching Phaser's BitmapText naming, so they
-    // can be assigned or tweened directly. `setDropShadow` is a wrapper.
-    /** Horizontal offset of the drop shadow, in pixels. */
-    dropShadowX: number;
-    /** Vertical offset of the drop shadow, in pixels. */
-    dropShadowY: number;
-    /** Drop shadow color, packed `0xRRGGBB`. */
-    dropShadowColor: number;
-    /** Drop shadow alpha, 0-1. */
-    dropShadowAlpha: number;
+    // Drop shadow — plain fields, so they can be assigned or tweened directly.
+    // `setShadow` is a chainable convenience wrapper.
+    /** Horizontal offset of the shadow, in pixels. */
+    shadowX: number;
+    /** Vertical offset of the shadow, in pixels. */
+    shadowY: number;
+    /** Shadow color, packed `0xRRGGBB`. */
+    shadowColor: number;
+    /** Shadow alpha, 0-1. */
+    shadowAlpha: number;
     /**
-     * Drop shadow blur in distance-field units — scales with the text, like
+     * Shadow blur in distance-field units — scales with the text, like
      * `outlineWidth` (MTSDF atlas only). `0` is a hard edge.
      */
-    dropShadowSoftness: number;
+    shadowSoftness: number;
 
     /**
      * Optional per-frame display callback. Receives the per-glyph state array
@@ -196,8 +175,8 @@ export interface MSDFTextInstance extends
     // Property accessors (with side effects — trigger rebuild on change)
     text: string | string[];
     fontSize: number;
-    /** Line alignment: 0 (left), 1 (center) or 2 (right). See `ALIGN_*` constants. */
-    align: number;
+    /** Line alignment: `'left'` (default), `'center'` or `'right'`. */
+    align: MSDFAlign;
     lineSpacing: number;
     letterSpacing: number;
     maxWidth: number;
@@ -210,7 +189,7 @@ export interface MSDFTextInstance extends
 
     // Chainable setters
     setText(text: string | string[]): this;
-    setFont(font: string, size?: number, align?: number): this;
+    setFont(font: string, size?: number, align?: MSDFAlign): this;
     setFontSize(size: number): this;
     setColor(color: ColorValue, alpha?: number): this;
     setLeftAlign(): this;
@@ -236,9 +215,9 @@ export interface MSDFTextInstance extends
     setOutline(width: number, color?: ColorValue, alpha?: number, rounded?: boolean, layered?: boolean): this;
     clearOutline(): this;
     hasOutline(): boolean;
-    setDropShadow(x?: number, y?: number, color?: ColorValue, alpha?: number, softness?: number): this;
-    clearDropShadow(): this;
-    hasDropShadow(): boolean;
+    setShadow(x?: number, y?: number, color?: ColorValue, alpha?: number, softness?: number): this;
+    clearShadow(): this;
+    hasShadow(): boolean;
     getTextBounds(): {
         width: number;
         height: number;
@@ -262,15 +241,8 @@ export interface MSDFTextStatic {
         font: string,
         text?: string | string[],
         fontSize?: number,
-        align?: number
+        align?: MSDFAlign
     ): MSDFTextInstance;
-
-    /** Left-align multi-line text (default). */
-    readonly ALIGN_LEFT: 0;
-    /** Center-align multi-line text. */
-    readonly ALIGN_CENTER: 1;
-    /** Right-align multi-line text. */
-    readonly ALIGN_RIGHT: 2;
 }
 
 /**
@@ -313,7 +285,6 @@ export const MSDFText: MSDFTextStatic = new Class({
         Components.RenderNodes,
         Components.ScrollFactor,
         Components.Texture,
-        Components.Tint,
         Components.Transform,
         Components.Visible,
         MSDFTextRender
@@ -328,7 +299,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         font: string,
         text: string = '',
         fontSize: number = 42,
-        align: number = 0
+        align: MSDFAlign = 'left'
     ) {
         GameObject.call(this, scene, 'MSDFText');
 
@@ -366,12 +337,12 @@ export const MSDFText: MSDFTextStatic = new Class({
         this.outlineRounded = false;
         this.outlineLayered = false;
 
-        // Drop shadow — BitmapText-style plain fields.
-        this.dropShadowX = 0;
-        this.dropShadowY = 0;
-        this.dropShadowColor = 0x000000;
-        this.dropShadowAlpha = 0.5;
-        this.dropShadowSoftness = 0;
+        // Drop shadow — plain fields, assign/tween directly.
+        this.shadowX = 0;
+        this.shadowY = 0;
+        this.shadowColor = 0x000000;
+        this.shadowAlpha = 0.5;
+        this.shadowSoftness = 0;
 
         // ── Internal state ──────────────────────────────────────────────
         this._characters = [];
@@ -558,14 +529,13 @@ export const MSDFText: MSDFTextStatic = new Class({
     },
 
     /**
-     * Line alignment for multi-line text: 0 (left), 1 (center) or 2 (right).
-     * See the `MSDFText.ALIGN_LEFT/ALIGN_CENTER/ALIGN_RIGHT` constants and the
-     * `setLeftAlign` / `setCenterAlign` / `setRightAlign` chainable helpers.
-     * Setting this triggers a rebuild on next render.
+     * Line alignment for multi-line text: `'left'` (default), `'center'` or
+     * `'right'`. See the `setLeftAlign` / `setCenterAlign` / `setRightAlign`
+     * chainable helpers. Setting this triggers a rebuild on next render.
      */
     align: {
-        get: function (this: any): number { return this._align; },
-        set: function (this: any, value: number) {
+        get: function (this: any): MSDFAlign { return this._align; },
+        set: function (this: any, value: MSDFAlign) {
             if (this._align !== value) {
                 this._align = value;
                 this._dirty = true;
@@ -577,7 +547,7 @@ export const MSDFText: MSDFTextStatic = new Class({
      * Left-align each line of text (chainable). Only affects multi-line text.
      */
     setLeftAlign: function () {
-        this.align = MSDFText.ALIGN_LEFT;
+        this.align = 'left';
         return this;
     },
 
@@ -585,7 +555,7 @@ export const MSDFText: MSDFTextStatic = new Class({
      * Center-align each line of text (chainable). Only affects multi-line text.
      */
     setCenterAlign: function () {
-        this.align = MSDFText.ALIGN_CENTER;
+        this.align = 'center';
         return this;
     },
 
@@ -593,7 +563,7 @@ export const MSDFText: MSDFTextStatic = new Class({
      * Right-align each line of text (chainable). Only affects multi-line text.
      */
     setRightAlign: function () {
-        this.align = MSDFText.ALIGN_RIGHT;
+        this.align = 'right';
         return this;
     },
 
@@ -761,30 +731,31 @@ export const MSDFText: MSDFTextStatic = new Class({
         (g as any).charCode = char.charCode || 0;
         g.x = char.x;
         g.y = char.y;
-        g.scale = 1;
+        g.scaleX = 1;
+        g.scaleY = 1;
         g.rotation = 0;
 
         const c = this._color;
-        const cR = c.r, cG = c.g, cB = c.b, cA = c.a;
+        const cA = c.a;
         const aTL = cA * this._alphaTL, aTR = cA * this._alphaTR;
         const aBL = cA * this._alphaBL, aBR = cA * this._alphaBR;
 
-        const ft = g.fill.tint, fa = g.fill.alpha;
-        ft.topLeft = multiplyTint(this.tintTopLeft, cR, cG, cB);
-        ft.topRight = multiplyTint(this.tintTopRight, cR, cG, cB);
-        ft.bottomLeft = multiplyTint(this.tintBottomLeft, cR, cG, cB);
-        ft.bottomRight = multiplyTint(this.tintBottomRight, cR, cG, cB);
+        // Single base colour, applied to all four corners. Per-corner gradients
+        // are the caller's to set after seeding (e.g. in a display callback).
+        const rgb = this.color;
+        const ft = g.fill.color, fa = g.fill.alpha;
+        ft.topLeft = ft.topRight = ft.bottomLeft = ft.bottomRight = rgb;
         fa.topLeft = aTL; fa.topRight = aTR; fa.bottomLeft = aBL; fa.bottomRight = aBR;
 
-        const st = g.shadow.tint, sa = g.shadow.alpha;
-        const sc = this.dropShadowColor, sAlpha = this.dropShadowAlpha;
+        const st = g.shadow.color, sa = g.shadow.alpha;
+        const sc = this.shadowColor, sAlpha = this.shadowAlpha;
         st.topLeft = st.topRight = st.bottomLeft = st.bottomRight = sc;
         sa.topLeft = sAlpha * this._alphaTL; sa.topRight = sAlpha * this._alphaTR;
         sa.bottomLeft = sAlpha * this._alphaBL; sa.bottomRight = sAlpha * this._alphaBR;
-        g.shadow.x = this.dropShadowX;
-        g.shadow.y = this.dropShadowY;
+        g.shadow.x = this.shadowX;
+        g.shadow.y = this.shadowY;
 
-        const ot = g.outline.tint, oa = g.outline.alpha;
+        const ot = g.outline.color, oa = g.outline.alpha;
         const oc = this.outlineColor, oAlpha = this.outlineAlpha;
         ot.topLeft = ot.topRight = ot.bottomLeft = ot.bottomRight = oc;
         oa.topLeft = oAlpha * this._alphaTL; oa.topRight = oAlpha * this._alphaTR;
@@ -846,9 +817,9 @@ export const MSDFText: MSDFTextStatic = new Class({
     /**
      * Set the drop shadow for the text (chainable convenience wrapper).
      *
-     * The shadow has no layout side effects, so the underlying `dropShadowX`,
-     * `dropShadowY`, `dropShadowColor`, `dropShadowAlpha` and
-     * `dropShadowSoftness` fields can also be assigned or tweened directly.
+     * The shadow has no layout side effects, so the underlying `shadowX`,
+     * `shadowY`, `shadowColor`, `shadowAlpha` and `shadowSoftness` fields can
+     * also be assigned or tweened directly.
      *
      * Called with no arguments, this resets the shadow to its defaults
      * (effectively clearing it).
@@ -863,13 +834,13 @@ export const MSDFText: MSDFTextStatic = new Class({
      *   plain MSDF font. A soft shadow with zero offset reads as a glow. The
      *   maximum usable blur is the atlas `distanceRange`.
      */
-    setDropShadow: function (x: number = 0, y: number = 0, color: ColorValue = 0x000000, alpha: number = 0.5, softness: number = 0) {
-        this.dropShadowX = x;
-        this.dropShadowY = y;
-        this.dropShadowColor = toColorInt(color);
-        this.dropShadowAlpha = alpha;
-        this.dropShadowSoftness = Math.max(0, softness);
-        if (this.dropShadowSoftness > 0) {
+    setShadow: function (x: number = 0, y: number = 0, color: ColorValue = 0x000000, alpha: number = 0.5, softness: number = 0) {
+        this.shadowX = x;
+        this.shadowY = y;
+        this.shadowColor = toColorInt(color);
+        this.shadowAlpha = alpha;
+        this.shadowSoftness = Math.max(0, softness);
+        if (this.shadowSoftness > 0) {
             warnNeedsMtsdf(this, 'soft shadow');
         }
         return this;
@@ -877,20 +848,20 @@ export const MSDFText: MSDFTextStatic = new Class({
 
     /**
      * Clear the drop shadow effect (chainable). Resets the offset and softness;
-     * leaves color and alpha so a later `setDropShadow` reuses them.
+     * leaves color and alpha so a later `setShadow` reuses them.
      */
-    clearDropShadow: function () {
-        this.dropShadowX = 0;
-        this.dropShadowY = 0;
-        this.dropShadowSoftness = 0;
+    clearShadow: function () {
+        this.shadowX = 0;
+        this.shadowY = 0;
+        this.shadowSoftness = 0;
         return this;
     },
 
     /**
      * Whether a drop shadow is currently visible (has an offset or softness).
      */
-    hasDropShadow: function (): boolean {
-        return this.dropShadowX !== 0 || this.dropShadowY !== 0 || this.dropShadowSoftness > 0;
+    hasShadow: function (): boolean {
+        return this.shadowX !== 0 || this.shadowY !== 0 || this.shadowSoftness > 0;
     },
 
     // ========================================================================
@@ -1132,10 +1103,8 @@ export const MSDFText: MSDFTextStatic = new Class({
                 v0: char.v1,  // Swap v0 and v1 to flip orientation
                 u1: char.u1,
                 v1: char.v0,   // Swap v0 and v1 to flip orientation
-                charCode: charCode,  // Store for callback access
-                line: lineIndex,     // Line index, used by applyAlignment
-                originalX: charX,    // Store original position
-                originalY: charY
+                charCode: charCode,  // Store for seeding GlyphState
+                line: lineIndex      // Line index, used by applyAlignment
             });
 
             // Advance cursor (letter spacing applies after every character)
@@ -1182,7 +1151,7 @@ export const MSDFText: MSDFTextStatic = new Class({
      * @param lineData Per-line measurement from `MSDFFont.measureLines`.
      */
     applyAlignment: function (lineData: { widths: number[]; totalWidth: number }) {
-        if (this._align === MSDFText.ALIGN_LEFT || this._characters.length === 0) {
+        if (this._align === 'left' || this._characters.length === 0) {
             return;
         }
 
@@ -1192,15 +1161,13 @@ export const MSDFText: MSDFTextStatic = new Class({
             const lineWidth = lineData.widths[char.line as number] || 0;
             let offset = 0;
 
-            if (this._align === MSDFText.ALIGN_CENTER) {
+            if (this._align === 'center') {
                 offset = (longest - lineWidth) / 2;
-            } else if (this._align === MSDFText.ALIGN_RIGHT) {
+            } else if (this._align === 'right') {
                 offset = longest - lineWidth;
             }
 
-            // Keep originalX in sync so display callbacks see the aligned position.
             char.x += offset;
-            char.originalX = (char.originalX as number) + offset;
         }
     },
 
@@ -1223,9 +1190,3 @@ export const MSDFText: MSDFTextStatic = new Class({
     }
 
 });
-
-// Alignment constants — mirror Phaser.GameObjects.BitmapText.ALIGN_*.
-// Assigned through `any` because `MSDFTextStatic` types them as readonly.
-(MSDFText as any).ALIGN_LEFT = 0;
-(MSDFText as any).ALIGN_CENTER = 1;
-(MSDFText as any).ALIGN_RIGHT = 2;

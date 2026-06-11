@@ -63,12 +63,12 @@ export class EffectsScene extends ExampleScene {
   private applyEffectSetup(effect: string): void {
     if (effect === "jump") {
       this.text.clearOutline();
-      this.text.setDropShadow(0, 6, 0x000000, 0.55);
+      this.text.setShadow(0, 6, 0x000000, 0.55);
     } else if (effect === "outline") {
-      this.text.clearDropShadow();
+      this.text.clearShadow();
       this.text.setOutline(4, 0x000000, 1);
     } else {
-      this.text.clearDropShadow();
+      this.text.clearShadow();
       this.text.clearOutline();
     }
   }
@@ -100,9 +100,9 @@ export class EffectsScene extends ExampleScene {
             1,
           ) as Phaser.Types.Display.ColorObject;
           // Colour is plain 0xRRGGBB; alpha is untouched, so glyphs stay opaque.
-          g.fill.tint.topLeft = g.fill.tint.topRight =
+          g.fill.color.topLeft = g.fill.color.topRight =
             Phaser.Display.Color.GetColor(ct.r, ct.g, ct.b);
-          g.fill.tint.bottomLeft = g.fill.tint.bottomRight =
+          g.fill.color.bottomLeft = g.fill.color.bottomRight =
             Phaser.Display.Color.GetColor(cb.r, cb.g, cb.b);
           break;
         }
@@ -110,7 +110,7 @@ export class EffectsScene extends ExampleScene {
         case "typewriter": {
           // Reveal sweeps across the word, holds, then restarts.
           const cycle = (now * 3 * speed) % (WORD.length + 6);
-          if (i >= cycle) g.scale = 0;
+          if (i >= cycle) g.setScale(0);
           break;
         }
 
@@ -125,8 +125,9 @@ export class EffectsScene extends ExampleScene {
           const period = WORD.length * stagger + 3;
           const cycleTime = (now * speed) % period;
           const local = cycleTime - i * stagger;
-          g.scale =
-            local <= 0 ? 0 : local < 1 ? Phaser.Math.Easing.Back.Out(local) : 1;
+          g.setScale(
+            local <= 0 ? 0 : local < 1 ? Phaser.Math.Easing.Back.Out(local) : 1,
+          );
           break;
         }
 
@@ -139,8 +140,8 @@ export class EffectsScene extends ExampleScene {
 
         case "gradient": {
           // Different colour per corner; alpha untouched.
-          g.fill.tint.topLeft = g.fill.tint.topRight = 0xff5da8;
-          g.fill.tint.bottomLeft = g.fill.tint.bottomRight = 0x5db8ff;
+          g.fill.color.topLeft = g.fill.color.topRight = 0xff5da8;
+          g.fill.color.bottomLeft = g.fill.color.bottomRight = 0x5db8ff;
           break;
         }
 
@@ -151,7 +152,9 @@ export class EffectsScene extends ExampleScene {
           const period = WORD.length * stagger + 2;
           const local = ((now * speed) % period) - i * stagger;
           const lift = local > 0 && local < 1 ? Math.sin(local * Math.PI) : 0;
-          g.scale = 1 + 0.4 * lift;
+          // Squash-and-stretch: airborne glyphs stretch tall and narrow, using
+          // the independent per-glyph scaleX / scaleY axes.
+          g.setScale(1 - 0.22 * lift, 1 + 0.45 * lift);
           g.y -= lift * 24;
           g.shadow.x = lift * 7;
           g.shadow.y = 6 + lift * 18;
@@ -168,7 +171,7 @@ export class EffectsScene extends ExampleScene {
             1,
             1,
           ) as Phaser.Types.Display.ColorObject;
-          g.setOutline(Phaser.Display.Color.GetColor(c.r, c.g, c.b));
+          g.setOutlineColor(Phaser.Display.Color.GetColor(c.r, c.g, c.b));
           g.setOutlineAlpha(0.55 + 0.45 * Math.sin(i * 0.6 - now * 3 * speed));
           break;
         }

@@ -49,7 +49,7 @@ or soft edges:
 - Rounded outline (`setOutline(..., rounded)`) — the outline edge
   comes from the alpha SDF, which rounds outer corners; the letterform edge
   still uses `median(rgb)`, so glyphs stay sharp.
-- Soft shadow / glow (`setDropShadow(..., softness)`) — the shadow pass uses
+- Soft shadow / glow (`setShadow(..., softness)`) — the shadow pass uses
   the alpha SDF with a widened transition. `uShadowSoftness` is a per-pass
   uniform, so `MSDFTextWebGLRenderer` flushes the batch between the shadow and
   main passes. Softness is measured in **distance-field units** (like
@@ -60,11 +60,11 @@ or soft edges:
 
 **Shaders** — inline string arrays in `src/MSDFBatchHandler.ts`:
 - Vertex: uniform `uProjectionMatrix`; attributes `inPosition`, `inTexCoord`,
-  `inTint` (fill colour), `inOutline` (per-glyph outline colour). Each vertex is
+  `inColor` (fill colour), `inOutline` (per-glyph outline colour). Each vertex is
   24 bytes: 4 floats (pos + texcoord) + two `UNSIGNED_BYTE` vec4 colours.
 - Fragment: uniforms `uMainSampler`, `uAtlasSize`, `uPxRange`,
   `uOutlineWidth`, `uOutlineRounded`, `uShadowSoftness`, `uMode`. Fill colour
-  rides in the `outTint` varying and the outline colour in `outOutline` (there
+  rides in the `outColor` varying and the outline colour in `outOutline` (there
   is no `uOutlineColor` uniform — outline colour is per-vertex). `uMode` selects
   the per-pass branch: `0` plain fill (also the fill
   pass of a layered outline and the hard drop shadow), `1` combined
@@ -83,7 +83,7 @@ array of `GlyphState` (`src/MSDFGlyphState.ts`), one per renderable glyph. Each
 carries a transform plus three independent aspects — `fill`, `shadow`, `outline`
 — with per-corner `0xRRGGBB` colour and a separate `0-1` alpha (kept split so V8
 holds a stable hidden class and SMI/double field reps across the per-glyph loop;
-packing lives in `src/MSDFTint.ts`). `MSDFText._glyphMode` picks the source:
+packing lives in `src/MSDFColor.ts`). `MSDFText._glyphMode` picks the source:
 - `static` (0) — no array; the renderer fills every quad from the object-level
   colour/alpha/outline/shadow (the cheap default; nothing per-glyph allocated).
 - `callback` (1) — `MSDFText.prepareGlyphStates` re-seeds the array from the
@@ -110,7 +110,7 @@ src/
   MSDFFont.ts              # Parsed font: glyph metrics, kerning, measurement
   MSDFText.ts              # Text GameObject (layout, wrap, outline, shadow, per-glyph state)
   MSDFGlyphState.ts        # Per-glyph state type + factory (callback / editGlyphs)
-  MSDFTint.ts              # Shared colour packing helpers (packBatchTint, multiplyTint)
+  MSDFColor.ts             # Shared colour packing helper (packColor)
   MSDFTextFactory.ts       # add.msdfText factory
   MSDFTextCreator.ts       # make.msdfText creator
   MSDFTextWebGLRenderer.ts # Per-object render function

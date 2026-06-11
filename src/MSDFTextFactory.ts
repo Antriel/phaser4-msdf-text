@@ -6,7 +6,7 @@
  */
 
 import * as Phaser from "phaser";
-import { MSDFText } from './MSDFText';
+import { MSDFText, type MSDFAlign } from './MSDFText';
 
 // @ts-ignore - Phaser internals not fully typed
 const GameObjectFactory = Phaser.GameObjects.GameObjectFactory;
@@ -21,7 +21,7 @@ const GameObjectFactory = Phaser.GameObjects.GameObjectFactory;
  * @param {string} font - The key of the MSDF font to use, from the `msdfFont` cache.
  * @param {string} [text=''] - The text content to display.
  * @param {number} [fontSize=42] - The font size in pixels.
- * @param {number} [align=0] - Line alignment for multi-line text: 0 (left), 1 (center) or 2 (right).
+ * @param {string} [align='left'] - Line alignment for multi-line text: 'left', 'center' or 'right'.
  *
  * @return {MSDFText} The Game Object that was created.
  */
@@ -31,7 +31,7 @@ GameObjectFactory.register('msdfText', function (
     font: string,
     text: string | string[] = '',
     fontSize: number = 42,
-    align: number = 0
+    align: MSDFAlign = 'left'
 ) {
     const normalized = Array.isArray(text) ? text.join('\n') : text;
     // @ts-ignore - 'this' context is GameObjectFactory

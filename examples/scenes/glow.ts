@@ -42,7 +42,7 @@ export class GlowScene extends ExampleScene {
   /** Push the current shadow params onto the word. */
   private applyShadow(): void {
     const { offsetX, offsetY, color, alpha, softness } = this.params;
-    this.word.setDropShadow(offsetX, offsetY, color, alpha, softness);
+    this.word.setShadow(offsetX, offsetY, color, alpha, softness);
   }
 
   protected addControls(pane: Pane): void {
@@ -67,8 +67,8 @@ export class GlowScene extends ExampleScene {
     // so the alpha/softness sliders still set the upper bound and stay live.
     if (this.params.pulse) {
       const s = (Math.sin(this.time.now * 0.004) + 1) / 2; // 0..1
-      this.word.dropShadowSoftness = this.params.softness * (0.6 + 0.4 * s);
-      this.word.dropShadowAlpha = this.params.alpha * (0.7 + 0.3 * s);
+      this.word.shadowSoftness = this.params.softness * (0.6 + 0.4 * s);
+      this.word.shadowAlpha = this.params.alpha * (0.7 + 0.3 * s);
     }
   }
 }

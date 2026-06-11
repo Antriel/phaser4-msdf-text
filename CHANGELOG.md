@@ -26,12 +26,33 @@ so minor versions may carry breaking changes).
   `(glyphs, text)` — the whole array of per-glyph state — instead of once per
   glyph with a single ARGB-packed object. Return value is ignored; mutate in
   place. Colour is plain `0xRRGGBB` and alpha a separate `0–1` float, on three
-  independent aspects (`fill`, `shadow`, `outline`), each with `setX`/`setXAlpha`
-  helpers and per-corner `Corners` objects. The old `data.tint` (ARGB) and
-  `data.color` shape is gone. Migration: loop the array, and replace
-  `data.tint.topLeft = (data.tint.topLeft & 0xff000000) | rgb` with
-  `g.fill.tint.topLeft = rgb` (or `g.setFill(rgb)`); per-glyph alpha becomes
-  `g.setFillAlpha(a)`.
+  independent aspects (`fill`, `shadow`, `outline`), each with a per-corner
+  `color`/`alpha` `Corners` object and `setXColor`/`setXAlpha` helpers. The old
+  `data.tint` (ARGB) and `data.color` shape is gone. Migration: loop the array,
+  and replace `data.tint.topLeft = (data.tint.topLeft & 0xff000000) | rgb` with
+  `g.fill.color.topLeft = rgb` (or `g.setFillColor(rgb)`); per-glyph alpha
+  becomes `g.setFillAlpha(a)`.
+- **BREAKING (per-glyph scale):** the glyph state's single `scale` is now
+  `scaleX` + `scaleY`, so glyphs can squash/stretch. `setScale(v)` sets both;
+  `setScale(x, y)` sets them independently. Migration: `g.scale = v` →
+  `g.setScale(v)`.
+- **BREAKING (per-glyph setters):** the colour helpers are renamed for symmetry
+  with the alpha helpers — `setFill`→`setFillColor`, `setShadow`→`setShadowColor`,
+  `setOutline`→`setOutlineColor`. The aspect colour field is `color`, not `tint`
+  (`g.fill.tint` → `g.fill.color`, likewise on `shadow`/`outline`).
+- **BREAKING (drop shadow naming):** the `drop` prefix is gone everywhere.
+  `setDropShadow`/`clearDropShadow`/`hasDropShadow` → `setShadow`/`clearShadow`/
+  `hasShadow`; `dropShadowX/Y/Color/Alpha/Softness` → `shadowX/Y/Color/Alpha/Softness`.
+- **BREAKING (alignment):** `align` is now the string union
+  `'left' | 'center' | 'right'` (exported as `MSDFAlign`) instead of `0`/`1`/`2`;
+  the `MSDFText.ALIGN_*` constants are removed. The `setLeftAlign` /
+  `setCenterAlign` / `setRightAlign` helpers are unchanged.
+- **BREAKING (colour model):** dropped the inherited Phaser `Tint` component —
+  there is now a single base `color`/`setColor` per object, with no per-corner
+  object-level tint multiply. Per-corner gradients live on the glyph state
+  (`g.fill.color.*`). `setTint`/`tintTopLeft`/… are no longer on `MSDFText`.
+- Removed `CharacterData` from the public API — it was the pre-redesign callback
+  type and is now an internal layout detail; use `GlyphState` instead.
 
 ### Performance
 - The display callback fires **once per frame** (with the whole glyph array)

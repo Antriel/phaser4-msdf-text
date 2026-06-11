@@ -85,8 +85,8 @@ const text = this.make.msdfText({
     text: 'Hello, MSDF!',
     fontSize: 48,
     color: 0xffffff,
-    align: 1,  // 0 = left, 1 = center, 2 = right
-    // Optional effects — same fields as setOutline / setDropShadow:
+    align: 'center',  // 'left' (default), 'center' or 'right'
+    // Optional effects — same fields as setOutline / setShadow:
     outline: { width: 1.5, color: 0x000000, rounded: true },
     shadow:  { offsetX: 4, offsetY: 4, alpha: 0.5, softness: 6 },
 });
@@ -127,7 +127,7 @@ text.setLineSpacing(10);
 // Or use property accessors directly
 text.text = 'New content';
 text.fontSize = 64;
-text.align = 1;                    // 0 = left, 1 = center, 2 = right
+text.align = 'center';             // 'left' (default), 'center' or 'right'
 text.lineSpacing = 10;
 
 text.width;                        // rendered width in local space (read-only)
@@ -135,8 +135,9 @@ text.height;                       // rendered height in local space (read-only)
 text.getTextBounds();              // { width, height, lines: { count, lengths, shortest, longest } }
 ```
 
-`align` mirrors Phaser's `BitmapText`: it is a number, and `MSDFText.ALIGN_LEFT`,
-`MSDFText.ALIGN_CENTER` and `MSDFText.ALIGN_RIGHT` are exported as `0`/`1`/`2`.
+`align` is the string union `'left' | 'center' | 'right'` (exported as
+`MSDFAlign`); `setLeftAlign()` / `setCenterAlign()` / `setRightAlign()` are
+chainable shortcuts.
 
 ### Word wrap
 
@@ -190,19 +191,18 @@ MTSDF alike, and combines with `rounded` and the drop shadow.
 ### Shadow (extra pass, still batched)
 
 ```ts
-text.setDropShadow(4, 4, 0x000000, 0.5);          // x, y, color, alpha
-text.setDropShadow(4, 4, 0x000000, 0.5, 6);       // soft shadow, 6-unit blur (MTSDF atlas only)
-text.setDropShadow(0, 0, 0x33ccff, 0.8, 8);       // zero offset + softness reads as a glow
-text.clearDropShadow();
-text.hasDropShadow();
+text.setShadow(4, 4, 0x000000, 0.5);              // x, y, color, alpha
+text.setShadow(4, 4, 0x000000, 0.5, 6);           // soft shadow, 6-unit blur (MTSDF atlas only)
+text.setShadow(0, 0, 0x33ccff, 0.8, 8);           // zero offset + softness reads as a glow
+text.clearShadow();
+text.hasShadow();
 
-// setDropShadow is a convenience wrapper — the fields can be set or tweened directly
-// (named to match Phaser's BitmapText):
-text.dropShadowX = 4;
-text.dropShadowY = 4;
-text.dropShadowColor = 0x000000;                  // packed 0xRRGGBB
-text.dropShadowAlpha = 0.5;
-text.dropShadowSoftness = 6;                      // distance-field units, MTSDF atlas only
+// setShadow is a convenience wrapper — the fields can be set or tweened directly:
+text.shadowX = 4;
+text.shadowY = 4;
+text.shadowColor = 0x000000;                      // packed 0xRRGGBB
+text.shadowAlpha = 0.5;
+text.shadowSoftness = 6;                          // distance-field units, MTSDF atlas only
 ```
 
 `softness` is the shadow blur in **distance-field units** (`0` = hard edge,
@@ -233,12 +233,13 @@ every frame.
 
 Each glyph exposes:
 
-- **transform** — `x`, `y`, `scale`, `rotation` (about the glyph centre;
-  `scale = 0` hides it).
-- **`fill`** — the glyph face: `{ tint: Corners, alpha: Corners }`.
-- **`shadow`** — `{ tint, alpha, x, y }`, controlled independently of the fill
+- **transform** — `x`, `y`, `scaleX`, `scaleY`, `rotation` (about the glyph
+  centre; `scaleX`/`scaleY = 0` hides it). `setScale(v)` sets both axes;
+  `setScale(x, y)` sets them independently (squash/stretch).
+- **`fill`** — the glyph face: `{ color: Corners, alpha: Corners }`.
+- **`shadow`** — `{ color, alpha, x, y }`, controlled independently of the fill
   (only drawn if the text has a drop shadow).
-- **`outline`** — `{ tint, alpha }` (only drawn if the text has an outline).
+- **`outline`** — `{ color, alpha }` (only drawn if the text has an outline).
 - read-only **`index`** and **`charCode`**.
 
 `Corners` is `{ topLeft, topRight, bottomLeft, bottomRight }`. Colour is plain
@@ -246,21 +247,22 @@ Each glyph exposes:
 bit-packing. Scalar helpers cover the common "all four corners the same" case:
 
 ```ts
-g.setFill(0xff0000);                       // recolour the face, alpha untouched
+g.setScale(1.2, 0.8);                      // squash/stretch about the centre
+g.setFillColor(0xff0000);                  // recolour the face, alpha untouched
 g.setFillAlpha(0.5);                       // fade the face, colour untouched
-g.setShadow(0x000033); g.setShadowAlpha(0.4);
-g.setOutline(0xffd200); g.setOutlineAlpha(1);
+g.setShadowColor(0x000033); g.setShadowAlpha(0.4);
+g.setOutlineColor(0xffd200); g.setOutlineAlpha(1);
 ```
 
 Reach into the `Corners` objects directly for a gradient:
 
 ```ts
-g.fill.tint.topLeft = g.fill.tint.topRight = 0xff5da8;
-g.fill.tint.bottomLeft = g.fill.tint.bottomRight = 0x5db8ff;
+g.fill.color.topLeft = g.fill.color.topRight = 0xff5da8;
+g.fill.color.bottomLeft = g.fill.color.bottomRight = 0x5db8ff;
 ```
 
 Outline **width** and shadow **softness** stay per-object (set via `setOutline`
-/ `setDropShadow`); outline and shadow **colour, alpha and offset** are per-glyph.
+/ `setShadow`); outline and shadow **colour, alpha and offset** are per-glyph.
 
 #### Persistent per-glyph state (manual mode)
 
@@ -271,8 +273,8 @@ your edits persist with **zero per-frame cost**:
 
 ```ts
 const glyphs = text.editGlyphs();
-glyphs[0].setFill(0xff4040);
-glyphs[1].setFill(0x40ff40);
+glyphs[0].setFillColor(0xff4040);
+glyphs[1].setFillColor(0x40ff40);
 ```
 
 The array is rebuilt and re-seeded whenever the glyph set changes (`setText`,
