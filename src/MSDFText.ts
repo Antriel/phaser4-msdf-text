@@ -18,6 +18,15 @@
 import * as Phaser from "phaser";
 import { MSDFFont } from './MSDFFont';
 import MSDFTextWebGLRenderer from './MSDFTextWebGLRenderer';
+import { multiplyTint } from './MSDFTint';
+import { createGlyphState, type GlyphState } from './MSDFGlyphState';
+
+// Per-glyph state mode. Static = no per-glyph array (object colour used as-is);
+// callback = array re-seeded + handed to `displayCallback` each frame; manual =
+// user owns the array via `editGlyphs()` and it persists until the text rebuilds.
+const GLYPH_MODE_STATIC = 0;
+const GLYPH_MODE_CALLBACK = 1;
+const GLYPH_MODE_MANUAL = 2;
 
 // Phaser's published types describe these as interfaces/values that don't
 // match the runtime shape we need, so reach through `any`.
@@ -63,49 +72,17 @@ function warnNeedsMtsdf(text: any, effectName: string): boolean {
 }
 
 /**
- * Per-corner tint data for display callbacks
+ * Display callback signature.
+ *
+ * Called once per frame (not once per glyph) with the full array of per-glyph
+ * {@link GlyphState} objects — already seeded with the text's effective colour,
+ * alpha and layout — and the parent text object. Mutate the glyphs in place;
+ * the return value is ignored. The same array instance is reused every frame.
  */
-export interface DisplayCallbackTint {
-    topLeft: number;
-    topRight: number;
-    bottomLeft: number;
-    bottomRight: number;
-}
+export type DisplayCallback = (glyphs: GlyphState[], parent: MSDFTextInstance) => void;
 
-/**
- * Data passed to display callback for each character
- */
-export interface DisplayCallbackData {
-    parent: any;           // Reference to the text object
-    index: number;         // Character index in the text string
-    charCode: number;      // Character code
-    x: number;             // Character X position (can be modified)
-    y: number;             // Character Y position (can be modified)
-    scale: number;         // Character scale (can be modified)
-    rotation: number;      // Character rotation in radians (can be modified)
-    /**
-     * Per-corner tint, each packed `0xAARRGGBB` (the format Phaser's
-     * `getTintAppendFloatAlpha` produces). The alpha byte is authoritative:
-     * seeded with the glyph's effective per-corner alpha, it is used as-is, so
-     * assign `0xAARRGGBB` (ARGB) back to control per-glyph/per-corner alpha —
-     * `0x00xxxxxx` renders fully transparent. To recolour without touching
-     * alpha, preserve the high byte (e.g. `(tint.topLeft & 0xff000000) | rgb`)
-     * or use {@link color}, which is RGB-only and keeps the object's alpha.
-     */
-    tint: DisplayCallbackTint;
-    /**
-     * `0xRRGGBB` shorthand that recolours all four corners at once. Reset to `0`
-     * before every call; leave it `0` to use `tint` instead. As in Phaser, a
-     * literal black `0x000000` reads as "unset" — use `tint` for solid black.
-     */
-    color: number;
-    data: any;             // Custom user data
-}
-
-/**
- * Display callback function signature
- */
-export type DisplayCallback = (data: DisplayCallbackData) => DisplayCallbackData;
+// Re-export so consumers can type their callbacks against the glyph state.
+export type { GlyphState } from './MSDFGlyphState';
 
 /**
  * Character layout data
@@ -196,10 +173,19 @@ export interface MSDFTextInstance extends
      */
     dropShadowSoftness: number;
 
-    /** Optional per-character display callback. */
+    /**
+     * Optional per-frame display callback. Receives the per-glyph state array
+     * and the text object; mutate glyphs in place. Set via {@link setDisplayCallback}.
+     */
     displayCallback?: DisplayCallback;
-    /** Shared, reused object passed to {@link displayCallback}. */
-    callbackData: DisplayCallbackData;
+
+    /**
+     * The per-glyph state array, or `null` in static mode (no callback and
+     * `editGlyphs` never called). In callback mode it holds last frame's seeded
+     * values; in manual mode it is the array you own. Read-only — use
+     * {@link editGlyphs} to take manual control.
+     */
+    readonly glyphs: GlyphState[] | null;
 
     // Dimensions (derived from text bounds)
     readonly width: number;
@@ -236,6 +222,17 @@ export interface MSDFTextInstance extends
     setDisplaySize(width: number, height: number): this;
     setDisplayCallback(callback: DisplayCallback | undefined): this;
     clearDisplayCallback(): this;
+    /**
+     * Take manual control of per-glyph state. Returns the (persistent) glyph
+     * array, seeded to the text's current colour/alpha/layout, and switches the
+     * text into manual mode: edits persist across frames and are *not* re-seeded
+     * automatically. Clears any display callback. The array is rebuilt and
+     * re-seeded whenever the glyph set changes (`setText`, `setFont`, re-wrap),
+     * which emits a `'glyphsreset'` event so you can re-apply your edits.
+     */
+    editGlyphs(): GlyphState[];
+    /** Re-seed the manual glyph array to the text's current defaults. No-op unless in manual mode. */
+    resetGlyphs(): this;
     setOutline(width: number, color?: ColorValue, alpha?: number, rounded?: boolean, layered?: boolean): this;
     clearOutline(): this;
     hasOutline(): boolean;
@@ -383,25 +380,11 @@ export const MSDFText: MSDFTextStatic = new Class({
         this._dirty = true;
         this._mtsdfWarnings = {};
 
-        // Display callback
+        // Per-glyph display state. Static by default — no array is built until a
+        // display callback is set or `editGlyphs()` is called.
         this.displayCallback = undefined;
-        this.callbackData = {
-            parent: this,
-            index: 0,
-            charCode: 0,
-            x: 0,
-            y: 0,
-            scale: 1,
-            rotation: 0,
-            tint: {
-                topLeft: 0xffffffff,
-                topRight: 0xffffffff,
-                bottomLeft: 0xffffffff,
-                bottomRight: 0xffffffff
-            },
-            color: 0,
-            data: undefined
-        };
+        this._glyphMode = GLYPH_MODE_STATIC;
+        this._glyphStates = [];
 
         // Bind atlas texture via the standard Texture component (no width/height
         // or origin updates — those derive from text bounds, not the atlas frame).
@@ -682,20 +665,130 @@ export const MSDFText: MSDFTextStatic = new Class({
     },
 
     /**
-     * Set display callback for per-character effects
-     * @param callback Function called for each character during rendering
+     * Set the per-frame display callback. It receives the per-glyph state array
+     * (re-seeded to the text's defaults every frame) and the text object; mutate
+     * glyphs in place. Passing `undefined` clears it (same as
+     * {@link clearDisplayCallback}). Switches the text into callback mode,
+     * overriding any prior manual control.
      */
     setDisplayCallback: function (callback: DisplayCallback | undefined) {
         this.displayCallback = callback;
+        if (callback) {
+            this._glyphMode = GLYPH_MODE_CALLBACK;
+        } else if (this._glyphMode === GLYPH_MODE_CALLBACK) {
+            this._glyphMode = GLYPH_MODE_STATIC;
+        }
         return this;
     },
 
     /**
-     * Clear display callback
+     * Clear the display callback. Returns to static mode if it was in callback
+     * mode; leaves manual mode untouched.
      */
     clearDisplayCallback: function () {
         this.displayCallback = undefined;
+        if (this._glyphMode === GLYPH_MODE_CALLBACK) {
+            this._glyphMode = GLYPH_MODE_STATIC;
+        }
         return this;
+    },
+
+    /**
+     * The per-glyph state array (`null` in static mode). See
+     * {@link MSDFTextInstance.glyphs}.
+     */
+    glyphs: {
+        get: function (this: any): GlyphState[] | null {
+            return this._glyphMode === GLYPH_MODE_STATIC ? null : this._glyphStates;
+        }
+    },
+
+    /**
+     * Take manual control of per-glyph state (chainable-returning the array).
+     * See {@link MSDFTextInstance.editGlyphs}.
+     */
+    editGlyphs: function (): GlyphState[] {
+        if (this._dirty) {
+            this.rebuildText();
+        }
+        this.displayCallback = undefined;
+        this._glyphMode = GLYPH_MODE_MANUAL;
+        return this.prepareGlyphStates();
+    },
+
+    /**
+     * Re-seed the manual glyph array to the text's current defaults.
+     */
+    resetGlyphs: function () {
+        if (this._glyphMode === GLYPH_MODE_MANUAL) {
+            if (this._dirty) {
+                this.rebuildText();
+            }
+            this.prepareGlyphStates();
+        }
+        return this;
+    },
+
+    /**
+     * Ensure the glyph-state array matches the renderable glyph count and seed
+     * every entry to the text's current defaults. Used by the renderer each
+     * frame in callback mode, and on rebuild/edit/reset in manual mode.
+     */
+    prepareGlyphStates: function (): GlyphState[] {
+        const chars = this._characters;
+        const states: GlyphState[] = this._glyphStates;
+        const n = chars.length;
+
+        while (states.length < n) {
+            states.push(createGlyphState());
+        }
+        if (states.length > n) {
+            states.length = n;
+        }
+        for (let i = 0; i < n; i++) {
+            this.seedGlyph(states[i], chars[i], i);
+        }
+        return states;
+    },
+
+    /**
+     * Seed one glyph state with the text object's effective colour, alpha,
+     * outline, shadow and layout position. Mirrors the static-mode resolution in
+     * the renderer so callback/manual glyphs start from the same defaults.
+     */
+    seedGlyph: function (g: GlyphState, char: any, index: number): void {
+        (g as any).index = index;
+        (g as any).charCode = char.charCode || 0;
+        g.x = char.x;
+        g.y = char.y;
+        g.scale = 1;
+        g.rotation = 0;
+
+        const c = this._color;
+        const cR = c.r, cG = c.g, cB = c.b, cA = c.a;
+        const aTL = cA * this._alphaTL, aTR = cA * this._alphaTR;
+        const aBL = cA * this._alphaBL, aBR = cA * this._alphaBR;
+
+        const ft = g.fill.tint, fa = g.fill.alpha;
+        ft.topLeft = multiplyTint(this.tintTopLeft, cR, cG, cB);
+        ft.topRight = multiplyTint(this.tintTopRight, cR, cG, cB);
+        ft.bottomLeft = multiplyTint(this.tintBottomLeft, cR, cG, cB);
+        ft.bottomRight = multiplyTint(this.tintBottomRight, cR, cG, cB);
+        fa.topLeft = aTL; fa.topRight = aTR; fa.bottomLeft = aBL; fa.bottomRight = aBR;
+
+        const st = g.shadow.tint, sa = g.shadow.alpha;
+        const sc = this.dropShadowColor, sAlpha = this.dropShadowAlpha;
+        st.topLeft = st.topRight = st.bottomLeft = st.bottomRight = sc;
+        sa.topLeft = sAlpha * this._alphaTL; sa.topRight = sAlpha * this._alphaTR;
+        sa.bottomLeft = sAlpha * this._alphaBL; sa.bottomRight = sAlpha * this._alphaBR;
+        g.shadow.x = this.dropShadowX;
+        g.shadow.y = this.dropShadowY;
+
+        const ot = g.outline.tint, oa = g.outline.alpha;
+        const oc = this.outlineColor, oAlpha = this.outlineAlpha;
+        ot.topLeft = ot.topRight = ot.bottomLeft = ot.bottomRight = oc;
+        oa.topLeft = oAlpha * this._alphaTL; oa.topRight = oAlpha * this._alphaTR;
+        oa.bottomLeft = oAlpha * this._alphaBL; oa.bottomRight = oAlpha * this._alphaBR;
     },
 
     /**
@@ -966,6 +1059,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         this.clearCharacters();
 
         if (!this._text || this._text.length === 0) {
+            this.refreshManualGlyphs();
             return;
         }
 
@@ -1063,6 +1157,19 @@ export const MSDFText: MSDFTextStatic = new Class({
 
         this._dirty = false;
         this.updateDisplayOrigin();
+        this.refreshManualGlyphs();
+    },
+
+    /**
+     * In manual mode, re-seed the glyph array for the freshly rebuilt glyph set
+     * and emit `'glyphsreset'` so listeners can re-apply their per-glyph edits
+     * (which the rebuild discarded). No-op in static or callback mode.
+     */
+    refreshManualGlyphs: function (): void {
+        if (this._glyphMode === GLYPH_MODE_MANUAL) {
+            this.prepareGlyphStates();
+            this.emit('glyphsreset', this);
+        }
     },
 
     /**

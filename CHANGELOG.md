@@ -5,6 +5,40 @@ All notable changes to this project are documented here. The format is based on
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0,
 so minor versions may carry breaking changes).
 
+## [0.3.0]
+
+### Added
+- **Per-glyph outline and shadow in the display callback.** Outline colour/alpha
+  and shadow colour/alpha/offset are now controllable per glyph, independently of
+  the fill, so a glyph's shadow no longer inherits the fill's colour. Outline
+  colour moved from a shader uniform to a per-vertex attribute (+4 bytes/vertex);
+  as a bonus, differently-coloured outlines now batch together without a flush.
+- **Manual per-glyph mode — `editGlyphs()` / `resetGlyphs()`.** Take ownership of
+  the per-glyph state array for persistent effects (fixed gradients, highlighted
+  spans, static rainbows) at **zero per-frame cost** — the text stops re-seeding
+  it. A rebuild (`setText`, `setFont`, re-wrap) re-seeds and emits a
+  `'glyphsreset'` event so you can re-apply your edits.
+- New **"Jump"** (per-glyph shadow) and **"Outline"** (per-glyph outline) effects
+  in the examples app.
+
+### Changed
+- **BREAKING (display callback):** the callback now runs **once per frame** with
+  `(glyphs, text)` — the whole array of per-glyph state — instead of once per
+  glyph with a single ARGB-packed object. Return value is ignored; mutate in
+  place. Colour is plain `0xRRGGBB` and alpha a separate `0–1` float, on three
+  independent aspects (`fill`, `shadow`, `outline`), each with `setX`/`setXAlpha`
+  helpers and per-corner `Corners` objects. The old `data.tint` (ARGB) and
+  `data.color` shape is gone. Migration: loop the array, and replace
+  `data.tint.topLeft = (data.tint.topLeft & 0xff000000) | rgb` with
+  `g.fill.tint.topLeft = rgb` (or `g.setFill(rgb)`); per-glyph alpha becomes
+  `g.setFillAlpha(a)`.
+
+### Performance
+- The display callback fires **once per frame** (with the whole glyph array)
+  instead of once per glyph per pass — it used to re-run for every glyph on
+  every render pass (shadow, outline, fill). Colour packing dropped the ARGB
+  unpack/divide/repack roundtrip the old path needed.
+
 ## [0.2.0]
 
 ### Added

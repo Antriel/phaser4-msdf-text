@@ -3,9 +3,14 @@
  *
  * Computes transformed quad vertices for the character and forwards them to
  * MSDFBatchHandler.batch(). Mirrors Phaser's BatchChar.js for BitmapText.
+ *
+ * Each vertex carries two packed colours: `tintData` (the fill, also the shadow
+ * colour on the shadow pass) and `outlineData` (the per-glyph outline colour,
+ * read by the combined and silhouette passes; ignored by the plain/shadow ones).
  */
 
 import type { MSDFBatchHandlerInstance } from './MSDFBatchHandler';
+import type { PackedCorners } from './MSDFTint';
 
 interface CharQuad {
     x: number;
@@ -27,13 +32,6 @@ interface CalcMatrix {
     f: number;
 }
 
-interface TintData {
-    tintTopLeft: number;
-    tintTopRight: number;
-    tintBottomLeft: number;
-    tintBottomRight: number;
-}
-
 function BatchMSDFChar(
     drawingContext: any,
     batchHandler: MSDFBatchHandlerInstance,
@@ -42,7 +40,8 @@ function BatchMSDFChar(
     offsetX: number,
     offsetY: number,
     calcMatrix: CalcMatrix,
-    tintData: TintData
+    tintData: PackedCorners,
+    outlineData: PackedCorners
 ): void {
     const x = char.x + offsetX;
     const y = char.y + offsetY;
@@ -73,7 +72,11 @@ function BatchMSDFChar(
         tintData.tintBottomLeft,
         tintData.tintTopLeft,
         tintData.tintTopRight,
-        tintData.tintBottomRight
+        tintData.tintBottomRight,
+        outlineData.tintBottomLeft,
+        outlineData.tintTopLeft,
+        outlineData.tintTopRight,
+        outlineData.tintBottomRight
     );
 }
 

@@ -35,15 +35,18 @@ const SimpleVertexShader = [
     'attribute vec2 inPosition;',
     'attribute vec2 inTexCoord;',
     'attribute vec4 inTint;',
+    'attribute vec4 inOutline;',  // Per-glyph outline colour (combined + silhouette passes).
     '',
     'varying vec2 outTexCoord;',
     'varying vec4 outTint;',
+    'varying vec4 outOutline;',
     '',
     'void main()',
     '{',
     '    gl_Position = uProjectionMatrix * vec4(inPosition, 0.0, 1.0);',
     '    outTexCoord = inTexCoord;',
     '    outTint = inTint;',
+    '    outOutline = inOutline;',
     '}'
 ].join('\n');
 
@@ -59,13 +62,13 @@ const SimpleFragmentShader = [
     'uniform vec2 uAtlasSize;',     // Atlas texture size in pixels.
     'uniform float uPxRange;',      // distanceRange from the font JSON.
     'uniform float uOutlineWidth;',
-    'uniform vec4 uOutlineColor;',
     'uniform float uOutlineRounded;',  // 0 = sharp outline, 1 = rounded (true SDF).
     'uniform float uShadowSoftness;',  // distance-field units of blur (soft shadow mode).
     'uniform float uMode;',            // 0 plain/fill, 1 combined outline, 2 outline silhouette, 3 soft shadow.
     '',
     'varying vec2 outTexCoord;',
     'varying vec4 outTint;',
+    'varying vec4 outOutline;',  // Per-glyph outline colour (replaces the old uOutlineColor uniform).
     '',
     'float median(float r, float g, float b)',
     '{',
@@ -115,8 +118,8 @@ const SimpleFragmentShader = [
     '        // Guard against haze in the deep background at extreme minification.',
     '        float backgroundFade = smoothstep(0.0, 0.2, outlineDist);',
     '',
-    '        vec3 rgb = mix(uOutlineColor.rgb, outTint.rgb, textMix);',
-    '        float a  = coverage * mix(uOutlineColor.a, outTint.a, textMix) * backgroundFade;',
+    '        vec3 rgb = mix(outOutline.rgb, outTint.rgb, textMix);',
+    '        float a  = coverage * mix(outOutline.a, outTint.a, textMix) * backgroundFade;',
     '',
     '        gl_FragColor = vec4(rgb * a, a);',
     '    }',
@@ -129,8 +132,8 @@ const SimpleFragmentShader = [
     '        float outlineDist = mix(dist, tsdf, uOutlineRounded);',
     '        float coverage = clamp(pxRange * (outlineDist - outlineEdge) + 0.5, 0.0, 1.0);',
     '        float backgroundFade = smoothstep(0.0, 0.2, outlineDist);',
-    '        float a = coverage * uOutlineColor.a * backgroundFade;',
-    '        gl_FragColor = vec4(uOutlineColor.rgb * a, a);',
+    '        float a = coverage * outOutline.a * backgroundFade;',
+    '        gl_FragColor = vec4(outOutline.rgb * a, a);',
     '    }',
     '    else',
     '    {',
@@ -157,7 +160,6 @@ interface MSDFBatchHandlerInstance {
     _pxRange: number;
     _atlasSize: [number, number];
     _outlineWidth: number;
-    _outlineColor: [number, number, number, number];
     _outlineRounded: number;
     _shadowSoftness: number;
     _mode: number;
@@ -173,8 +175,8 @@ interface MSDFBatchHandlerInstance {
 
     setPxRange(pxRange: number): void;
     setAtlasSize(width: number, height: number): void;
-    setOutline(width: number, r: number, g: number, b: number, a: number, rounded: number): void;
-    hasOutlineChanged(width: number, r: number, g: number, b: number, a: number, rounded: number): boolean;
+    setOutline(width: number, rounded: number): void;
+    hasOutlineChanged(width: number, rounded: number): boolean;
     setShadowSoftness(softness: number): void;
     hasShadowSoftnessChanged(softness: number): boolean;
     setMode(mode: number): void;
@@ -190,7 +192,8 @@ interface MSDFBatchHandlerInstance {
         x3: number, y3: number,
         u0: number, v0: number,
         u1: number, v1: number,
-        tintBL?: number, tintTL?: number, tintTR?: number, tintBR?: number
+        tintBL: number, tintTL: number, tintTR: number, tintBR: number,
+        outBL: number, outTL: number, outTR: number, outBR: number
     ): void;
 
     onRunBegin(drawingContext: DrawingContext): void;
@@ -209,7 +212,8 @@ const defaultConfig = {
         layout: [
             { name: 'inPosition', size: 2 },
             { name: 'inTexCoord', size: 2 },
-            { name: 'inTint', size: 4, type: 'UNSIGNED_BYTE', normalized: true }
+            { name: 'inTint', size: 4, type: 'UNSIGNED_BYTE', normalized: true },
+            { name: 'inOutline', size: 4, type: 'UNSIGNED_BYTE', normalized: true }
         ]
     }
 };
@@ -225,7 +229,6 @@ class MSDFBatchHandler extends PhaserBatchHandler {
         self._pxRange = 4;
         self._atlasSize = [512, 512];
         self._outlineWidth = 0;
-        self._outlineColor = [0, 0, 0, 0];
         self._outlineRounded = 0;
         self._shadowSoftness = 0;
         self._mode = MSDFMode.PLAIN;
@@ -241,20 +244,15 @@ class MSDFBatchHandler extends PhaserBatchHandler {
         self._atlasSize[1] = height;
     }
 
-    setOutline(width: number, r: number, g: number, b: number, a: number, rounded: number): void {
+    setOutline(width: number, rounded: number): void {
         const self = this as unknown as MSDFBatchHandlerInstance;
         self._outlineWidth = width;
-        self._outlineColor = [r, g, b, a];
         self._outlineRounded = rounded;
     }
 
-    hasOutlineChanged(width: number, r: number, g: number, b: number, a: number, rounded: number): boolean {
+    hasOutlineChanged(width: number, rounded: number): boolean {
         const self = this as unknown as MSDFBatchHandlerInstance;
         return self._outlineWidth !== width ||
-            self._outlineColor[0] !== r ||
-            self._outlineColor[1] !== g ||
-            self._outlineColor[2] !== b ||
-            self._outlineColor[3] !== a ||
             self._outlineRounded !== rounded;
     }
 
@@ -300,7 +298,6 @@ class MSDFBatchHandler extends PhaserBatchHandler {
         programManager.setUniform('uPxRange', self._pxRange);
         programManager.setUniform('uAtlasSize', self._atlasSize);
         programManager.setUniform('uOutlineWidth', self._outlineWidth);
-        programManager.setUniform('uOutlineColor', self._outlineColor);
         programManager.setUniform('uOutlineRounded', self._outlineRounded);
         programManager.setUniform('uShadowSoftness', self._shadowSoftness);
         programManager.setUniform('uMode', self._mode);
@@ -352,7 +349,8 @@ class MSDFBatchHandler extends PhaserBatchHandler {
         x3: number, y3: number,
         u0: number, v0: number,
         u1: number, v1: number,
-        tintBL?: number, tintTL?: number, tintTR?: number, tintBR?: number
+        tintBL: number, tintTL: number, tintTR: number, tintBR: number,
+        outBL: number, outTL: number, outTR: number, outBR: number
     ): void {
         const self = this as unknown as MSDFBatchHandlerInstance;
 
@@ -369,35 +367,35 @@ class MSDFBatchHandler extends PhaserBatchHandler {
         const vertexViewF32 = vertexBuffer.viewF32 as Float32Array;
         const vertexViewU32 = vertexBuffer.viewU32 as Uint32Array;
 
-        const tintBLValue = tintBL !== undefined ? tintBL : 0xFFFFFFFF;
-        const tintTLValue = tintTL !== undefined ? tintTL : 0xFFFFFFFF;
-        const tintBRValue = tintBR !== undefined ? tintBR : 0xFFFFFFFF;
-        const tintTRValue = tintTR !== undefined ? tintTR : 0xFFFFFFFF;
-
+        // Each vertex is 6 u32-slots: x, y, u, v (f32), tint (u32), outline (u32).
         // Vertex order for degenerate triangle strip: BL, TL, BR, TR
         vertexViewF32[vertexOffset32 + 0] = x0;
         vertexViewF32[vertexOffset32 + 1] = y0;
         vertexViewF32[vertexOffset32 + 2] = u0;
         vertexViewF32[vertexOffset32 + 3] = v1;
-        vertexViewU32[vertexOffset32 + 4] = tintBLValue;
+        vertexViewU32[vertexOffset32 + 4] = tintBL;
+        vertexViewU32[vertexOffset32 + 5] = outBL;
 
-        vertexViewF32[vertexOffset32 + 5] = x1;
-        vertexViewF32[vertexOffset32 + 6] = y1;
-        vertexViewF32[vertexOffset32 + 7] = u0;
-        vertexViewF32[vertexOffset32 + 8] = v0;
-        vertexViewU32[vertexOffset32 + 9] = tintTLValue;
+        vertexViewF32[vertexOffset32 + 6] = x1;
+        vertexViewF32[vertexOffset32 + 7] = y1;
+        vertexViewF32[vertexOffset32 + 8] = u0;
+        vertexViewF32[vertexOffset32 + 9] = v0;
+        vertexViewU32[vertexOffset32 + 10] = tintTL;
+        vertexViewU32[vertexOffset32 + 11] = outTL;
 
-        vertexViewF32[vertexOffset32 + 10] = x3;
-        vertexViewF32[vertexOffset32 + 11] = y3;
-        vertexViewF32[vertexOffset32 + 12] = u1;
-        vertexViewF32[vertexOffset32 + 13] = v1;
-        vertexViewU32[vertexOffset32 + 14] = tintBRValue;
+        vertexViewF32[vertexOffset32 + 12] = x3;
+        vertexViewF32[vertexOffset32 + 13] = y3;
+        vertexViewF32[vertexOffset32 + 14] = u1;
+        vertexViewF32[vertexOffset32 + 15] = v1;
+        vertexViewU32[vertexOffset32 + 16] = tintBR;
+        vertexViewU32[vertexOffset32 + 17] = outBR;
 
-        vertexViewF32[vertexOffset32 + 15] = x2;
-        vertexViewF32[vertexOffset32 + 16] = y2;
-        vertexViewF32[vertexOffset32 + 17] = u1;
-        vertexViewF32[vertexOffset32 + 18] = v0;
-        vertexViewU32[vertexOffset32 + 19] = tintTRValue;
+        vertexViewF32[vertexOffset32 + 18] = x2;
+        vertexViewF32[vertexOffset32 + 19] = y2;
+        vertexViewF32[vertexOffset32 + 20] = u1;
+        vertexViewF32[vertexOffset32 + 21] = v0;
+        vertexViewU32[vertexOffset32 + 22] = tintTR;
+        vertexViewU32[vertexOffset32 + 23] = outTR;
 
         self.instanceCount++;
 

@@ -43,12 +43,16 @@ export { default as MSDFBatchHandler } from './MSDFBatchHandler';
 export type {
     ColorValue,
     DisplayCallback,
-    DisplayCallbackData,
-    DisplayCallbackTint,
     MSDFTextInstance,
     MSDFTextStatic,
     CharacterData
 } from './MSDFText';
+export type {
+    GlyphState,
+    GlyphAspect,
+    GlyphShadow
+} from './MSDFGlyphState';
+export type { Corners } from './MSDFTint';
 export type { MSDFFontFileConfig } from './MSDFFontFile';
 export type {
     MSDFTextConfig,

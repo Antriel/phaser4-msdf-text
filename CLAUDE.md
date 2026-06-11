@@ -36,8 +36,11 @@ Setting `outlineLayered` switches to a two-pass render: the outline silhouette
 then every glyph's fill (`uMode` 0) on top, so neighbouring outlines never cover
 a glyph's face. Tradeoffs: a second set of glyph quads, and the outline now
 composites under the fill, so translucent text shows the outline through the
-fill. Works on plain MSDF and MTSDF. The renderer's per-glyph submit loop is
-shared by every pass via `submitTextChars` in `MSDFTextWebGLRenderer.ts`.
+fill. Works on plain MSDF and MTSDF. Every pass shares the `submitOneGlyph`
+helper in `MSDFTextWebGLRenderer.ts`. Outline **colour/alpha** are a per-vertex
+attribute (`inOutline`), so they can vary per glyph and differently-coloured
+outlines batch together; outline **width** and **rounded** stay per-batch
+uniforms.
 
 **MTSDF effects** — atlases generated with `-type mtsdf` carry a true SDF in
 the alpha channel alongside the MSDF in RGB. The shader uses `median(rgb)` for
@@ -57,10 +60,13 @@ or soft edges:
 
 **Shaders** — inline string arrays in `src/MSDFBatchHandler.ts`:
 - Vertex: uniform `uProjectionMatrix`; attributes `inPosition`, `inTexCoord`,
-  `inTint`.
+  `inTint` (fill colour), `inOutline` (per-glyph outline colour). Each vertex is
+  24 bytes: 4 floats (pos + texcoord) + two `UNSIGNED_BYTE` vec4 colours.
 - Fragment: uniforms `uMainSampler`, `uAtlasSize`, `uPxRange`,
-  `uOutlineWidth`, `uOutlineColor`, `uOutlineRounded`, `uShadowSoftness`,
-  `uMode`. `uMode` selects the per-pass branch: `0` plain fill (also the fill
+  `uOutlineWidth`, `uOutlineRounded`, `uShadowSoftness`, `uMode`. Fill colour
+  rides in the `outTint` varying and the outline colour in `outOutline` (there
+  is no `uOutlineColor` uniform — outline colour is per-vertex). `uMode` selects
+  the per-pass branch: `0` plain fill (also the fill
   pass of a layered outline and the hard drop shadow), `1` combined
   outline+fill, `2` outline silhouette (layered pass 1), `3` soft shadow.
   Constants live in `MSDFMode` (`MSDFBatchHandler.ts`); the renderer sets the
@@ -71,6 +77,23 @@ or soft edges:
   Phaser 4 fetches this extension unconditionally in
   `WebGLRenderer.setExtensions`, so no game-config flag is needed.
   `installMSDFPlugin()` verifies it and throws a clear error if absent.
+
+**Per-glyph state** — the display callback and `editGlyphs()` both operate on an
+array of `GlyphState` (`src/MSDFGlyphState.ts`), one per renderable glyph. Each
+carries a transform plus three independent aspects — `fill`, `shadow`, `outline`
+— with per-corner `0xRRGGBB` colour and a separate `0-1` alpha (kept split so V8
+holds a stable hidden class and SMI/double field reps across the per-glyph loop;
+packing lives in `src/MSDFTint.ts`). `MSDFText._glyphMode` picks the source:
+- `static` (0) — no array; the renderer fills every quad from the object-level
+  colour/alpha/outline/shadow (the cheap default; nothing per-glyph allocated).
+- `callback` (1) — `MSDFText.prepareGlyphStates` re-seeds the array from the
+  object each frame, then the renderer hands it to `displayCallback(glyphs, text)`
+  before any pass. Transient.
+- `manual` (2) — the user owns the array via `editGlyphs()`; it is seeded once
+  and persists. A rebuild re-seeds and emits `'glyphsreset'`.
+The callback runs **once per frame** with the whole glyph array, not once per
+glyph and not once per pass, so the passes read already-resolved state and a
+glyph's shadow/outline are independent of its fill.
 
 **Font data** — `msdf-atlas-gen` JSON, parsed by `src/MSDFFontParser.ts` into a
 runtime `MSDFFont`. Contains `atlas` metadata (type, `distanceRange`, size,
@@ -85,7 +108,9 @@ src/
   MSDFFontFile.ts          # Registers the `this.load.msdfFont` loader
   MSDFFontParser.ts        # Parses msdf-atlas-gen JSON
   MSDFFont.ts              # Parsed font: glyph metrics, kerning, measurement
-  MSDFText.ts              # Text GameObject (layout, wrap, outline, shadow, callbacks)
+  MSDFText.ts              # Text GameObject (layout, wrap, outline, shadow, per-glyph state)
+  MSDFGlyphState.ts        # Per-glyph state type + factory (callback / editGlyphs)
+  MSDFTint.ts              # Shared colour packing helpers (packBatchTint, multiplyTint)
   MSDFTextFactory.ts       # add.msdfText factory
   MSDFTextCreator.ts       # make.msdfText creator
   MSDFTextWebGLRenderer.ts # Per-object render function

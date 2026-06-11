@@ -1,7 +1,7 @@
 import * as Phaser from "phaser";
 import type { Pane } from "tweakpane";
 import { ExampleScene } from "../harness/ExampleScene";
-import type { MSDFTextInstance, DisplayCallbackData } from "../../src";
+import type { MSDFTextInstance, GlyphState } from "../../src";
 
 /**
  * MSDF text in composition — a gallery of procedurally generated RPG item
@@ -448,11 +448,12 @@ class LootCard {
   }
 
   /** Mythic display callback — paints the name red with a travelling highlight. */
-  private shimmer = (d: DisplayCallbackData): DisplayCallbackData => {
-    const sweep = Math.sin(d.index * 0.55 - (this.scene.time.now / 1000) * 3.5);
-    // `color` is the 0xRRGGBB shorthand for all four corners.
-    d.color = sweep > 0.6 ? SHIMMER_TINT : MYTHIC_TINT;
-    return d;
+  private shimmer = (glyphs: GlyphState[]): void => {
+    const now = this.scene.time.now / 1000;
+    for (let i = 0; i < glyphs.length; i++) {
+      const sweep = Math.sin(i * 0.55 - now * 3.5);
+      glyphs[i].setFill(sweep > 0.6 ? SHIMMER_TINT : MYTHIC_TINT);
+    }
   };
 
   /**
@@ -461,24 +462,26 @@ class LootCard {
    * flicker. Left and right corners run out of phase, so the heat shimmers
    * diagonally across the line — a per-corner tint a plain colour can't do.
    */
-  private fireShimmer = (d: DisplayCallbackData): DisplayCallbackData => {
+  private fireShimmer = (glyphs: GlyphState[]): void => {
     const t = this.scene.time.now / 1000;
-    const flicker = 0.82 + 0.18 * Math.sin(t * 19 + d.index * 2.3);
     // `warm` shifts the hue red->yellow and brightens it; `phase` offsets the
     // ripple so each corner catches the heat at a slightly different moment.
-    const ember = (warm: number, phase: number): number => {
-      const wave = Math.sin(d.index * 0.55 - t * 4.5 + phase);
+    const ember = (index: number, flicker: number, warm: number, phase: number): number => {
+      const wave = Math.sin(index * 0.55 - t * 4.5 + phase);
       const hue = 0.015 + warm * 0.09 + 0.02 * wave;
       const value = Math.min(1, (0.68 + warm * 0.32) * flicker);
       Phaser.Display.Color.HSVToRGB(hue, 1, value, emberRGB);
       return Phaser.Display.Color.GetColor(emberRGB.r, emberRGB.g, emberRGB.b);
     };
-    // `tint` is authoritative ARGB — keep each corner's seeded alpha byte.
-    d.tint.topLeft = ember(0, 0) | (d.tint.topLeft & 0xff000000);
-    d.tint.topRight = ember(0, 0.8) | (d.tint.topRight & 0xff000000);
-    d.tint.bottomLeft = ember(1, 0) | (d.tint.bottomLeft & 0xff000000);
-    d.tint.bottomRight = ember(1, 0.8) | (d.tint.bottomRight & 0xff000000);
-    return d;
+    for (let i = 0; i < glyphs.length; i++) {
+      const flicker = 0.82 + 0.18 * Math.sin(t * 19 + i * 2.3);
+      // Colour only; alpha stays as seeded.
+      const tint = glyphs[i].fill.tint;
+      tint.topLeft = ember(i, flicker, 0, 0);
+      tint.topRight = ember(i, flicker, 0, 0.8);
+      tint.bottomLeft = ember(i, flicker, 1, 0);
+      tint.bottomRight = ember(i, flicker, 1, 0.8);
+    }
   };
 }
 

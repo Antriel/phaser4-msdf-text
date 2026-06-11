@@ -212,36 +212,78 @@ text at any size. Any value above `0` produces a soft shadow and requires an
 warning. The maximum usable blur is the atlas `distanceRange` — for softer
 shadows than that, regenerate with a larger `-pxrange`.
 
-### Per-character display callback
+### Per-glyph display callback
 
 ```ts
-text.setDisplayCallback((data) => {
-    data.y += Math.sin(data.index * 0.5 + time * 0.003) * 15;
-    return data;
+text.setDisplayCallback((glyphs, text) => {
+    const t = text.scene.time.now;
+    for (let i = 0; i < glyphs.length; i++) {
+        glyphs[i].y += Math.sin(i * 0.5 + t * 0.003) * 15;
+    }
 });
 
 text.clearDisplayCallback();
 ```
 
-The callback receives mutable position, scale, rotation, and tint for each
-character every frame, and must return the (modified) object.
+The callback runs **once per frame** (not once per glyph) with the full array
+of per-glyph state and the text object. Each `glyphs[i]` is seeded with the
+text's effective position, colour, alpha, outline and shadow before you get it
+— mutate it in place. The return value is ignored, and the same array is reused
+every frame.
 
-Tinting follows Phaser's `BitmapText` display-callback convention:
+Each glyph exposes:
 
-- `data.color` — a `0xRRGGBB` shorthand that recolours all four corners. It
-  resets to `0` before every call; assign a colour to use it. As in Phaser, a
-  literal black `0x000000` reads as "unset" — use `data.tint` for solid black.
-- `data.tint` — `{ topLeft, topRight, bottomLeft, bottomRight }` for a
-  per-corner gradient. Each corner is a packed `0xAARRGGBB` value, seeded with
-  the glyph's effective per-corner alpha. **Unlike Phaser's `BitmapText`, the
-  alpha byte is authoritative** — assign `0xAARRGGBB` (ARGB) back to set
-  per-glyph (or per-corner) alpha, with `0x00xxxxxx` rendering fully
-  transparent. To recolour without changing alpha, preserve the high byte
-  (`(data.tint.topLeft & 0xff000000) | rgb`) or use `data.color`, which is
-  RGB-only and keeps the object's alpha.
+- **transform** — `x`, `y`, `scale`, `rotation` (about the glyph centre;
+  `scale = 0` hides it).
+- **`fill`** — the glyph face: `{ tint: Corners, alpha: Corners }`.
+- **`shadow`** — `{ tint, alpha, x, y }`, controlled independently of the fill
+  (only drawn if the text has a drop shadow).
+- **`outline`** — `{ tint, alpha }` (only drawn if the text has an outline).
+- read-only **`index`** and **`charCode`**.
 
-`data` is a single shared object — don't hold a reference to it between calls.
-Shadows automatically follow callback transforms.
+`Corners` is `{ topLeft, topRight, bottomLeft, bottomRight }`. Colour is plain
+`0xRRGGBB` and alpha is a separate `0–1` float — set them independently, with no
+bit-packing. Scalar helpers cover the common "all four corners the same" case:
+
+```ts
+g.setFill(0xff0000);                       // recolour the face, alpha untouched
+g.setFillAlpha(0.5);                       // fade the face, colour untouched
+g.setShadow(0x000033); g.setShadowAlpha(0.4);
+g.setOutline(0xffd200); g.setOutlineAlpha(1);
+```
+
+Reach into the `Corners` objects directly for a gradient:
+
+```ts
+g.fill.tint.topLeft = g.fill.tint.topRight = 0xff5da8;
+g.fill.tint.bottomLeft = g.fill.tint.bottomRight = 0x5db8ff;
+```
+
+Outline **width** and shadow **softness** stay per-object (set via `setOutline`
+/ `setDropShadow`); outline and shadow **colour, alpha and offset** are per-glyph.
+
+#### Persistent per-glyph state (manual mode)
+
+For per-glyph effects that don't change every frame — a fixed gradient,
+highlighted spans, a static rainbow — use `editGlyphs()` instead of a callback.
+It hands you the same array, seeded once, and the text stops re-seeding it, so
+your edits persist with **zero per-frame cost**:
+
+```ts
+const glyphs = text.editGlyphs();
+glyphs[0].setFill(0xff4040);
+glyphs[1].setFill(0x40ff40);
+```
+
+The array is rebuilt and re-seeded whenever the glyph set changes (`setText`,
+`setFont`, word-wrap), which clears your edits and emits a `'glyphsreset'`
+event so you can re-apply them:
+
+```ts
+text.on('glyphsreset', () => { /* re-apply per-glyph colours */ });
+```
+
+Call `text.resetGlyphs()` to re-seed to the current defaults on demand.
 
 ## Loading details
 
