@@ -1,6 +1,6 @@
 {
   "name": "phaser4-msdf-text",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MSDF (Multi-channel Signed Distance Field) font rendering plugin for Phaser 4",
   "type": "module",
   "main": "./dist/phaser4-msdf-text.cjs",
