@@ -16,7 +16,13 @@ const NAME_GRADIENT = {
 //    for 3 turns. Forged in dragonflame long ago."
 const CONTENT: Segment[] = [
   "You found the ",
-  { text: "Blade of Embers", color: NAME_GRADIENT },
+  // Per-run drop shadow — renders even though the object itself has no shadow
+  // (the run sets a shadow, so the shadow pass runs and only these glyphs draw).
+  {
+    text: "Blade of Embers",
+    color: NAME_GRADIENT,
+    shadow: { color: 0x000000, alpha: 0.7, x: 3, y: 3 },
+  },
   "!\nIt deals ",
   { text: "50", color: 0xffd23f, scale: 1.15 },
   " fire damage and inflicts ",
@@ -52,9 +58,9 @@ export class RichTextScene extends ExampleScene {
   private text!: MSDFTextInstance;
   private params = { mode: "content", skew: 0.22, altText: false };
 
-  // Live handles for the persistent rule / transient range of the current mode.
+  // Live handle for the persistent rule of the current mode (drives the skew
+  // slider's handle.update). Ranges are fire-and-forget here, so no handle kept.
   private ruleHandle: StyleHandle | null = null;
-  private rangeHandle: StyleHandle | null = null;
 
   constructor() {
     super({ key: "richtext" });
@@ -93,7 +99,6 @@ export class RichTextScene extends ExampleScene {
     this.text.clearStyles();
     this.text.clearDisplayCallback();
     this.ruleHandle = null;
-    this.rangeHandle = null;
 
     this.text.setRichText(CONTENT);
 
@@ -111,7 +116,7 @@ export class RichTextScene extends ExampleScene {
       const name = "Blade of Embers";
       const at = plain.indexOf(name);
       if (at >= 0) {
-        this.rangeHandle = this.text.addStyleRange(at, name.length, {
+        this.text.addStyleRange(at, name.length, {
           color: 0xffe066,
           scale: 1.06,
         });

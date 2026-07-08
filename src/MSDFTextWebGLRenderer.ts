@@ -251,7 +251,13 @@ function MSDFTextWebGLRenderer(
     const perGlyph = glyphs !== null;
 
     // ── Shadow pass — render shadow behind the text. ────────────────────────
-    if (hasShadow) {
+    // Object-level shadow always draws it. In per-glyph mode the pass also runs
+    // when a styled run sets a shadow (`_stylesHaveShadow`, resolved during the
+    // seed above) or the user opted in via `perGlyphShadow` — so per-glyph
+    // shadows show even without a shadow on the whole object. Glyphs with no
+    // shadow were seeded to zero alpha, so they draw nothing.
+    const runShadow = hasShadow || (perGlyph && (src._stylesHaveShadow || src.perGlyphShadow));
+    if (runShadow) {
         const shadowMode = shadowSoftness > 0 ? MSDFMode.SOFT_SHADOW : MSDFMode.PLAIN;
         configurePass(batchHandler, drawingContext, shadowMode, 0, 0, shadowSoftness);
 

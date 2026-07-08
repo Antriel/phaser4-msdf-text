@@ -266,6 +266,16 @@ function hasStyleKeys(spec: SegmentSpec): boolean {
         spec.rotation !== undefined || spec.skew !== undefined;
 }
 
+/**
+ * Whether a resolved style sets any shadow key. Used to decide whether the
+ * renderer must run the shadow pass in per-glyph mode even when the text object
+ * itself has no shadow — a styled run can give individual glyphs a drop shadow.
+ */
+function styleHasShadowKeys(s: ResolvedStyle): boolean {
+    return s.shadowColor !== undefined || s.shadowAlpha !== undefined ||
+        s.shadowX !== undefined || s.shadowY !== undefined;
+}
+
 /** Apply a resolved style's present keys onto one glyph state (overwrite). */
 function applyStyleToGlyph(g: GlyphState, s: ResolvedStyle): void {
     if (s.fillColor) {
@@ -439,6 +449,19 @@ export interface MSDFTextInstance extends
      * `outlineWidth` (MTSDF atlas only). `0` is a hard edge.
      */
     shadowSoftness: number;
+
+    /**
+     * Render per-glyph shadows even when the object has no shadow of its own.
+     *
+     * The shadow pass is normally skipped unless {@link hasShadow} is true. In
+     * per-glyph modes (a `displayCallback` or `editGlyphs`) you can set a shadow
+     * on individual {@link GlyphState}s; set this `true` so those shadows draw.
+     * Rich-text styles that set a shadow (via `setRichText`/`setTextStyle`/
+     * `addStyleRange`) enable the pass automatically, so this flag is only needed
+     * for callback/manual-driven shadows. Note that per-glyph shadows are always
+     * hard-edged — `shadowSoftness` is an object-level uniform. Default `false`.
+     */
+    perGlyphShadow: boolean;
 
     /**
      * Optional per-frame display callback. Receives the per-glyph state array
@@ -688,6 +711,11 @@ export const MSDFText: MSDFTextStatic = new Class({
         this.shadowAlpha = 0.5;
         this.shadowSoftness = 0;
 
+        // Force the shadow pass in per-glyph modes (callback / manual) even when
+        // the object has no shadow, so shadows set on individual glyphs render.
+        // Rich-text styles that set a shadow turn this on automatically.
+        this.perGlyphShadow = false;
+
         // ── Internal state ──────────────────────────────────────────────
         this._characters = [];
         this._width = 0;
@@ -707,6 +735,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         this._styleRules = [];    // policy — runs re-cached on each text change
         this._rangeRuns = [];     // override — dropped on any text change
         this._hasStyles = false;  // any layer non-empty ⇒ force the per-glyph array
+        this._stylesHaveShadow = false; // any run sets a shadow ⇒ run the shadow pass
         this._stylesDirty = false;// a handle/segment changed ⇒ coalesced re-seed
         this._rangeGen = 0;       // bumped on text change to invalidate range handles
         this._deadHandleWarned = false;
@@ -816,6 +845,9 @@ export const MSDFText: MSDFTextStatic = new Class({
         this._hasStyles = this._segmentRuns.length > 0 ||
             this._styleRules.length > 0 ||
             this._rangeRuns.length > 0;
+        // `_stylesHaveShadow` is recomputed in `applyStyleRuns` (which only runs
+        // while styled); clear it here so it can't linger true after all styles go.
+        if (!this._hasStyles) this._stylesHaveShadow = false;
     },
 
     /**
@@ -1210,22 +1242,29 @@ export const MSDFText: MSDFTextStatic = new Class({
      * `srcIndex` (source position, wrap-independent).
      */
     applyStyleRuns: function (states: GlyphState[]): void {
+        let shadow = false;
         const seg = this._segmentRuns;
         for (let r = 0; r < seg.length; r++) {
+            shadow = shadow || styleHasShadowKeys(seg[r].style);
             this.applyRun(states, seg[r].start, seg[r].length, seg[r].style);
         }
         const rules = this._styleRules;
         for (let k = 0; k < rules.length; k++) {
             const rule = rules[k];
             const runs = rule.runs;
+            if (runs.length > 0) shadow = shadow || styleHasShadowKeys(rule.style);
             for (let r = 0; r < runs.length; r++) {
                 this.applyRun(states, runs[r].start, runs[r].length, rule.style);
             }
         }
         const range = this._rangeRuns;
         for (let r = 0; r < range.length; r++) {
+            shadow = shadow || styleHasShadowKeys(range[r].style);
             this.applyRun(states, range[r].start, range[r].length, range[r].style);
         }
+        // Cached for the renderer's shadow-pass gate: in per-glyph mode the pass
+        // runs if any run sets a shadow, even without an object-level shadow.
+        this._stylesHaveShadow = shadow;
     },
 
     /** Apply one resolved style to every glyph whose `srcIndex` is in the span. */
@@ -1291,7 +1330,11 @@ export const MSDFText: MSDFTextStatic = new Class({
         fa.topLeft = aTL; fa.topRight = aTR; fa.bottomLeft = aBL; fa.bottomRight = aBR;
 
         const st = g.shadow.color, sa = g.shadow.alpha;
-        const sc = this.shadowColor, sAlpha = this.shadowAlpha;
+        const sc = this.shadowColor;
+        // Seed a base shadow only when the object itself has one. Without it,
+        // glyphs get zero shadow alpha, so when the shadow pass runs for the sake
+        // of a per-run / per-glyph shadow the untouched glyphs draw nothing.
+        const sAlpha = this.hasShadow() ? this.shadowAlpha : 0;
         st.topLeft = st.topRight = st.bottomLeft = st.bottomRight = sc;
         sa.topLeft = sAlpha * this._alphaTL; sa.topRight = sAlpha * this._alphaTR;
         sa.bottomLeft = sAlpha * this._alphaBL; sa.bottomRight = sAlpha * this._alphaBR;

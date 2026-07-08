@@ -105,7 +105,7 @@ Live, interactive demos — each link opens that example directly:
 | [Text Layout](https://antriel.github.io/phaser4-msdf-text/#layout) | Alignment, word wrap, and line spacing |
 | [Fit Inside](https://antriel.github.io/phaser4-msdf-text/#fitinside) | Reflowing text to fit a box via `fitInside` |
 | [Glyph Provenance](https://antriel.github.io/phaser4-msdf-text/#provenance) | `srcIndex` / `line` / `srcLine` — mapping glyphs back to the source |
-| [Rich Text](https://antriel.github.io/phaser4-msdf-text/#richtext) | Per-run colour, gradient, skew; keyword rules and ranges |
+| [Rich Text](https://antriel.github.io/phaser4-msdf-text/#richtext) | Per-run colour, gradient, shadow, skew; keyword rules and ranges |
 | [Performance](https://antriel.github.io/phaser4-msdf-text/#performance) | Draw-call count under a heavy text load |
 | [Game UI Showcase](https://antriel.github.io/phaser4-msdf-text/#gameui) | A mock game HUD — score counter, combo meter, damage numbers |
 | [RPG Loot Cards](https://antriel.github.io/phaser4-msdf-text/#loot) | Procedural item cards — mixed fonts, rarity-keyed outline & glow, crisp through every tilt |
@@ -267,6 +267,23 @@ text at any size. Any value above `0` produces a soft shadow and requires an
 warning. The maximum usable blur is the atlas `distanceRange` — for softer
 shadows than that, regenerate with a larger `-pxrange`.
 
+Shadow colour, alpha and offset are per-glyph state, so a `displayCallback` or
+`editGlyphs` can give individual glyphs their own drop shadow. The shadow pass is
+normally skipped when the object has no shadow, so set **`perGlyphShadow = true`**
+to run it for those glyphs:
+
+```ts
+text.perGlyphShadow = true;
+text.setDisplayCallback((glyphs) => {
+    for (const g of glyphs) { g.setShadowAlpha(0.6); g.shadow.x = 3; g.shadow.y = 3; }
+});
+```
+
+Rich-text runs that set a shadow (`setRichText` / `setTextStyle` /
+`addStyleRange`) turn the pass on automatically, so `perGlyphShadow` is only
+needed for callback- or manual-driven shadows. Per-glyph shadows are always
+hard-edged (`softness` is object-level).
+
 ### Rich text — per-run styling
 
 Style specific words or ranges — colour, gradient, alpha, outline/shadow colour,
@@ -322,8 +339,16 @@ A `StyleSpec` (and the `SegmentSpec` used by `setRichText`) accepts:
 (`{ color?, alpha? }`), `shadow` (`{ color?, alpha?, x?, y? }`), `scale`/
 `scaleX`/`scaleY`, `rotation` and `skew`. Only the keys you set override the
 glyph's seeded base. Outline **width**/**rounded** and shadow **softness** stay
-object-level (per-batch), so per-run `outline`/`shadow` only tune colour/alpha/
-offset — and only render when the object itself has an outline/shadow enabled.
+object-level (per-batch), so per-run `outline`/`shadow` tune only colour, alpha
+and offset:
+
+- A per-run **shadow renders on its own** — setting `shadow` on any run turns
+  the shadow pass on, so the object needs no shadow of its own. (Per-run shadows
+  are always hard-edged, since `softness` is object-level.)
+- A per-run **outline** still needs the object to have an `outlineWidth > 0`:
+  outline width is a per-batch uniform, so there is no per-glyph outline geometry
+  without it. Give the object a base outline and per-run `outline` colour/alpha
+  then vary per word. (Per-run width/rounded are Phase 2.)
 
 Styles paint in order of increasing dynamism — **segments → rules → ranges →
 `displayCallback`** — applied key-by-key, so a later layer that sets only
@@ -368,9 +393,11 @@ Each glyph exposes:
   baseline shear (`dx/dy`) — a faux italic; positive leans the top right, and
   the pivot is the glyph's *layout* baseline so a whole line slants as one.
 - **`fill`** — the glyph face: `{ color: Corners, alpha: Corners }`.
-- **`shadow`** — `{ color, alpha, x, y }`, controlled independently of the fill
-  (only drawn if the text has a drop shadow).
-- **`outline`** — `{ color, alpha }` (only drawn if the text has an outline).
+- **`shadow`** — `{ color, alpha, x, y }`, controlled independently of the fill.
+  Drawn if the text has a drop shadow, or you set `perGlyphShadow = true` (see
+  the Shadow section).
+- **`outline`** — `{ color, alpha }` (only drawn if the text has an outline —
+  outline width is object-level).
 - read-only **`index`**, **`charCode`**, and **provenance** — `srcIndex`,
   `line`, `srcLine` (see below).
 
