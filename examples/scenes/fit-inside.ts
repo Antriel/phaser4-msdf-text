@@ -5,7 +5,7 @@ import { FONT_OPTIONS } from "../harness/fonts";
 import type { MSDFTextInstance, RectLike, FitOptions } from "../../src";
 
 const PARAGRAPH =
-  "MSDF stays crisp at any scale, so fitInside doesn't just scale the text - " +
+  "MSDF stays crisp at any scale, so `fitInside` doesn't just scale the text - " +
   "it reflows it. A bigger font wraps to fewer words per line, changing the " +
   "shape of the block, and the binary search finds the largest size that still " +
   "fits the box on both axes.";
@@ -55,7 +55,7 @@ export class FitInsideScene extends ExampleScene {
     this.text = this.add.msdfText(0, 0, "Inter", PARAGRAPH, 40).setColor("#eef1f7").setCenterAlign();
 
     this.readout = this.add
-      .msdfText(BOX_X, BOX_Y - 26, "Inter", "", 16)
+      .msdfText(BOX_X, BOX_Y - 16, "Inter", "", 16)
       .setColor("#8ea2c6")
       .setOrigin(0, 1);
 
