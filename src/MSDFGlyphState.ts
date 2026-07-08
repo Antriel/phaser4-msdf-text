@@ -60,6 +60,13 @@ export interface GlyphState {
     scaleY: number;
     /** Glyph rotation about its centre, in radians. */
     rotation: number;
+    /**
+     * Horizontal baseline shear (`dx/dy`) — faux italic. Positive leans the top
+     * of the glyph to the right. Stored as a raw factor (not radians / degrees)
+     * to avoid a per-glyph `tan`. The pivot is the glyph's *layout* baseline, so
+     * a whole line slants consistently. Seeded to `0`; animatable like rotation.
+     */
+    skew: number;
 
     /** Fill colour/alpha — the glyph face. */
     fill: GlyphAspect;
@@ -132,6 +139,7 @@ export function createGlyphState(): GlyphState {
         scaleX: 1,
         scaleY: 1,
         rotation: 0,
+        skew: 0,
         fill: { color: corners(0xffffff), alpha: corners(1) },
         shadow: { color: corners(0), alpha: corners(1), x: 0, y: 0 },
         outline: { color: corners(0), alpha: corners(1) },

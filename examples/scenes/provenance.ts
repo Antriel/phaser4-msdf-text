@@ -42,7 +42,7 @@ export class ProvenanceScene extends ExampleScene {
     this.cameras.main.setBackgroundColor(0x14161d);
     this.heading(
       "Glyph Provenance",
-      "srcIndex / line / srcLine — map every glyph back to its source.",
+      "srcIndex / line / srcLine - map every glyph back to its source.",
     );
 
     this.text = this.add

@@ -47,7 +47,13 @@ export type {
     FitOptions,
     DisplayCallback,
     MSDFTextInstance,
-    MSDFTextStatic
+    MSDFTextStatic,
+    PerCorner,
+    StyleSpec,
+    SegmentSpec,
+    Segment,
+    TextStyleOpts,
+    StyleHandle
 } from './MSDFText';
 export type {
     GlyphState,

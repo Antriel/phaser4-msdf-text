@@ -15,6 +15,7 @@ import { PerformanceScene } from "./scenes/performance";
 import { GameUIScene } from "./scenes/gameui";
 import { LootScene } from "./scenes/loot";
 import { ProvenanceScene } from "./scenes/provenance";
+import { RichTextScene } from "./scenes/rich-text";
 
 interface Example {
   key: string;
@@ -31,6 +32,7 @@ const examples: Example[] = [
   { key: "layout", title: "Text Layout", scene: LayoutScene },
   { key: "fitinside", title: "Fit Inside", scene: FitInsideScene },
   { key: "provenance", title: "Glyph Provenance", scene: ProvenanceScene },
+  { key: "richtext", title: "Rich Text", scene: RichTextScene },
   { key: "performance", title: "Performance", scene: PerformanceScene },
   { key: "gameui", title: "Game UI Showcase", scene: GameUIScene },
   { key: "loot", title: "RPG Loot Cards", scene: LootScene },

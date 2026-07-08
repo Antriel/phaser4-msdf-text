@@ -21,6 +21,7 @@ import * as Phaser from "phaser";
 import { MSDFFont } from './MSDFFont';
 import MSDFTextWebGLRenderer from './MSDFTextWebGLRenderer';
 import { createGlyphState, type GlyphState } from './MSDFGlyphState';
+import type { Corners } from './MSDFColor';
 
 // Per-glyph state mode. Static = no per-glyph array (object colour used as-is);
 // callback = array re-seeded + handed to `displayCallback` each frame; manual =
@@ -46,6 +47,78 @@ export type ColorValue = number | string | Phaser.Types.Display.InputColorObject
 
 /** Line alignment for multi-line text. */
 export type MSDFAlign = 'left' | 'center' | 'right';
+
+/** A per-corner value — the four corners of a glyph quad. */
+export interface PerCorner<T> {
+    topLeft: T;
+    topRight: T;
+    bottomLeft: T;
+    bottomRight: T;
+}
+
+/**
+ * A per-run appearance override for the rich-text API. Every field is optional;
+ * only the keys present override the glyph's seeded base (which inherits the
+ * text object's colour/alpha/outline/shadow). `color`/`alpha` accept a scalar
+ * (all four corners the same) or a {@link PerCorner} (a gradient across the
+ * glyph quad). This is an *appearance* spec: it seeds `GlyphState`, never
+ * changes layout, composes with `displayCallback`, and is animatable. Per-run
+ * `fontSize`/`font` (structural) are Phase 2 and are not here.
+ */
+export interface StyleSpec {
+    /** Fill colour — a scalar or a per-corner gradient. */
+    color?: ColorValue | PerCorner<ColorValue>;
+    /** Fill alpha (0-1) — a scalar or a per-corner gradient. */
+    alpha?: number | PerCorner<number>;
+    /** Outline colour/alpha override (outline width/rounded stay object-level). */
+    outline?: { color?: ColorValue; alpha?: number };
+    /** Shadow colour/alpha/offset override (softness stays object-level). */
+    shadow?: { color?: ColorValue; alpha?: number; x?: number; y?: number };
+    /** Uniform glyph scale about the centre. */
+    scale?: number;
+    /** Horizontal glyph scale (overrides `scale` on the X axis). */
+    scaleX?: number;
+    /** Vertical glyph scale (overrides `scale` on the Y axis). */
+    scaleY?: number;
+    /** Glyph rotation about the centre, in radians. */
+    rotation?: number;
+    /** Baseline shear (`dx/dy`) — faux italic. Positive leans right. */
+    skew?: number;
+}
+
+/** A styled run of text for {@link MSDFTextInstance.setRichText}. */
+export interface SegmentSpec extends StyleSpec {
+    /** The run's text. Concatenated (in order) into the object's plain text. */
+    text: string;
+}
+
+/** One rich-text segment: a bare string (unstyled) or a styled {@link SegmentSpec}. */
+export type Segment = string | SegmentSpec;
+
+/** Options for {@link MSDFTextInstance.setTextStyle}. */
+export interface TextStyleOpts {
+    /** Style every occurrence. Default `true`. Ignored when `nth` is given. */
+    all?: boolean;
+    /** Style only the nth occurrence (0-based). Overrides `all`. */
+    nth?: number;
+    /** Require whole-word matches (word-char boundaries). Default `false`. */
+    wholeWord?: boolean;
+    /** Case-sensitive matching. Default `true`. */
+    caseSensitive?: boolean;
+}
+
+/**
+ * A live handle to a persistent rule ({@link MSDFTextInstance.setTextStyle}) or
+ * a transient range ({@link MSDFTextInstance.addStyleRange}). Changes coalesce
+ * into a single re-seed before the next render. A range handle dies on any text
+ * change — its methods then no-op with a one-time dev warning.
+ */
+export interface StyleHandle {
+    /** Replace the style. */
+    update(style: StyleSpec): void;
+    /** Drop the rule/range. */
+    remove(): void;
+}
 
 /**
  * A box to fit text into, for {@link MSDFTextInstance.fitInside}.
@@ -81,6 +154,190 @@ export interface FitOptions {
 /** Convert any {@link ColorValue} to a packed `0xRRGGBB` number. */
 function toColorInt(value: ColorValue): number {
     return (Phaser.Display.Color.ValueToColor as any)(value).color;
+}
+
+// ── Rich-text internals ─────────────────────────────────────────────────────
+
+/**
+ * A {@link StyleSpec} pre-parsed once (at creation) into GPU-ready values, so
+ * per-frame seeding does no colour parsing or scale expansion. Absent fields
+ * mean "inherit the seeded base" — only present keys are applied to a glyph.
+ * Colour is packed `0xRRGGBB` (per corner); alpha is `0-1` (per corner).
+ */
+interface ResolvedStyle {
+    fillColor?: Corners;   // packed 0xRRGGBB per corner
+    fillAlpha?: Corners;   // 0-1 per corner
+    outlineColor?: number;
+    outlineAlpha?: number;
+    shadowColor?: number;
+    shadowAlpha?: number;
+    shadowX?: number;
+    shadowY?: number;
+    scaleX?: number;
+    scaleY?: number;
+    rotation?: number;
+    skew?: number;
+}
+
+/** A styled source-index span. `start`/`length` index the plain `_text`. */
+interface StyleRun {
+    start: number;
+    length: number;
+    style: ResolvedStyle;
+}
+
+/** A cached whole/substring match span (a rule's runs share the rule's style). */
+interface RuleMatch {
+    start: number;
+    length: number;
+}
+
+/** A persistent keyword rule: its `runs` are re-cached on every text change. */
+interface StyleRule {
+    match: string;
+    opts: Required<TextStyleOpts>;
+    style: ResolvedStyle;
+    runs: RuleMatch[];
+}
+
+/** Whether `value` is a {@link PerCorner} (has the four corner keys). */
+function isPerCorner(value: any): boolean {
+    return value !== null && typeof value === 'object' && 'topLeft' in value;
+}
+
+/** Parse a scalar-or-per-corner colour into packed `0xRRGGBB` corners. */
+function resolveColorCorners(value: ColorValue | PerCorner<ColorValue>): Corners {
+    if (isPerCorner(value)) {
+        const v = value as PerCorner<ColorValue>;
+        return {
+            topLeft: toColorInt(v.topLeft),
+            topRight: toColorInt(v.topRight),
+            bottomLeft: toColorInt(v.bottomLeft),
+            bottomRight: toColorInt(v.bottomRight)
+        };
+    }
+    const c = toColorInt(value as ColorValue);
+    return { topLeft: c, topRight: c, bottomLeft: c, bottomRight: c };
+}
+
+/** Parse a scalar-or-per-corner alpha into `0-1` corners. */
+function resolveAlphaCorners(value: number | PerCorner<number>): Corners {
+    if (isPerCorner(value)) {
+        const v = value as PerCorner<number>;
+        return { topLeft: v.topLeft, topRight: v.topRight, bottomLeft: v.bottomLeft, bottomRight: v.bottomRight };
+    }
+    const a = value as number;
+    return { topLeft: a, topRight: a, bottomLeft: a, bottomRight: a };
+}
+
+/** Normalise a {@link StyleSpec} into a {@link ResolvedStyle} (present keys only). */
+function resolveStyle(spec: StyleSpec): ResolvedStyle {
+    const r: ResolvedStyle = {};
+    if (spec.color !== undefined) r.fillColor = resolveColorCorners(spec.color);
+    if (spec.alpha !== undefined) r.fillAlpha = resolveAlphaCorners(spec.alpha);
+    if (spec.outline) {
+        if (spec.outline.color !== undefined) r.outlineColor = toColorInt(spec.outline.color);
+        if (spec.outline.alpha !== undefined) r.outlineAlpha = spec.outline.alpha;
+    }
+    if (spec.shadow) {
+        if (spec.shadow.color !== undefined) r.shadowColor = toColorInt(spec.shadow.color);
+        if (spec.shadow.alpha !== undefined) r.shadowAlpha = spec.shadow.alpha;
+        if (spec.shadow.x !== undefined) r.shadowX = spec.shadow.x;
+        if (spec.shadow.y !== undefined) r.shadowY = spec.shadow.y;
+    }
+    // `scale` is the uniform base; `scaleX`/`scaleY` override per axis.
+    let sx: number | undefined;
+    let sy: number | undefined;
+    if (spec.scale !== undefined) { sx = spec.scale; sy = spec.scale; }
+    if (spec.scaleX !== undefined) sx = spec.scaleX;
+    if (spec.scaleY !== undefined) sy = spec.scaleY;
+    if (sx !== undefined) r.scaleX = sx;
+    if (sy !== undefined) r.scaleY = sy;
+    if (spec.rotation !== undefined) r.rotation = spec.rotation;
+    if (spec.skew !== undefined) r.skew = spec.skew;
+    return r;
+}
+
+/** Whether a spec carries at least one appearance override (so it needs a run). */
+function hasStyleKeys(spec: SegmentSpec): boolean {
+    return spec.color !== undefined || spec.alpha !== undefined ||
+        spec.outline !== undefined || spec.shadow !== undefined ||
+        spec.scale !== undefined || spec.scaleX !== undefined || spec.scaleY !== undefined ||
+        spec.rotation !== undefined || spec.skew !== undefined;
+}
+
+/** Apply a resolved style's present keys onto one glyph state (overwrite). */
+function applyStyleToGlyph(g: GlyphState, s: ResolvedStyle): void {
+    if (s.fillColor) {
+        const t = g.fill.color, v = s.fillColor;
+        t.topLeft = v.topLeft; t.topRight = v.topRight; t.bottomLeft = v.bottomLeft; t.bottomRight = v.bottomRight;
+    }
+    if (s.fillAlpha) {
+        const a = g.fill.alpha, v = s.fillAlpha;
+        a.topLeft = v.topLeft; a.topRight = v.topRight; a.bottomLeft = v.bottomLeft; a.bottomRight = v.bottomRight;
+    }
+    if (s.outlineColor !== undefined) {
+        const t = g.outline.color;
+        t.topLeft = t.topRight = t.bottomLeft = t.bottomRight = s.outlineColor;
+    }
+    if (s.outlineAlpha !== undefined) {
+        const a = g.outline.alpha;
+        a.topLeft = a.topRight = a.bottomLeft = a.bottomRight = s.outlineAlpha;
+    }
+    if (s.shadowColor !== undefined) {
+        const t = g.shadow.color;
+        t.topLeft = t.topRight = t.bottomLeft = t.bottomRight = s.shadowColor;
+    }
+    if (s.shadowAlpha !== undefined) {
+        const a = g.shadow.alpha;
+        a.topLeft = a.topRight = a.bottomLeft = a.bottomRight = s.shadowAlpha;
+    }
+    if (s.shadowX !== undefined) g.shadow.x = s.shadowX;
+    if (s.shadowY !== undefined) g.shadow.y = s.shadowY;
+    if (s.scaleX !== undefined) g.scaleX = s.scaleX;
+    if (s.scaleY !== undefined) g.scaleY = s.scaleY;
+    if (s.rotation !== undefined) g.rotation = s.rotation;
+    if (s.skew !== undefined) g.skew = s.skew;
+}
+
+/** Whether `ch` is a word character (used for whole-word matching). */
+function isWordChar(ch: string): boolean {
+    return ch !== '' && /[A-Za-z0-9_]/.test(ch);
+}
+
+/**
+ * Find match spans of `needle` in `text` per `opts`. Whole-word matches require
+ * non-word (or string-boundary) neighbours; `nth` targets a single occurrence
+ * (counting only matches that pass the whole-word gate); otherwise all/first.
+ */
+function matchRuns(text: string, needle: string, opts: Required<TextStyleOpts>): RuleMatch[] {
+    const runs: RuleMatch[] = [];
+    const len = needle.length;
+    if (len === 0) return runs;
+
+    const hay = opts.caseSensitive ? text : text.toLowerCase();
+    const pat = opts.caseSensitive ? needle : needle.toLowerCase();
+
+    let from = 0;
+    let count = 0;
+    for (;;) {
+        const idx = hay.indexOf(pat, from);
+        if (idx < 0) break;
+        const before = idx > 0 ? text[idx - 1] : '';
+        const after = idx + len < text.length ? text[idx + len] : '';
+        const ok = !opts.wholeWord || (!isWordChar(before) && !isWordChar(after));
+        if (ok) {
+            if (opts.nth >= 0) {
+                if (count === opts.nth) { runs.push({ start: idx, length: len }); break; }
+                count++;
+            } else {
+                runs.push({ start: idx, length: len });
+                if (!opts.all) break;
+            }
+        }
+        from = idx + len;
+    }
+    return runs;
 }
 
 /**
@@ -249,6 +506,39 @@ export interface MSDFTextInstance extends
      * do not scale with the fitted size.
      */
     fitInside(rect: RectLike, options?: FitOptions): this;
+    /**
+     * Set styled text from structured segments (**content** styling). Segment
+     * text is concatenated into the plain `text` (so `this.text` still returns
+     * the joined string and wrap/layout are unchanged); each styled segment's
+     * appearance overrides are recorded as a run. The styles travel *with the
+     * content* — they are replaced together on the next `setText`/`setRichText`.
+     *
+     * The update path is simply calling `setRichText` again: if the concatenated
+     * text is unchanged, relayout is skipped and only the styles re-seed.
+     * Chainable.
+     */
+    setRichText(segments: Segment[]): this;
+    /**
+     * Add a persistent keyword **rule** (policy styling): every match of `match`
+     * in the current text is styled. Survives `setText`/`setRichText` and is
+     * re-matched against the new text each time. Returns a {@link StyleHandle}
+     * to update/remove the rule. Substring match by default; see
+     * {@link TextStyleOpts} for `wholeWord`/`nth`/`caseSensitive`/`all`.
+     */
+    setTextStyle(match: string, style: StyleSpec, opts?: TextStyleOpts): StyleHandle;
+    /**
+     * Style a **transient range** of the current text by index (override
+     * styling). Anchored to `this.text`, which the caller owns; **any** text
+     * change drops all ranges and kills their handles (no clamping). Returns a
+     * {@link StyleHandle}. Use for highlights over text known to be stable.
+     */
+    addStyleRange(start: number, length: number, style: StyleSpec): StyleHandle;
+    /**
+     * Remove all rules **and** ranges (their handles die). Content segments are
+     * not policy, so they are left intact — replace them with `setText`/
+     * `setRichText`. Chainable.
+     */
+    clearStyles(): this;
     setDisplayCallback(callback: DisplayCallback | undefined): this;
     clearDisplayCallback(): this;
     /**
@@ -309,9 +599,13 @@ const DefaultMSDFNodes = new PhaserMap([
  */
 const MSDFTextRender = {
     renderWebGL: function (renderer: any, src: any, drawingContext: any, parentMatrix: any): void {
-        // Rebuild if needed — rebuildText clears _dirty internally.
+        // Rebuild if needed — rebuildText clears _dirty (and _stylesDirty, since
+        // it re-seeds). Otherwise apply any pending style change lazily: one
+        // coalesced re-seed regardless of how many handles changed this tick.
         if (src._dirty) {
             src.rebuildText();
+        } else if (src._stylesDirty) {
+            src.applyStylesDirty();
         }
 
         // Delegate to MSDFTextWebGLRenderer
@@ -407,6 +701,16 @@ export const MSDFText: MSDFTextStatic = new Class({
         this._glyphMode = GLYPH_MODE_STATIC;
         this._glyphStates = [];
 
+        // ── Rich-text styling ───────────────────────────────────────────────
+        // Three layers, painted segments → rules → ranges (then displayCallback).
+        this._segmentRuns = [];   // content — rebuilt with the text (setRichText)
+        this._styleRules = [];    // policy — runs re-cached on each text change
+        this._rangeRuns = [];     // override — dropped on any text change
+        this._hasStyles = false;  // any layer non-empty ⇒ force the per-glyph array
+        this._stylesDirty = false;// a handle/segment changed ⇒ coalesced re-seed
+        this._rangeGen = 0;       // bumped on text change to invalidate range handles
+        this._deadHandleWarned = false;
+
         // Bind atlas texture via the standard Texture component (no width/height
         // or origin updates — those derive from text bounds, not the atlas frame).
         if (fontData) {
@@ -475,11 +779,43 @@ export const MSDFText: MSDFTextStatic = new Class({
         if (str !== this._text) {
             this._text = str;
             this._dirty = true;
+            // Plain setText replaces the content: segment styles go with it,
+            // ranges drop, rules re-match against the new text.
+            if (this._hasStyles) {
+                this._segmentRuns.length = 0;
+                this.onTextChanged(str);
+            }
             // Force a rebuild now so width/height/displayOrigin are correct
             // for any code that reads them between setText and the next render.
             this.updateDisplayOrigin();
         }
         return this;
+    },
+
+    /**
+     * Shared text-change bookkeeping for the style layers: drop transient ranges
+     * (killing their handles via `_rangeGen`), re-cache every rule's matches
+     * against the new text, then recompute `_hasStyles` and flag a re-seed.
+     * Segments are handled by the caller (they are content, not policy).
+     */
+    onTextChanged: function (text: string): void {
+        if (this._rangeRuns.length > 0) {
+            this._rangeRuns.length = 0;
+            this._rangeGen++;
+        }
+        for (let i = 0; i < this._styleRules.length; i++) {
+            const rule = this._styleRules[i];
+            rule.runs = matchRuns(text, rule.match, rule.opts);
+        }
+        this.recomputeHasStyles();
+        this._stylesDirty = true;
+    },
+
+    /** `_hasStyles` = any of the three style layers is non-empty. */
+    recomputeHasStyles: function (): void {
+        this._hasStyles = this._segmentRuns.length > 0 ||
+            this._styleRules.length > 0 ||
+            this._rangeRuns.length > 0;
     },
 
     /**
@@ -637,6 +973,13 @@ export const MSDFText: MSDFTextStatic = new Class({
             b: c.blueGL,
             a: alpha !== undefined ? alpha : c.alphaGL
         };
+        // In plain static mode the renderer reads this colour fresh each frame.
+        // But with rich-text styles the per-glyph array is snapshotted (seeded
+        // once, like manual mode), so flag a coalesced re-seed to propagate the
+        // new base colour under the styled runs.
+        if (this._hasStyles) {
+            this._stylesDirty = true;
+        }
         return this;
     },
 
@@ -852,7 +1195,69 @@ export const MSDFText: MSDFTextStatic = new Class({
         for (let i = 0; i < n; i++) {
             this.seedGlyph(states[i], chars[i], i);
         }
+        // Rich-text styling overrides the seeded base, before any callback runs.
+        if (this._hasStyles) {
+            this.applyStyleRuns(states);
+        }
         return states;
+    },
+
+    /**
+     * Layer the three style stores onto already-seeded glyph states, in paint
+     * order — **segments → rules → ranges** — and creation order within each
+     * layer. Applied key-by-key, so a later layer that sets only `outline`
+     * leaves an earlier layer's `color` intact. Glyphs are matched to runs by
+     * `srcIndex` (source position, wrap-independent).
+     */
+    applyStyleRuns: function (states: GlyphState[]): void {
+        const seg = this._segmentRuns;
+        for (let r = 0; r < seg.length; r++) {
+            this.applyRun(states, seg[r].start, seg[r].length, seg[r].style);
+        }
+        const rules = this._styleRules;
+        for (let k = 0; k < rules.length; k++) {
+            const rule = rules[k];
+            const runs = rule.runs;
+            for (let r = 0; r < runs.length; r++) {
+                this.applyRun(states, runs[r].start, runs[r].length, rule.style);
+            }
+        }
+        const range = this._rangeRuns;
+        for (let r = 0; r < range.length; r++) {
+            this.applyRun(states, range[r].start, range[r].length, range[r].style);
+        }
+    },
+
+    /** Apply one resolved style to every glyph whose `srcIndex` is in the span. */
+    applyRun: function (states: GlyphState[], start: number, length: number, style: ResolvedStyle): void {
+        const end = start + length;
+        for (let i = 0; i < states.length; i++) {
+            const g = states[i];
+            const si = (g as any).srcIndex;
+            if (si >= start && si < end) {
+                applyStyleToGlyph(g, style);
+            }
+        }
+    },
+
+    /**
+     * Lazily apply a pending style change (set `_stylesDirty` by a handle, a
+     * segment update or `clearStyles`). Coalesced to one re-seed per tick by the
+     * flag. In callback mode the array is re-seeded every frame anyway, so this
+     * only clears the flag; in manual/static+styles it re-seeds the persistent
+     * array (and, in manual mode, emits `'glyphsreset'` so edits can re-apply).
+     */
+    applyStylesDirty: function (): void {
+        this._stylesDirty = false;
+        if (this._glyphMode === GLYPH_MODE_CALLBACK) {
+            return;
+        }
+        if (this._glyphMode === GLYPH_MODE_MANUAL || this._hasStyles) {
+            this.prepareGlyphStates();
+            if (this._glyphMode === GLYPH_MODE_MANUAL) {
+                this.emit('glyphsreset', this);
+            }
+        }
     },
 
     /**
@@ -871,6 +1276,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         g.scaleX = 1;
         g.scaleY = 1;
         g.rotation = 0;
+        g.skew = 0;
 
         const c = this._color;
         const cA = c.a;
@@ -999,6 +1405,158 @@ export const MSDFText: MSDFTextStatic = new Class({
      */
     hasShadow: function (): boolean {
         return this.shadowX !== 0 || this.shadowY !== 0 || this.shadowSoftness > 0;
+    },
+
+    // ========================================================================
+    // Rich-text styling
+    // ========================================================================
+
+    /**
+     * Set styled text from structured segments. See
+     * {@link MSDFTextInstance.setRichText}.
+     */
+    setRichText: function (segments: Segment[]) {
+        let text = '';
+        const runs: StyleRun[] = [];
+
+        for (let i = 0; i < segments.length; i++) {
+            const seg = segments[i];
+            if (typeof seg === 'string') {
+                text += seg;
+                continue;
+            }
+            const start = text.length;
+            const t = seg.text != null ? String(seg.text) : '';
+            text += t;
+            if (t.length > 0 && hasStyleKeys(seg)) {
+                runs.push({ start, length: t.length, style: resolveStyle(seg) });
+            }
+        }
+
+        // Segments replace the content layer wholesale; ranges drop (content
+        // replacement). Rules re-match only when the text actually changed.
+        const changed = text !== this._text;
+        this._segmentRuns = runs;
+        if (changed) {
+            this._text = text;
+            this._dirty = true;
+            this.onTextChanged(text);      // drop ranges, re-match rules, dirty flags
+            this.updateDisplayOrigin();
+        } else {
+            // Same concatenated text ⇒ skip relayout; still drop ranges and
+            // refresh the styled seed (that is the update path — no _dirty).
+            if (this._rangeRuns.length > 0) {
+                this._rangeRuns.length = 0;
+                this._rangeGen++;
+            }
+            this.recomputeHasStyles();
+            this._stylesDirty = true;
+        }
+        return this;
+    },
+
+    /**
+     * Add a persistent keyword rule. See {@link MSDFTextInstance.setTextStyle}.
+     */
+    setTextStyle: function (match: string, style: StyleSpec, opts: TextStyleOpts = {}) {
+        const resolvedOpts: Required<TextStyleOpts> = {
+            all: opts.all !== undefined ? opts.all : true,
+            nth: opts.nth !== undefined ? opts.nth : -1, // -1 = not targeting a single occurrence
+            wholeWord: !!opts.wholeWord,
+            caseSensitive: opts.caseSensitive !== undefined ? opts.caseSensitive : true
+        };
+        const rule: StyleRule = {
+            match: String(match),
+            opts: resolvedOpts,
+            style: resolveStyle(style),
+            runs: matchRuns(this._text, String(match), resolvedOpts)
+        };
+        this._styleRules.push(rule);
+        this.recomputeHasStyles();
+        this._stylesDirty = true;
+        return this.makeRuleHandle(rule);
+    },
+
+    /**
+     * Style a transient index range. See {@link MSDFTextInstance.addStyleRange}.
+     */
+    addStyleRange: function (start: number, length: number, style: StyleSpec) {
+        const run: StyleRun = { start, length, style: resolveStyle(style) };
+        this._rangeRuns.push(run);
+        this.recomputeHasStyles();
+        this._stylesDirty = true;
+        return this.makeRangeHandle(run, this._rangeGen);
+    },
+
+    /**
+     * Remove all rules and ranges. See {@link MSDFTextInstance.clearStyles}.
+     */
+    clearStyles: function () {
+        this._styleRules.length = 0;
+        if (this._rangeRuns.length > 0) {
+            this._rangeRuns.length = 0;
+            this._rangeGen++;
+        }
+        // Segments are content, not policy — left intact.
+        this.recomputeHasStyles();
+        this._stylesDirty = true;
+        return this;
+    },
+
+    /** Build the {@link StyleHandle} for a persistent rule (survives text changes). */
+    makeRuleHandle: function (rule: StyleRule): StyleHandle {
+        const self = this;
+        let removed = false;
+        return {
+            update(style: StyleSpec): void {
+                if (removed) { self.warnDeadHandle(); return; }
+                rule.style = resolveStyle(style);
+                self._stylesDirty = true;
+            },
+            remove(): void {
+                if (removed) return;
+                removed = true;
+                const i = self._styleRules.indexOf(rule);
+                if (i >= 0) self._styleRules.splice(i, 1);
+                self.recomputeHasStyles();
+                self._stylesDirty = true;
+            }
+        };
+    },
+
+    /**
+     * Build the {@link StyleHandle} for a transient range. `gen` snapshots
+     * `_rangeGen` at creation; a mismatch means a text change dropped the range,
+     * so the handle is dead (methods no-op with a one-time warning).
+     */
+    makeRangeHandle: function (run: StyleRun, gen: number): StyleHandle {
+        const self = this;
+        return {
+            update(style: StyleSpec): void {
+                if (gen !== self._rangeGen) { self.warnDeadHandle(); return; }
+                run.style = resolveStyle(style);
+                self._stylesDirty = true;
+            },
+            remove(): void {
+                if (gen !== self._rangeGen) return;
+                const i = self._rangeRuns.indexOf(run);
+                if (i >= 0) self._rangeRuns.splice(i, 1);
+                self.recomputeHasStyles();
+                self._stylesDirty = true;
+            }
+        };
+    },
+
+    /** One-time dev warning when a dead style handle is used. */
+    warnDeadHandle: function (): void {
+        if (!this._deadHandleWarned) {
+            this._deadHandleWarned = true;
+            console.warn(
+                '[MSDFText] A style handle was used after it was removed or after ' +
+                'a text change dropped its range; the call is ignored. Re-create ' +
+                'the range/rule against the current text.'
+            );
+        }
     },
 
     // ========================================================================
@@ -1213,7 +1771,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         this.clearCharacters();
 
         if (!this._text || this._text.length === 0) {
-            this.refreshManualGlyphs();
+            this.refreshGlyphs();
             return;
         }
 
@@ -1316,18 +1874,27 @@ export const MSDFText: MSDFTextStatic = new Class({
 
         this._dirty = false;
         this.updateDisplayOrigin();
-        this.refreshManualGlyphs();
+        this.refreshGlyphs();
     },
 
     /**
-     * In manual mode, re-seed the glyph array for the freshly rebuilt glyph set
-     * and emit `'glyphsreset'` so listeners can re-apply their per-glyph edits
-     * (which the rebuild discarded). No-op in static or callback mode.
+     * After a rebuild, re-seed the persistent glyph array for the fresh glyph
+     * set. Fires in **manual** mode (and emits `'glyphsreset'` so listeners can
+     * re-apply the edits the rebuild discarded) and whenever rich-text styles
+     * are present (so a no-callback styled text has its styled array ready).
+     * Callback mode re-seeds every frame instead, so it is skipped here. Clears
+     * `_stylesDirty` since the array is now freshly seeded + styled.
      */
-    refreshManualGlyphs: function (): void {
-        if (this._glyphMode === GLYPH_MODE_MANUAL) {
+    refreshGlyphs: function (): void {
+        this._stylesDirty = false;
+        if (this._glyphMode === GLYPH_MODE_CALLBACK) {
+            return;
+        }
+        if (this._glyphMode === GLYPH_MODE_MANUAL || this._hasStyles) {
             this.prepareGlyphStates();
-            this.emit('glyphsreset', this);
+            if (this._glyphMode === GLYPH_MODE_MANUAL) {
+                this.emit('glyphsreset', this);
+            }
         }
     },
 

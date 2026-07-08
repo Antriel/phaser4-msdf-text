@@ -78,9 +78,26 @@ function configurePass(
 }
 
 /**
+ * Pre-multiply a baseline shear into a matrix in place: `m := m · shear`, where
+ * `shear` maps `x' = x − k·y + k·Yb`, `y' = y` (a horizontal shear pivoting on
+ * the line `y = Yb`). Because it is pre-multiplied onto `calcMatrix` before the
+ * glyph's own translate/rotate/scale, the shear acts in absolute text space —
+ * so `Yb` must be an absolute text-space Y (origin offset already folded in).
+ */
+function applyBaselineShear(m: any, k: number, yb: number): void {
+    const { a, b, c, d, e, f } = m;
+    m.c = c - k * a;
+    m.d = d - k * b;
+    m.e = e + k * yb * a;
+    m.f = f + k * yb * b;
+}
+
+/**
  * Submit one glyph quad at an absolute text-space position. Uses the fast path
- * (the shared camera matrix + a position offset) unless the glyph is scaled or
- * rotated, in which case it builds a per-glyph matrix about the glyph centre.
+ * (the shared camera matrix + a position offset) unless the glyph is scaled,
+ * rotated or sheared, in which case it builds a per-glyph matrix. Scale/rotation
+ * pivot the glyph centre; skew is a baseline shear composed onto `calcMatrix`
+ * first (so a mixed-scale line still slants as one line).
  */
 function submitOneGlyph(
     drawingContext: any,
@@ -92,17 +109,26 @@ function submitOneGlyph(
     scaleX: number,
     scaleY: number,
     rotation: number,
+    skew: number,
     calcMatrix: any,
     originOffsetX: number,
     originOffsetY: number,
     colorData: PackedCorners,
     outlineData: PackedCorners
 ): void {
-    if (scaleX !== 1 || scaleY !== 1 || rotation !== 0) {
+    if (scaleX !== 1 || scaleY !== 1 || rotation !== 0 || skew !== 0) {
         const centerX = char.w / 2;
         const centerY = char.h / 2;
 
         tempCharMatrix.copyFrom(calcMatrix);
+        if (skew !== 0) {
+            // Pivot on this glyph's absolute layout baseline. `char.baselineY -
+            // char.y` is the glyph top → baseline offset (constant per glyph),
+            // added to the glyph's current top `y` so a moved glyph shears about
+            // its own baseline. Per-glyph scale (centre pivot below) deliberately
+            // does not move this pivot — that keeps a mixed-scale line coherent.
+            applyBaselineShear(tempCharMatrix, skew, y + (char.baselineY - char.y) + originOffsetY);
+        }
         tempCharMatrix.translate(x + centerX + originOffsetX, y + centerY + originOffsetY);
         if (rotation !== 0) tempCharMatrix.rotate(rotation);
         if (scaleX !== 1 || scaleY !== 1) tempCharMatrix.scale(scaleX, scaleY);
@@ -178,11 +204,15 @@ function MSDFTextWebGLRenderer(
     // Static mode keeps the object-level colours in shared buffers and never
     // touches a per-glyph array. Callback mode re-seeds the array and runs the
     // user callback once for the whole text; manual mode reads the user-owned,
-    // already-seeded array as-is.
+    // already-seeded array as-is. Rich-text styles (`_hasStyles`) force a
+    // persistent array even without a callback — it is seeded + styled on
+    // rebuild and whenever styles change (`_stylesDirty`, applied pre-render),
+    // and the renderer reads it here without re-seeding.
     const glyphMode = src._glyphMode;
+    const hasStyles = src._hasStyles;
     let glyphs: GlyphState[] | null = null;
 
-    if (glyphMode === GLYPH_MODE_STATIC) {
+    if (glyphMode === GLYPH_MODE_STATIC && !hasStyles) {
         // Single base fill colour on every corner; alpha = colour alpha ×
         // per-corner object alpha. Outline and shadow likewise use one colour.
         const c = src._color;
@@ -206,15 +236,17 @@ function MSDFTextWebGLRenderer(
         shadowBuf.colorTopRight = packColor(sc, sA * src._alphaTR);
         shadowBuf.colorBottomLeft = packColor(sc, sA * src._alphaBL);
         shadowBuf.colorBottomRight = packColor(sc, sA * src._alphaBR);
-    } else {
-        if (glyphMode === GLYPH_MODE_CALLBACK) {
-            glyphs = src.prepareGlyphStates();
-            if (src.displayCallback) {
-                src.displayCallback(glyphs, src);
-            }
-        } else {
-            glyphs = src._glyphStates;
+    } else if (glyphMode === GLYPH_MODE_CALLBACK) {
+        // Re-seed (and, if styled, re-apply style runs) every frame, then let the
+        // callback layer on top of the resolved state.
+        glyphs = src.prepareGlyphStates();
+        if (src.displayCallback) {
+            src.displayCallback(glyphs, src);
         }
+    } else {
+        // Manual mode, or static + styles: the array is already seeded (and
+        // styled) by the rebuild / styles-dirty path — read it as-is.
+        glyphs = src._glyphStates;
     }
     const perGlyph = glyphs !== null;
 
@@ -234,11 +266,11 @@ function MSDFTextWebGLRenderer(
                 const g = glyphs![i];
                 packAspect(shadowBuf, g.shadow.color, g.shadow.alpha);
                 submitOneGlyph(drawingContext, batchHandler, texture, char,
-                    g.x + g.shadow.x, g.y + g.shadow.y, g.scaleX, g.scaleY, g.rotation,
+                    g.x + g.shadow.x, g.y + g.shadow.y, g.scaleX, g.scaleY, g.rotation, g.skew,
                     calcMatrix, originOffsetX, originOffsetY, shadowBuf, zeroOutline);
             } else {
                 submitOneGlyph(drawingContext, batchHandler, texture, char,
-                    char.x + dsx, char.y + dsy, 1, 1, 0,
+                    char.x + dsx, char.y + dsy, 1, 1, 0, 0,
                     calcMatrix, originOffsetX, originOffsetY, shadowBuf, zeroOutline);
             }
         }
@@ -257,11 +289,11 @@ function MSDFTextWebGLRenderer(
                 const g = glyphs![i];
                 packAspect(outlineBuf, g.outline.color, g.outline.alpha);
                 submitOneGlyph(drawingContext, batchHandler, texture, char,
-                    g.x, g.y, g.scaleX, g.scaleY, g.rotation,
+                    g.x, g.y, g.scaleX, g.scaleY, g.rotation, g.skew,
                     calcMatrix, originOffsetX, originOffsetY, zeroOutline, outlineBuf);
             } else {
                 submitOneGlyph(drawingContext, batchHandler, texture, char,
-                    char.x, char.y, 1, 1, 0,
+                    char.x, char.y, 1, 1, 0, 0,
                     calcMatrix, originOffsetX, originOffsetY, zeroOutline, outlineBuf);
             }
         }
@@ -287,11 +319,11 @@ function MSDFTextWebGLRenderer(
                 outlineData = outlineBuf;
             }
             submitOneGlyph(drawingContext, batchHandler, texture, char,
-                g.x, g.y, g.scaleX, g.scaleY, g.rotation,
+                g.x, g.y, g.scaleX, g.scaleY, g.rotation, g.skew,
                 calcMatrix, originOffsetX, originOffsetY, fillBuf, outlineData);
         } else {
             submitOneGlyph(drawingContext, batchHandler, texture, char,
-                char.x, char.y, 1, 1, 0,
+                char.x, char.y, 1, 1, 0, 0,
                 calcMatrix, originOffsetX, originOffsetY, fillBuf, combined ? outlineBuf : zeroOutline);
         }
     }

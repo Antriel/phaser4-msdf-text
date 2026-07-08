@@ -103,6 +103,9 @@ Live, interactive demos — each link opens that example directly:
 | [Glow & Drop Shadow](https://antriel.github.io/phaser4-msdf-text/#glow) | Hard shadows, soft shadows, and glow |
 | [Animated Effects](https://antriel.github.io/phaser4-msdf-text/#effects) | Per-character display callbacks — wave, rainbow, jiggle |
 | [Text Layout](https://antriel.github.io/phaser4-msdf-text/#layout) | Alignment, word wrap, and line spacing |
+| [Fit Inside](https://antriel.github.io/phaser4-msdf-text/#fitinside) | Reflowing text to fit a box via `fitInside` |
+| [Glyph Provenance](https://antriel.github.io/phaser4-msdf-text/#provenance) | `srcIndex` / `line` / `srcLine` — mapping glyphs back to the source |
+| [Rich Text](https://antriel.github.io/phaser4-msdf-text/#richtext) | Per-run colour, gradient, skew; keyword rules and ranges |
 | [Performance](https://antriel.github.io/phaser4-msdf-text/#performance) | Draw-call count under a heavy text load |
 | [Game UI Showcase](https://antriel.github.io/phaser4-msdf-text/#gameui) | A mock game HUD — score counter, combo meter, damage numbers |
 | [RPG Loot Cards](https://antriel.github.io/phaser4-msdf-text/#loot) | Procedural item cards — mixed fonts, rarity-keyed outline & glow, crisp through every tilt |
@@ -264,6 +267,80 @@ text at any size. Any value above `0` produces a soft shadow and requires an
 warning. The maximum usable blur is the atlas `distanceRange` — for softer
 shadows than that, regenerate with a larger `-pxrange`.
 
+### Rich text — per-run styling
+
+Style specific words or ranges — colour, gradient, alpha, outline/shadow colour,
+scale, rotation, skew — **without markup in the string** and without
+hand-counting glyphs. Three entry points over one mechanism, distinguished by
+**lifetime**:
+
+**Content — `setRichText(segments)`.** Structured styled input. Segment text is
+concatenated into the plain text (so `text` still returns the joined string and
+wrapping is unchanged); the styles travel *with the content* and are replaced by
+the next `setText`/`setRichText`.
+
+```ts
+text.setRichText([
+    'Deal ',
+    { text: '50', color: 0xffd23f, scale: 1.15 },   // styled run
+    ' fire damage to ',
+    { text: 'all', color: { topLeft: 0xff5da8, topRight: 0xff5da8,   // gradient
+                             bottomLeft: 0x5db8ff, bottomRight: 0x5db8ff } },
+    ' enemies.',
+]);
+text.text; // → "Deal 50 fire damage to all enemies."  (plain string, wraps normally)
+```
+
+**Policy — `setTextStyle(match, style, opts?)`.** A persistent keyword rule that
+**survives text changes** and is re-matched against the new text each time.
+Returns a handle. Substring match by default; `wholeWord`, `nth`,
+`caseSensitive` and `all` are options.
+
+```ts
+const dmg = text.setTextStyle('DMG', { color: 0xff5252 });   // every "DMG" is red
+text.setTextStyle('the', { color: 0x88ccff }, { nth: 0, wholeWord: true }); // just the 1st word "the"
+
+text.setText('Take 99 DMG');   // the new "DMG" is red too — the rule re-matched
+dmg.update({ color: 0xffa500 }); // recolour (coalesced re-seed, no relayout)
+dmg.remove();                    // drop the rule
+```
+
+**Override — `addStyleRange(start, length, style)`.** A transient range anchored
+to indices in the current text. **Any text change drops all ranges** and kills
+their handles (no clamping — a stale handle no-ops with a one-time warning). Use
+it for highlights over text you know is stable (search hits, your own parser).
+
+```ts
+const hit = text.addStyleRange(6, 4, { color: 0xffe066, scale: 1.06 });
+hit.remove();
+```
+
+`clearStyles()` removes all rules **and** ranges (segments are content, kept).
+
+A `StyleSpec` (and the `SegmentSpec` used by `setRichText`) accepts:
+`color`/`alpha` (a scalar, or a per-corner object for a gradient), `outline`
+(`{ color?, alpha? }`), `shadow` (`{ color?, alpha?, x?, y? }`), `scale`/
+`scaleX`/`scaleY`, `rotation` and `skew`. Only the keys you set override the
+glyph's seeded base. Outline **width**/**rounded** and shadow **softness** stay
+object-level (per-batch), so per-run `outline`/`shadow` only tune colour/alpha/
+offset — and only render when the object itself has an outline/shadow enabled.
+
+Styles paint in order of increasing dynamism — **segments → rules → ranges →
+`displayCallback`** — applied key-by-key, so a later layer that sets only
+`outline` keeps an earlier layer's `color`. This is what lets a static keyword
+colour and an animated callback compose: the callback sees already-styled
+glyphs and layers on top. Handle updates coalesce into one re-seed before the
+next render (in manual mode a styles re-seed emits `'glyphsreset'`, once/tick).
+
+| action | segments | rules | ranges |
+|---|---|---|---|
+| `setText` / `setRichText` | replaced with the text | kept; re-matched | dropped; handles die |
+| `handle.update` / `remove` | — | mutates the rule | mutates the range |
+| `clearStyles()` | kept | removed | removed |
+
+Per-run **`fontSize`** and **`font`** (which change layout) are a planned Phase 2
+and are not part of this appearance-only surface.
+
 ### Per-glyph display callback
 
 ```ts
@@ -286,8 +363,10 @@ every frame.
 Each glyph exposes:
 
 - **transform** — `x`, `y`, `scaleX`, `scaleY`, `rotation` (about the glyph
-  centre; `scaleX`/`scaleY = 0` hides it). `setScale(v)` sets both axes;
-  `setScale(x, y)` sets them independently (squash/stretch).
+  centre; `scaleX`/`scaleY = 0` hides it) and `skew`. `setScale(v)` sets both
+  axes; `setScale(x, y)` sets them independently (squash/stretch). `skew` is a
+  baseline shear (`dx/dy`) — a faux italic; positive leans the top right, and
+  the pivot is the glyph's *layout* baseline so a whole line slants as one.
 - **`fill`** — the glyph face: `{ color: Corners, alpha: Corners }`.
 - **`shadow`** — `{ color, alpha, x, y }`, controlled independently of the fill
   (only drawn if the text has a drop shadow).
