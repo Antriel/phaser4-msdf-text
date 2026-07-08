@@ -147,6 +147,58 @@ text.setMaxWidth(400);             // Wrap to fit 400px (0 disables)
 text.wordWrapCharCode = 32;        // Default: space. Use 45 for hyphen, etc.
 ```
 
+### Fit to a box (`fitInside`)
+
+```ts
+// Resize only: shrink the font until the wrapped text fits 400×200.
+text.fitInside({ width: 400, height: 200 });
+
+// Resize and place: also position the block inside the box.
+text.fitInside(
+    { x: 100, y: 60, width: 400, height: 200 },
+    { hAlign: 'center', vAlign: 'middle' },
+);
+
+// Allow growth-to-fill (default is shrink-only).
+text.fitInside({ width: 400, height: 200 }, { maxFontSize: 120 });
+```
+
+`fitInside` sizes text to a box by **reflowing**, not just scaling — it
+binary-searches the largest `fontSize` whose *word-wrapped* layout fits the box
+on both axes. A naive scale-to-fit is already covered by `setDisplaySize` /
+`displayWidth` / `displayHeight`; the reason to touch `fontSize` is that a
+larger font wraps to fewer words per line, changing the shape of the block. That
+reflow is the whole point.
+
+```ts
+interface RectLike { x?: number; y?: number; width: number; height: number; }
+
+interface FitOptions {
+    maxFontSize?: number;  // upper bound; default = current fontSize (shrink-only)
+    minFontSize?: number;  // floor (> 0); default 1
+    hAlign?: 'left' | 'center' | 'right';    // default 'left'
+    vAlign?: 'top' | 'middle' | 'bottom';    // default 'top'
+    precision?: number;    // binary-search tolerance in px; default 0.25
+}
+```
+
+- **Shrink-only by default.** `maxFontSize` defaults to the current `fontSize`,
+  so a label never enlarges past what you set. Pass a larger `maxFontSize` to
+  allow growth-to-fill.
+- **Placement.** With both `x` and `y` (they must be supplied together) the
+  block is positioned inside the box via `hAlign`/`vAlign`, respecting the
+  object's origin and any pre-existing scale. With neither, the text is only
+  resized. A rect with just one of `x`/`y` is treated as size-only (dev-warn).
+- **Permanent side effects.** `fitInside` sets both `fontSize` **and**
+  `maxWidth` (to the box width) — the wrap width is what keeps the text fitted.
+  It is a **one-shot** call: if the text later changes it re-wraps at that width
+  but does not re-fit the size; call `fitInside` again.
+- The chosen size is **fractional** by design (MSDF is crisp at any scale);
+  `Math.floor` the result yourself if you need an integer.
+- `lineSpacing` / `letterSpacing` / shadow offset are constant pixels and do
+  **not** scale with the fitted size; outline width, shadow offset and rotation
+  are ignored (they fall outside `width`/`height`, as elsewhere in the API).
+
 ### Outline (shader-based, no extra draw calls)
 
 ```ts

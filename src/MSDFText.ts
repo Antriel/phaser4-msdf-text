@@ -47,6 +47,37 @@ export type ColorValue = number | string | Phaser.Types.Display.InputColorObject
 /** Line alignment for multi-line text. */
 export type MSDFAlign = 'left' | 'center' | 'right';
 
+/**
+ * A box to fit text into, for {@link MSDFTextInstance.fitInside}.
+ *
+ * `width`/`height` are required. `x`/`y` are optional and must be supplied
+ * *together*: with both, the fitted block is also placed inside the box using
+ * `hAlign`/`vAlign`; with neither, the text is only resized (not moved). A rect
+ * with only one of `x`/`y` is treated as size-only (dev-warn). Structurally
+ * compatible with `Phaser.Geom.Rectangle`, so a real Phaser rect can be passed
+ * directly.
+ */
+export interface RectLike {
+    x?: number;
+    y?: number;
+    width: number;
+    height: number;
+}
+
+/** Options for {@link MSDFTextInstance.fitInside}. */
+export interface FitOptions {
+    /** Upper bound on font size. Default: the current `fontSize` (shrink-only). */
+    maxFontSize?: number;
+    /** Lower bound; only a non-degenerate floor (must be `> 0`). Default: 1. */
+    minFontSize?: number;
+    /** Horizontal placement of the block within the box. Default `'left'`. */
+    hAlign?: 'left' | 'center' | 'right';
+    /** Vertical placement of the block within the box. Default `'top'`. */
+    vAlign?: 'top' | 'middle' | 'bottom';
+    /** Binary-search stop tolerance in px. Default `0.25`. */
+    precision?: number;
+}
+
 /** Convert any {@link ColorValue} to a packed `0xRRGGBB` number. */
 function toColorInt(value: ColorValue): number {
     return (Phaser.Display.Color.ValueToColor as any)(value).color;
@@ -199,6 +230,25 @@ export interface MSDFTextInstance extends
     setLetterSpacing(spacing: number): this;
     setMaxWidth(width: number): this;
     setDisplaySize(width: number, height: number): this;
+    /**
+     * Resize the text to fit inside a box, **reflowing** rather than scaling:
+     * binary-search the largest `fontSize` whose *word-wrapped* layout fits
+     * `rect.width`×`rect.height`. Shrink-only by default (`maxFontSize` defaults
+     * to the current `fontSize`; raise it to allow growth).
+     *
+     * Permanently sets `fontSize` **and** `maxWidth` (to `rect.width`) — the
+     * wrap width is what keeps the text fitted. One-shot: if the text later
+     * changes it re-wraps at that width but does not re-fit the size; call
+     * `fitInside` again. The chosen size is fractional by design (MSDF is crisp
+     * at any scale); `Math.floor` it yourself if you need an integer.
+     *
+     * With `rect.x`/`rect.y` (both required) the block is also positioned inside
+     * the box via `hAlign`/`vAlign`; with neither it is only resized. Ignores
+     * outline width, shadow offset and rotation (all fall outside `width`/
+     * `height`); `lineSpacing`/`letterSpacing`/shadow offsets are constant px and
+     * do not scale with the fitted size.
+     */
+    fitInside(rect: RectLike, options?: FitOptions): this;
     setDisplayCallback(callback: DisplayCallback | undefined): this;
     clearDisplayCallback(): this;
     /**
@@ -488,6 +538,90 @@ export const MSDFText: MSDFTextStatic = new Class({
         this.displayWidth = width;
         this.displayHeight = height;
         return this;
+    },
+
+    /**
+     * Resize (and optionally place) the text to fit inside a box by reflowing.
+     * See {@link MSDFTextInstance.fitInside} for the full contract.
+     */
+    fitInside: function (rect: RectLike, options: FitOptions = {}) {
+        const boxW = rect.width;
+        const boxH = rect.height;
+        // Both dimensions must be positive; otherwise there is nothing to fit.
+        if (!(boxW > 0) || !(boxH > 0)) {
+            return this;
+        }
+
+        const maxFontSize = options.maxFontSize ?? this._fontSize;
+        const minFontSize = options.minFontSize ?? 1;
+        const precision = options.precision ?? 0.25;
+
+        // The predicate is monotone in size: bigger font ⇒ taller lines and never
+        // fewer of them (words only wrap more), so height is non-decreasing.
+        const fits = (size: number): boolean => {
+            const wrapped = this.computeWrap(this._text, boxW, size).text;
+            const m = this.fontData.measureLines(
+                wrapped, size, this._lineSpacing, this._letterSpacing
+            );
+            return m.totalWidth <= boxW && m.totalHeight <= boxH;
+        };
+
+        // Free hard upper bound: any layout is at least one line tall, so
+        // size * lineHeight <= boxH ⇒ size <= boxH / lineHeight.
+        let hi = Math.min(maxFontSize, boxH / this.fontData.data.lineHeight);
+        let lo = minFontSize;
+
+        let chosen: number;
+        if (hi <= lo) {
+            // Box shorter than one line even at the floor — give up at the floor
+            // (same clamp as the can't-fit case).
+            chosen = lo;
+        } else if (fits(hi)) {
+            // Current (or max) size already fits — no shrink.
+            chosen = hi;
+        } else {
+            while (hi - lo > precision) {
+                const mid = (lo + hi) / 2;
+                if (fits(mid)) lo = mid;
+                else hi = mid;
+            }
+            chosen = lo; // largest tested size that still fits
+        }
+
+        // Both mutations are intended and permanent: the wrap width keeps the
+        // text fitted across later content changes.
+        this.fontSize = chosen;
+        this.maxWidth = boxW;
+        if (this._dirty) this.rebuildText(); // so width/height/displayOrigin are current
+        this.placeInBox(rect, options);
+        return this;
+    },
+
+    /**
+     * Position the fitted block inside `rect` using `hAlign`/`vAlign`. Only runs
+     * when both `rect.x` and `rect.y` are given (a partial anchor is size-only,
+     * with a dev-warn). Origin-robust: uses the scaled display size and current
+     * origin, so any pre-existing user scale and arbitrary origin are respected.
+     * Ignores rotation. Not part of the public `MSDFTextInstance` type.
+     */
+    placeInBox: function (rect: RectLike, options: FitOptions) {
+        const hasX = rect.x !== undefined;
+        const hasY = rect.y !== undefined;
+        if (!hasX && !hasY) return; // size-only
+        if (hasX !== hasY) {
+            console.warn(
+                '[MSDFText] fitInside: `x` and `y` must be provided together to ' +
+                'place the block; ignoring the partial anchor (resize only).'
+            );
+            return;
+        }
+
+        const dw = this.displayWidth;  // width  * scaleX (respects user scale)
+        const dh = this.displayHeight; // height * scaleY
+        const hf = { left: 0, center: 0.5, right: 1 }[options.hAlign ?? 'left'];
+        const vf = { top: 0, middle: 0.5, bottom: 1 }[options.vAlign ?? 'top'];
+        this.x = (rect.x as number) + (rect.width - dw) * hf + this.displayOriginX;
+        this.y = (rect.y as number) + (rect.height - dh) * vf + this.displayOriginY;
     },
 
     /**

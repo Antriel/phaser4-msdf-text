@@ -10,6 +10,7 @@ import { OutlineScene } from "./scenes/outline";
 import { GlowScene } from "./scenes/glow";
 import { EffectsScene } from "./scenes/effects";
 import { LayoutScene } from "./scenes/layout";
+import { FitInsideScene } from "./scenes/fit-inside";
 import { PerformanceScene } from "./scenes/performance";
 import { GameUIScene } from "./scenes/gameui";
 import { LootScene } from "./scenes/loot";
@@ -28,6 +29,7 @@ const examples: Example[] = [
   { key: "glow", title: "Glow & Drop Shadow", scene: GlowScene },
   { key: "effects", title: "Animated Effects", scene: EffectsScene },
   { key: "layout", title: "Text Layout", scene: LayoutScene },
+  { key: "fitinside", title: "Fit Inside", scene: FitInsideScene },
   { key: "provenance", title: "Glyph Provenance", scene: ProvenanceScene },
   { key: "performance", title: "Performance", scene: PerformanceScene },
   { key: "gameui", title: "Game UI Showcase", scene: GameUIScene },

@@ -43,6 +43,8 @@ export { default as MSDFBatchHandler } from './MSDFBatchHandler';
 export type {
     ColorValue,
     MSDFAlign,
+    RectLike,
+    FitOptions,
     DisplayCallback,
     MSDFTextInstance,
     MSDFTextStatic
