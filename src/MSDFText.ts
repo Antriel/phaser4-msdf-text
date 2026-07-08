@@ -729,6 +729,9 @@ export const MSDFText: MSDFTextStatic = new Class({
     seedGlyph: function (g: GlyphState, char: any, index: number): void {
         (g as any).index = index;
         (g as any).charCode = char.charCode || 0;
+        (g as any).srcIndex = char.srcIndex;
+        (g as any).line = char.line;
+        (g as any).srcLine = char.srcLine;
         g.x = char.x;
         g.y = char.y;
         g.scaleX = 1;
@@ -922,11 +925,8 @@ export const MSDFText: MSDFTextStatic = new Class({
      * Get detailed text bounds including per-line information
      */
     getTextBounds: function () {
-        // Get text to measure (with word wrapping if enabled)
-        let textToMeasure = this._text;
-        if (this._maxWidth > 0) {
-            textToMeasure = this.wrapText(this._text, this._maxWidth);
-        }
+        // Get text to measure (with word wrapping if enabled).
+        const textToMeasure = this.computeWrap(this._text, this._maxWidth, this._fontSize).text;
 
         const lineData = this.fontData.measureLines(
             textToMeasure, this._fontSize, this._lineSpacing, this._letterSpacing
@@ -949,76 +949,125 @@ export const MSDFText: MSDFTextStatic = new Class({
     // ========================================================================
 
     /**
-     * Word wrap text to fit within maxWidth
-     * @param text The text to wrap
-     * @param maxWidth Maximum width in pixels
-     * @returns Wrapped text with newlines inserted
+     * Word wrap text to fit within maxWidth, returning both the wrapped string
+     * and a parallel source-index map that records where each wrapped character
+     * came from in the original `text`.
+     *
+     * `srcIndex[i]` is the index into `text` of wrapped character `i`, **except**
+     * for a wrap-inserted (soft) newline, which gets the sentinel `-1`. An
+     * original (hard) `'\n'` keeps its real source index. That single sentinel is
+     * what lets `rebuildText` tell soft breaks from hard breaks — so `srcLine`
+     * counts only the hard ones while `line` counts both.
+     *
+     * When `maxWidth <= 0` (no wrapping) the map is the identity and every
+     * newline is hard. The map is always built so the layout path is uniform.
+     *
+     * Supersedes the old string-only `wrapText`: it takes `fontSize` explicitly
+     * (which `fitInside` also needs) and is written indices-first so the
+     * bookkeeping falls out of the data flow rather than being reconstructed.
+     *
+     * @param text     The text to wrap.
+     * @param maxWidth Maximum width in pixels (`<= 0` disables wrapping).
+     * @param fontSize Font size the wrap is measured at.
      */
-    wrapText: function (text: string, maxWidth: number): string {
-        if (maxWidth <= 0 || !text || text.length === 0) {
-            return text;
+    computeWrap: function (text: string, maxWidth: number, fontSize: number): { text: string; srcIndex: number[] } {
+        const n = text ? text.length : 0;
+        const outSrc: number[] = [];
+
+        // No wrapping (or empty): identity map — text unchanged, every newline hard.
+        if (maxWidth <= 0 || n === 0) {
+            for (let i = 0; i < n; i++) {
+                outSrc.push(i);
+            }
+            return { text: text || '', srcIndex: outSrc };
         }
 
-        // Split by existing newlines first
-        const existingLines = text.split('\n');
-        const wrappedLines: string[] = [];
+        const wrapCode = this.wordWrapCharCode;
+        const letterSpacing = this._letterSpacing;
+        const fontData = this.fontData;
 
-        for (const line of existingLines) {
-            if (line.length === 0) {
-                wrappedLines.push('');
+        let outText = '';
+
+        // The committed part of the current output line and the pending word, held
+        // as parallel (charCode, srcIndex) runs. `lineStr`/`wordStr` mirror them
+        // as strings purely for measuring.
+        let lineChars: number[] = [], lineSrc: number[] = [], lineStr = '';
+        let wordChars: number[] = [], wordSrc: number[] = [], wordStr = '';
+
+        // Emit the current line, trimming a trailing wrap char on a soft break
+        // (mirrors the old `currentLine.trim()`), then emit the break newline.
+        // breakSrc: -1 = soft/inserted, >= 0 = hard/original, null = final line.
+        const commitLine = (breakSrc: number | null): void => {
+            let end = lineChars.length;
+            if (breakSrc === -1) {
+                while (end > 0 && lineChars[end - 1] === wrapCode) end--;
+            }
+            for (let k = 0; k < end; k++) {
+                outText += String.fromCharCode(lineChars[k]);
+                outSrc.push(lineSrc[k]);
+            }
+            if (breakSrc !== null) {
+                outText += '\n';
+                outSrc.push(breakSrc);
+            }
+            lineChars = []; lineSrc = []; lineStr = '';
+        };
+
+        // End of a source paragraph (hard '\n' or end of string): place the
+        // pending word, wrapping it to its own line if the line now overflows.
+        const finishParagraph = (): void => {
+            if (wordChars.length === 0) return;
+            const { width } = fontData.measureText(lineStr + wordStr, fontSize, letterSpacing);
+            if (width > maxWidth && lineStr.length > 0) {
+                commitLine(-1);                                  // push the filled line (soft break)
+                lineChars = wordChars; lineSrc = wordSrc; lineStr = wordStr; // word starts the next line
+            } else {
+                for (let k = 0; k < wordChars.length; k++) { lineChars.push(wordChars[k]); lineSrc.push(wordSrc[k]); }
+                lineStr += wordStr;
+            }
+            wordChars = []; wordSrc = []; wordStr = '';
+        };
+
+        for (let i = 0; i < n; i++) {
+            const code = text.charCodeAt(i);
+
+            if (code === 10) {                                   // hard newline from the source
+                finishParagraph();
+                commitLine(i);                                   // break carries the real source index
                 continue;
             }
 
-            // Build words and measure
-            let currentLine = '';
-            let currentWord = '';
-
-            for (let i = 0; i < line.length; i++) {
-                const charCode = line.charCodeAt(i);
-                const char = String.fromCharCode(charCode);
-
-                // Check if this is a wrap character
-                if (charCode === this.wordWrapCharCode) {
-                    // Try adding the current word (including the wrap character)
-                    const testLine = currentLine + currentWord + char;
-                    const { width } = this.fontData.measureText(testLine, this._fontSize, this._letterSpacing);
-
-                    if (width > maxWidth && currentLine.length > 0) {
-                        // Word doesn't fit, wrap to new line
-                        wrappedLines.push(currentLine.trim());
-                        currentLine = currentWord + char;
-                    } else {
-                        // Word fits, add it
-                        currentLine += currentWord + char;
-                    }
-
-                    currentWord = '';
+            if (code === wrapCode) {                             // word boundary
+                const test = lineStr + wordStr + String.fromCharCode(code);
+                const { width } = fontData.measureText(test, fontSize, letterSpacing);
+                if (width > maxWidth && lineStr.length > 0) {
+                    commitLine(-1);                              // soft break: the current word overflows
+                    lineChars = wordChars; lineSrc = wordSrc; lineStr = wordStr;
+                    lineChars.push(code); lineSrc.push(i); lineStr += String.fromCharCode(code);
                 } else {
-                    // Add character to current word
-                    currentWord += char;
+                    for (let k = 0; k < wordChars.length; k++) { lineChars.push(wordChars[k]); lineSrc.push(wordSrc[k]); }
+                    lineChars.push(code); lineSrc.push(i);
+                    lineStr += wordStr + String.fromCharCode(code);
                 }
-            }
-
-            // Handle remaining word
-            if (currentWord.length > 0) {
-                const testLine = currentLine + currentWord;
-                const { width } = this.fontData.measureText(testLine, this._fontSize);
-
-                if (width > maxWidth && currentLine.length > 0) {
-                    // Last word doesn't fit, wrap it
-                    wrappedLines.push(currentLine.trim());
-                    wrappedLines.push(currentWord);
-                } else {
-                    // Last word fits
-                    currentLine += currentWord;
-                    wrappedLines.push(currentLine);
-                }
-            } else if (currentLine.length > 0) {
-                wrappedLines.push(currentLine);
+                wordChars = []; wordSrc = []; wordStr = '';
+            } else {                                             // ordinary character: extend the word
+                wordChars.push(code); wordSrc.push(i); wordStr += String.fromCharCode(code);
             }
         }
 
-        return wrappedLines.join('\n');
+        finishParagraph();
+        commitLine(null);                                        // final line, no trailing newline
+
+        return { text: outText, srcIndex: outSrc };
+    },
+
+    /**
+     * Back-compat thin wrapper over {@link computeWrap} returning just the
+     * wrapped string, measured at the current font size. Not part of the public
+     * `MSDFTextInstance` type.
+     */
+    wrapText: function (text: string, maxWidth: number): string {
+        return this.computeWrap(text, maxWidth, this._fontSize).text;
     },
 
     /**
@@ -1034,11 +1083,12 @@ export const MSDFText: MSDFTextStatic = new Class({
             return;
         }
 
-        // Apply word wrapping if maxWidth is set
-        let textToRender = this._text;
-        if (this._maxWidth > 0) {
-            textToRender = this.wrapText(this._text, this._maxWidth);
-        }
+        // Apply word wrapping (a no-op identity map when maxWidth <= 0). `srcMap`
+        // is parallel to `textToRender`: srcMap[i] is character i's index in the
+        // original text, or -1 for a wrap-inserted (soft) newline.
+        const wrap = this.computeWrap(this._text, this._maxWidth, this._fontSize);
+        const textToRender = wrap.text;
+        const srcMap = wrap.srcIndex;
 
         // Layout characters.
         // y = 0 is the top of the text block (matching BitmapText), so each
@@ -1046,7 +1096,8 @@ export const MSDFText: MSDFTextStatic = new Class({
         const baselineOffset = this.fontData.getBaselineOffset(this._fontSize);
         let cursorX = 0;
         let cursorY = 0;
-        let lineIndex = 0;
+        let lineIndex = 0;    // visual line (soft + hard breaks)
+        let srcLineIndex = 0; // source paragraph (hard breaks only)
         let prevCharCode = 0;
 
         for (let i = 0; i < textToRender.length; i++) {
@@ -1057,6 +1108,8 @@ export const MSDFText: MSDFTextStatic = new Class({
                 cursorX = 0;
                 cursorY += this.fontData.getLineHeight(this._fontSize) + this._lineSpacing;
                 lineIndex++;
+                // Soft (inserted) breaks carry -1; only original newlines advance srcLine.
+                if (srcMap[i] !== -1) srcLineIndex++;
                 prevCharCode = 0;
                 continue;
             }
@@ -1103,8 +1156,11 @@ export const MSDFText: MSDFTextStatic = new Class({
                 v0: char.v1,  // Swap v0 and v1 to flip orientation
                 u1: char.u1,
                 v1: char.v0,   // Swap v0 and v1 to flip orientation
-                charCode: charCode,  // Store for seeding GlyphState
-                line: lineIndex      // Line index, used by applyAlignment
+                charCode: charCode,           // Store for seeding GlyphState
+                line: lineIndex,              // Visual line index, used by applyAlignment + provenance
+                srcIndex: srcMap[i],          // Index into the original text (provenance)
+                srcLine: srcLineIndex,        // Source paragraph index (provenance)
+                baselineY: cursorY + baselineOffset  // Layout baseline (used by the skew feature)
             });
 
             // Advance cursor (letter spacing applies after every character)

@@ -39,6 +39,16 @@ export interface GlyphState {
     readonly index: number;
     /** Character code of this glyph. */
     readonly charCode: number;
+    /**
+     * Index of this glyph's character in the original `text` string (before word
+     * wrapping). `text[srcIndex]` is this glyph's character. Monotonic across the
+     * glyph array but non-contiguous (spaces/newlines produce no glyph).
+     */
+    readonly srcIndex: number;
+    /** Visual line index, counting both wrapped (soft) and original (hard) breaks. */
+    readonly line: number;
+    /** Source paragraph index: how many original `'\n'` precede this glyph (soft breaks don't count). */
+    readonly srcLine: number;
 
     /** Glyph X in text space (seeded from layout). */
     x: number;
@@ -114,6 +124,9 @@ export function createGlyphState(): GlyphState {
     return {
         index: 0,
         charCode: 0,
+        srcIndex: 0,
+        line: 0,
+        srcLine: 0,
         x: 0,
         y: 0,
         scaleX: 1,

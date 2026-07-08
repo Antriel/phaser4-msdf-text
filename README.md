@@ -240,7 +240,40 @@ Each glyph exposes:
 - **`shadow`** — `{ color, alpha, x, y }`, controlled independently of the fill
   (only drawn if the text has a drop shadow).
 - **`outline`** — `{ color, alpha }` (only drawn if the text has an outline).
-- read-only **`index`** and **`charCode`**.
+- read-only **`index`**, **`charCode`**, and **provenance** — `srcIndex`,
+  `line`, `srcLine` (see below).
+
+#### Glyph provenance — `srcIndex` / `line` / `srcLine`
+
+Every glyph carries three read-only fields that map it back to the text you set:
+
+- **`srcIndex`** — index into the original `text` string, *before* word
+  wrapping. `text[glyph.srcIndex]` is that glyph's character. This is the robust
+  way to target a glyph by source position: it stays correct across word wrap,
+  where counting rendered glyphs does not (inserted line breaks and skipped
+  spaces desync the count). `srcIndex` is monotonic across the array but
+  non-contiguous, since spaces and newlines produce no glyph.
+- **`line`** — visual line index *after* wrapping. Use it to style by rendered
+  line, e.g. alternating colours per wrapped line.
+- **`srcLine`** — source paragraph index: how many original `'\n'` precede the
+  glyph. Wrap-inserted (soft) breaks don't count, so `srcLine` identifies "the
+  Nth line of my string" regardless of wrapping. Two glyphs in the same source
+  paragraph share `srcLine` even when a soft break splits them onto different
+  visual `line`s.
+
+```ts
+// Colour the word starting at source index 12, wrap-proof:
+text.setDisplayCallback((glyphs) => {
+    for (const g of glyphs) {
+        if (g.srcIndex >= 12 && g.srcIndex < 17) g.setFillColor(0xffd200);
+    }
+});
+
+// Alternating colours per wrapped line:
+text.setDisplayCallback((glyphs) => {
+    for (const g of glyphs) g.setFillColor(g.line % 2 ? 0x88ccff : 0xffffff);
+});
+```
 
 `Corners` is `{ topLeft, topRight, bottomLeft, bottomRight }`. Colour is plain
 `0xRRGGBB` and alpha is a separate `0–1` float — set them independently, with no
