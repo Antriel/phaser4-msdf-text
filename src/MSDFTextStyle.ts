@@ -14,6 +14,7 @@ import type { GlyphState } from './MSDFGlyphState';
 import type {
     ColorValue,
     DecorationSpec,
+    HighlightSpec,
     PerCorner,
     StyleSpec,
     RuleStyleSpec,
@@ -36,6 +37,32 @@ export interface ResolvedDecoration {
     alpha?: Corners;   // 0-1 per corner
     thickness: number; // multiplier on the font's underlineThickness
     offset: number;    // em-relative shift from the default position
+}
+
+/**
+ * A highlight pill, pre-parsed. Unlike a decoration, a highlight never inherits
+ * the fill colour — a block of text-coloured paint behind the text would hide
+ * it — so every colour here is resolved, and rects merge on line and spec
+ * identity alone.
+ *
+ * `radius`, `borderWidth` and `softness` are fractions of the pill's own
+ * half-thickness, which is the unit the shader's box SDF works in; the padding
+ * is em-relative (× the object's `fontSize`) so a fitted or resized text keeps
+ * its proportions.
+ */
+export interface ResolvedHighlight {
+    color: Corners;        // face, packed 0xRRGGBB per corner
+    alpha: Corners;        // face alpha, 0-1 per corner
+    innerColor: Corners;   // two-tone inner end of the border ramp (face alpha 0 only)
+    borderColor: Corners;
+    borderAlpha: Corners;
+    borderWidth: Corners;  // 0-1 of the half-thickness; 1 fills the pill
+    radius: Corners;       // 0-1 of the half-thickness; 1 is a stadium
+    softness: Corners;     // 0-1 of the half-thickness; 0 is a 1px antialiased edge
+    padLeft: number;       // em
+    padRight: number;
+    padTop: number;
+    padBottom: number;
 }
 
 /**
@@ -77,6 +104,7 @@ export interface ResolvedStyle {
     skew?: number;
     underline?: ResolvedDecoration | null;      // decoration lane
     strikethrough?: ResolvedDecoration | null;  // decoration lane
+    highlight?: ResolvedHighlight | null;       // decoration lane
     fontScale?: number;    // structural — layout input, not glyph state
     font?: string;         // structural — msdfFont cache key, resolved at layout
 }
@@ -151,6 +179,75 @@ export function resolveDecoration(spec: boolean | DecorationSpec | undefined): R
     return r;
 }
 
+/** The default highlight: marker yellow, square, opaque, unpadded. */
+const HIGHLIGHT_COLOR = 0xffff00;
+/** The default border colour. Invisible until `borderWidth` opens it. */
+const HIGHLIGHT_BORDER_COLOR = 0x000000;
+
+/** Clamp a per-corner `0-1` fraction in place, and return it. */
+function clampCorners(c: Corners): Corners {
+    c.topLeft = c.topLeft <= 0 ? 0 : c.topLeft >= 1 ? 1 : c.topLeft;
+    c.topRight = c.topRight <= 0 ? 0 : c.topRight >= 1 ? 1 : c.topRight;
+    c.bottomLeft = c.bottomLeft <= 0 ? 0 : c.bottomLeft >= 1 ? 1 : c.bottomLeft;
+    c.bottomRight = c.bottomRight <= 0 ? 0 : c.bottomRight >= 1 ? 1 : c.bottomRight;
+    return c;
+}
+
+/** A `Corners` with the same value on all four. */
+function uniformCorners(v: number): Corners {
+    return { topLeft: v, topRight: v, bottomLeft: v, bottomRight: v };
+}
+
+/**
+ * Parse a highlight spec. Tri-state like {@link resolveDecoration}: `undefined`
+ * means the layer says nothing, `false` is an explicit off (`null`), `true` is
+ * the plain marker default.
+ *
+ * Defaults worth knowing. `borderAlpha` is `1`, not `0` — a zero `borderWidth`
+ * already erases the ring at pack time (the same rule `packOutlineAspect` applies
+ * to glyph outlines), so nothing shows until a width opens it, and a caller who
+ * sets a width gets a visible border without also naming an alpha. `innerColor`
+ * defaults to `borderColor`, which makes the two-tone ramp an identity.
+ */
+export function resolveHighlight(spec: boolean | HighlightSpec | undefined): ResolvedHighlight | null | undefined {
+    if (spec === undefined) return undefined;
+    if (spec === false) return null;
+    const s: HighlightSpec = spec === true ? {} : spec;
+
+    const borderColor = s.borderColor !== undefined
+        ? resolveColorCorners(s.borderColor)
+        : uniformCorners(HIGHLIGHT_BORDER_COLOR);
+
+    // Padding: a scalar pads every side; `x`/`y` pad an axis; a named side wins.
+    let l = 0, r = 0, t = 0, b = 0;
+    const pad = s.padding;
+    if (typeof pad === 'number') {
+        l = r = t = b = pad;
+    } else if (pad) {
+        if (pad.x !== undefined) l = r = pad.x;
+        if (pad.y !== undefined) t = b = pad.y;
+        if (pad.left !== undefined) l = pad.left;
+        if (pad.right !== undefined) r = pad.right;
+        if (pad.top !== undefined) t = pad.top;
+        if (pad.bottom !== undefined) b = pad.bottom;
+    }
+
+    return {
+        color: s.color !== undefined ? resolveColorCorners(s.color) : uniformCorners(HIGHLIGHT_COLOR),
+        alpha: s.alpha !== undefined ? resolveNumberCorners(s.alpha) : uniformCorners(1),
+        innerColor: s.innerColor !== undefined ? resolveColorCorners(s.innerColor) : borderColor,
+        borderColor: borderColor,
+        borderAlpha: s.borderAlpha !== undefined ? resolveNumberCorners(s.borderAlpha) : uniformCorners(1),
+        borderWidth: clampCorners(s.borderWidth !== undefined ? resolveNumberCorners(s.borderWidth) : uniformCorners(0)),
+        radius: clampCorners(s.radius !== undefined ? resolveNumberCorners(s.radius) : uniformCorners(0)),
+        softness: clampCorners(s.softness !== undefined ? resolveNumberCorners(s.softness) : uniformCorners(0)),
+        padLeft: l,
+        padRight: r,
+        padTop: t,
+        padBottom: b
+    };
+}
+
 /** One-time dev warning for a `fontScale` that isn't a positive number. */
 let warnedFontScale = false;
 
@@ -193,6 +290,8 @@ export function resolveStyle(spec: RuleStyleSpec): ResolvedStyle {
     if (underline !== undefined) r.underline = underline;
     const strikethrough = resolveDecoration(spec.strikethrough);
     if (strikethrough !== undefined) r.strikethrough = strikethrough;
+    const highlight = resolveHighlight(spec.highlight);
+    if (highlight !== undefined) r.highlight = highlight;
 
     // Structural. A non-positive multiplier would collapse or mirror the run's
     // metrics, so drop it rather than let it corrupt the layout.
@@ -231,6 +330,7 @@ export function hasStyleKeys(spec: SegmentSpec): boolean {
         spec.scale !== undefined || spec.scaleX !== undefined || spec.scaleY !== undefined ||
         spec.rotation !== undefined || spec.skew !== undefined ||
         spec.underline !== undefined || spec.strikethrough !== undefined ||
+        spec.highlight !== undefined ||
         spec.fontScale !== undefined || spec.font !== undefined;
 }
 
@@ -262,9 +362,9 @@ export function styleHasShadowKeys(s: ResolvedStyle): boolean {
         s.shadowSoftness !== undefined || s.shadowX !== undefined || s.shadowY !== undefined;
 }
 
-/** Whether a resolved style sets an underline or strikethrough (on *or* off). */
+/** Whether a resolved style sets an underline, strikethrough or highlight (on *or* off). */
 export function styleHasDecorationKeys(s: ResolvedStyle): boolean {
-    return s.underline !== undefined || s.strikethrough !== undefined;
+    return s.underline !== undefined || s.strikethrough !== undefined || s.highlight !== undefined;
 }
 
 /** Copy a resolved corner set onto a glyph's corner set. */

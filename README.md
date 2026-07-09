@@ -367,6 +367,81 @@ A few things worth knowing:
   emits no strike metric. Use `offset` where that lands wrong for your face.
 - Decorations cast no shadow and take no outline.
 
+### Highlight pills
+
+A rounded, optionally soft, optionally bordered box painted **behind** a run of
+text — a marker highlight, or the damage-number pill.
+
+```ts
+// Marker pen: a soft, translucent wash behind the whole text.
+text.setHighlight({ color: 0xffe066, alpha: 0.85, radius: 0.45, softness: 0.3,
+                    padding: { x: 0.12, y: 0.04 } });
+
+// Damage pill: a stadium with a crisp border.
+text.setHighlight({ color: 0xd6304a, radius: 1, borderWidth: 0.18,
+                    borderColor: 0xffd23f, padding: 0.3 });
+
+// Per-word, via any style layer.
+text.setTextStyle('CRIT', { highlight: { color: 0xff5252, radius: 1 }, color: 0xffffff });
+
+text.setHighlight(false);   // off
+```
+
+`radius`, `borderWidth` and `softness` are **fractions of the pill's own
+half-thickness** (`min(width, height) / 2`), not pixels — so `radius: 1` is a
+stadium at any font size, and a pill keeps its proportions when you `setFontSize`
+or `fitInside`.
+
+`softness` fades **inward** from the pill's box, so the box is the outer bound of
+everything the pill draws — a rect's quad ends exactly at its box, and an outward
+blur would be clipped in half. Give a glow its room with `padding`.
+
+`padding` is em-relative to the object's `fontSize`. It takes a scalar, or
+`{ x?, y?, left?, right?, top?, bottom? }` (a named side wins over its axis). The
+unpadded box runs from the tallest ascender to the deepest descender on the line,
+so **negative padding** is often what you want — it crops inward, pulling the slab
+down towards the x-height.
+
+Like a glyph's outline width, all three are continuous and therefore **per-corner**:
+
+```ts
+// A tab: rounded on top, square on the bottom, blurred down the right edge.
+text.setHighlight({
+  color: 0x7fd4ff,
+  radius:   { topLeft: 1, topRight: 1,   bottomLeft: 0, bottomRight: 0 },
+  softness: { topLeft: 0, topRight: 0.5, bottomLeft: 0, bottomRight: 0.5 },
+});
+```
+
+A face `alpha` of `0` frees the colour slot for `innerColor`, the inner end of a
+colour ramp across the border — the same two-tone mechanism a glowing shadow uses.
+Combine it with `borderWidth: 1` (a ring that fills the pill's whole body) and a
+`softness` for a glow blob:
+
+```ts
+text.setHighlight({ alpha: 0, borderWidth: 1, softness: 0.75, radius: 1,
+                    borderColor: 0x2b0a4a, innerColor: 0x9ad8ff, padding: 0.35 });
+```
+
+With no face to inset, `borderWidth` there is purely the ramp's depth: `1` spreads
+`borderColor → innerColor` over the pill's full half-thickness, lower values reach
+the inner colour sooner.
+
+Things worth knowing:
+
+- Pills draw **behind everything**, the text's own drop shadow included, so a
+  shadow falls on its pill. They batch with the glyphs: a highlighted, shadowed,
+  outlined, underlined text is still one draw call.
+- A highlight **never inherits the fill colour** (a slab of text-coloured paint
+  behind the text would hide it), so unlike an underline it does not split at
+  colour changes, and a colour tween on the object does not drag it along.
+- One pill per **visual line**. Its vertical extent is the union of the run's
+  metrics — highest ascender, deepest descender — so a pill wraps a run of mixed
+  `fontScale`s and mixed `font`s as one shape rather than shattering at each
+  boundary.
+- Like the other decorations it follows the layout, not the glyphs, and
+  `displayCallback` cannot see it.
+
 ### Rich text — per-run styling
 
 Style specific words or ranges — colour, gradient, alpha, outline/shadow colour,
@@ -420,7 +495,8 @@ hit.remove();
 A `StyleSpec` accepts: `color`/`alpha` (a scalar, or a per-corner object for a
 gradient), `weight`, `outline` (`{ color?, innerColor?, alpha?, width?, rounded? }`),
 `shadow` (`{ color?, innerColor?, alpha?, x?, y?, softness? }`),
-`scale`/`scaleX`/`scaleY`, `rotation`, `skew`, `underline` and `strikethrough`.
+`scale`/`scaleX`/`scaleY`, `rotation`, `skew`, `underline`, `strikethrough` and
+`highlight`.
 Only the keys you set override the glyph's seeded base. `weight`,
 `outline.width` and `shadow.softness` are continuous, so they also take a
 per-corner object.

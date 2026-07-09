@@ -2,12 +2,12 @@
  * MSDF Text WebGL Renderer
  *
  * Iterates each character of an MSDFText and submits it to the MSDF batch
- * handler. Passes run back-to-front: drop shadow, then (for a layered outline)
- * every glyph's outline silhouette, then underlines, then the text fill, then
- * strikethroughs. They are **submission-order** loops, not separate draws — the
- * shader is a single branch driven by the per-vertex `params` attribute, so all
- * of it lands in one draw call and composites in submission order under alpha
- * blending.
+ * handler. Passes run back-to-front: highlight pills, drop shadow, then (for a
+ * layered outline) every glyph's outline silhouette, then underlines, then the
+ * text fill, then strikethroughs. They are **submission-order** loops, not
+ * separate draws — the shader is a single branch driven by the per-vertex
+ * `params` attribute, so all of it lands in one draw call and composites in
+ * submission order under alpha blending.
  *
  * Two consequences worth stating plainly, because they shaped the code:
  *
@@ -96,13 +96,24 @@ const shadowRounded: Corners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomR
 // The object's effective per-corner alpha, for decorations that inherit it.
 const baseAlpha: Corners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 
-// Decoration rects: full coverage, no distance field, no outline. Constant.
+// An underline / strikethrough rect: a hard-edged box, no radius, no border, no
+// blur. A highlight pill carries its own packed params instead.
 const rectParams: PackedCorners = { topLeft: SOLID_PARAMS, topRight: SOLID_PARAMS, bottomLeft: SOLID_PARAMS, bottomRight: SOLID_PARAMS };
 const rectColor: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
-// A rect spans the full 0..1 of its own UV box. Not because it samples anything
-// — `solid` short-circuits coverage — but so `fwidth(texCoord)` stays nonzero
-// and `screenPxRange()` can't produce an Inf that leaks through the mix().
+// A rect spans the full 0..1 of its own UV box. Originally just so
+// `fwidth(texCoord)` stayed nonzero, but the shader now reads those derivatives
+// as the rect's screen size in pixels — which is the whole of the box SDF's
+// input, and why a pill needs no attribute a decoration didn't already have.
 const rectQuad = { x: 0, y: 0, w: 0, h: 0, u0: 0, v0: 0, u1: 1, v1: 1 };
+
+/**
+ * Which back-to-front slot a rect belongs in. Highlights sit behind everything,
+ * including the text's own drop shadow, so a shadow falls *on* its pill.
+ * `MSDFText.buildDecorRects` stamps these onto the rects it emits.
+ */
+export const PASS_HIGHLIGHT = 0;
+export const PASS_UNDERLINE = 1;
+export const PASS_STRIKE = 2;
 
 const tempCharData = { x: 0, y: 0, w: 0, h: 0, u0: 0, v0: 0, u1: 0, v1: 0 };
 const tempCharMatrix = new TransformMatrix();
@@ -375,22 +386,34 @@ function submitOneGlyph(
 }
 
 /**
- * Submit the underline / strikethrough rects whose `over` flag matches. They
- * follow the layout, never the per-glyph transform: a scaled or rotated glyph
- * moves, its decoration does not.
+ * Pack one corner of a rect's face colour. `rgb`/`alpha` absent means "inherit
+ * the object's", resolved here rather than baked at build time, so tweening the
+ * text's colour or alpha drags an inherited underline along with it.
  *
- * A rect whose `rgb`/`alpha` is absent inherits the object's, resolved here
- * rather than baked at build time, so tweening the text's colour or alpha drags
- * an inherited underline along with it.
+ * Where the face alpha rounds to a zero byte the shader reads `.rgb` as the inner
+ * end of the border's two-tone ramp, so a transparent face must hand over its
+ * `inner` colour rather than a face colour nobody can see. Same trick, same
+ * reason, as `packFillAspect` on a combined glyph quad.
+ */
+function packRectCorner(rgb: number, alpha: number, inner: number): number {
+    return packColor(alpha >= MIN_ALPHA ? rgb : inner, alpha);
+}
+
+/**
+ * Submit the decoration rects belonging to one pass, back to front. They follow
+ * the layout, never the per-glyph transform: a scaled or rotated glyph moves, its
+ * underline (or the pill behind it) does not.
  *
  * A rect is `solid` — it samples no atlas — but it still rides its own run's
- * texture, so an underline under a per-run font costs no extra draw call.
+ * texture, so a decoration under a per-run font costs no extra draw call. A plain
+ * underline leaves `params` and the border colour at their constant defaults; a
+ * highlight pill carries its own, packed once at rebuild.
  */
 function submitDecorations(
     drawingContext: any,
     batchHandler: MSDFBatchHandlerInstance,
     rects: any[],
-    over: boolean,
+    pass: number,
     multiFont: boolean,
     calcMatrix: any,
     originOffsetX: number,
@@ -400,7 +423,7 @@ function submitDecorations(
 ): void {
     for (let i = 0; i < rects.length; i++) {
         const r = rects[i];
-        if (r.over !== over) continue;
+        if (r.pass !== pass) continue;
 
         const b = bindings[r.fontIdx];
         if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY);
@@ -412,13 +435,19 @@ function submitDecorations(
 
         const rgb: Corners | undefined = r.rgb;
         const alpha: Corners | undefined = r.alpha;
-        rectColor.topLeft = packColor(rgb ? rgb.topLeft : baseRgb, alpha ? alpha.topLeft : baseAlpha.topLeft);
-        rectColor.topRight = packColor(rgb ? rgb.topRight : baseRgb, alpha ? alpha.topRight : baseAlpha.topRight);
-        rectColor.bottomLeft = packColor(rgb ? rgb.bottomLeft : baseRgb, alpha ? alpha.bottomLeft : baseAlpha.bottomLeft);
-        rectColor.bottomRight = packColor(rgb ? rgb.bottomRight : baseRgb, alpha ? alpha.bottomRight : baseAlpha.bottomRight);
+        const inner: Corners | undefined = r.inner;
+        const rTL = rgb ? rgb.topLeft : baseRgb;
+        const rTR = rgb ? rgb.topRight : baseRgb;
+        const rBL = rgb ? rgb.bottomLeft : baseRgb;
+        const rBR = rgb ? rgb.bottomRight : baseRgb;
+        rectColor.topLeft = packRectCorner(rTL, alpha ? alpha.topLeft : baseAlpha.topLeft, inner ? inner.topLeft : rTL);
+        rectColor.topRight = packRectCorner(rTR, alpha ? alpha.topRight : baseAlpha.topRight, inner ? inner.topRight : rTR);
+        rectColor.bottomLeft = packRectCorner(rBL, alpha ? alpha.bottomLeft : baseAlpha.bottomLeft, inner ? inner.bottomLeft : rBL);
+        rectColor.bottomRight = packRectCorner(rBR, alpha ? alpha.bottomRight : baseAlpha.bottomRight, inner ? inner.bottomRight : rBR);
 
         BatchMSDFChar(drawingContext, batchHandler, b.texture, rectQuad,
-            originOffsetX, originOffsetY, calcMatrix, rectColor, zeroColor, rectParams);
+            originOffsetX, originOffsetY, calcMatrix, rectColor,
+            r.border || zeroColor, r.params || rectParams);
     }
 }
 
@@ -555,6 +584,12 @@ function MSDFTextWebGLRenderer(
     // attribute, which a combined fill+outline quad has already spoken for.
     const layered = (src.outlineLayered || src.outlineInnerColor >= 0) && (hasOutline || perGlyph);
 
+    // ── Highlight pass — pills behind everything, the shadow included. ───────
+    if (hasDecorations) {
+        submitDecorations(drawingContext, batchHandler, decorations, PASS_HIGHLIGHT, multiFont,
+            calcMatrix, originOffsetX, originOffsetY, src.color, baseAlpha);
+    }
+
     // ── Shadow pass — render shadow behind the text. ────────────────────────
     // Object-level shadow always draws it. In per-glyph mode the pass also runs
     // when a styled run sets a shadow (`_stylesHaveShadow`, resolved during the
@@ -624,7 +659,7 @@ function MSDFTextWebGLRenderer(
 
     // ── Underline pass — under the glyphs, over the shadows and silhouettes. ─
     if (hasDecorations) {
-        submitDecorations(drawingContext, batchHandler, decorations, false, multiFont,
+        submitDecorations(drawingContext, batchHandler, decorations, PASS_UNDERLINE, multiFont,
             calcMatrix, originOffsetX, originOffsetY, src.color, baseAlpha);
     }
 
@@ -664,7 +699,7 @@ function MSDFTextWebGLRenderer(
 
     // ── Strikethrough pass — over the glyphs, matching browsers. ─────────────
     if (hasDecorations) {
-        submitDecorations(drawingContext, batchHandler, decorations, true, multiFont,
+        submitDecorations(drawingContext, batchHandler, decorations, PASS_STRIKE, multiFont,
             calcMatrix, originOffsetX, originOffsetY, src.color, baseAlpha);
     }
 }

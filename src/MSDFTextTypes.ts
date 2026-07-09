@@ -51,6 +51,93 @@ export interface DecorationSpec {
     offset?: number;
 }
 
+/** Em-relative padding around a highlight pill (× the object's `fontSize`). */
+export interface HighlightPadding {
+    /** Both horizontal sides. */
+    x?: number;
+    /** Both vertical sides. */
+    y?: number;
+    left?: number;
+    right?: number;
+    top?: number;
+    bottom?: number;
+}
+
+/**
+ * A highlight pill — a rounded, optionally soft, optionally bordered box painted
+ * *behind* a run of text. Passing `true` instead of this object draws the plain
+ * default (opaque marker yellow, square corners, no padding); `false` switches
+ * the highlight off for the run.
+ *
+ * The pill is a `solid` quad, so it batches with the glyphs: a highlighted text
+ * is still one draw call. It spans the run's glyph boxes horizontally and the
+ * tallest ascender / deepest descender on the line vertically, plus `padding`.
+ * Like underline and strikethrough it follows the **layout**, not the glyphs —
+ * per-glyph `scale`, `rotation` and `skew` move a glyph without moving the pill
+ * behind it, and `displayCallback` cannot see it. Highlights draw behind
+ * everything, including the text's own drop shadow.
+ *
+ * `radius`, `borderWidth` and `softness` are fractions of the pill's **half-
+ * thickness** (`min(width, height) / 2`), so they are size-independent: `radius:
+ * 1` is a stadium at any font size. All three are continuous, hence per-corner —
+ * a pill can round only its left corners, or blur only its top edge.
+ *
+ * Unlike a decoration, a highlight never inherits the text's fill colour (a slab
+ * of text-coloured paint behind the text would hide it), so a colour tween on the
+ * object does not drag the pill along.
+ */
+export interface HighlightSpec {
+    /** Face colour — a scalar or a per-corner gradient. Default marker yellow. */
+    color?: ColorValue | PerCorner<ColorValue>;
+    /** Face alpha (0-1). Default `1`. A face alpha of `0` frees {@link innerColor}. */
+    alpha?: number | PerCorner<number>;
+    /** Corner radius, `0` (square) to `1` (a stadium). Default `0`. */
+    radius?: number | PerCorner<number>;
+    /**
+     * Edge blur, `0` (a 1-screen-pixel antialiased edge) to `1`. Default `0`.
+     * Softens the face and the border together — a marker-pen wash, or a glow.
+     *
+     * The blur fades **inward** from the pill's box, which is therefore the outer
+     * bound of everything the pill draws. (A rect's quad ends exactly at its box,
+     * so an outward blur would be clipped in half.) Give a glow its room with
+     * `padding`.
+     */
+    softness?: number | PerCorner<number>;
+    /**
+     * Border ring width, `0` (no ring) to `1` (a ring that fills the pill).
+     * Default `0`. At `0` the ring's alpha is zeroed, exactly as a glyph outline's
+     * is at zero width.
+     */
+    borderWidth?: number | PerCorner<number>;
+    /** Border colour. Default black — invisible until `borderWidth` opens it. */
+    borderColor?: ColorValue | PerCorner<ColorValue>;
+    /** Border alpha (0-1). Default `1`. */
+    borderAlpha?: number | PerCorner<number>;
+    /**
+     * Colour at the border's inner edge: the ring ramps to it from `borderColor`
+     * across its own width. Requires a face `alpha` of `0` — the inner colour
+     * rides the face's colour slot, which an opaque face has already spent (the
+     * same constraint that makes a two-tone glyph outline force `outlineLayered`).
+     *
+     * A pill with `alpha: 0`, `borderWidth: 1` and a `softness` is therefore a
+     * two-tone glow blob: the ring fills the whole pill and ramps from
+     * `borderColor` at the blurred rim to `innerColor` at its core. With no face to
+     * inset, `borderWidth` becomes purely the ramp's depth — lower it to reach the
+     * inner colour sooner.
+     */
+    innerColor?: ColorValue | PerCorner<ColorValue>;
+    /**
+     * Padding around the run, em-relative (× the object's `fontSize`). Default `0`.
+     *
+     * The unpadded box spans the run's glyph advances horizontally and its tallest
+     * ascender to deepest descender vertically. **Negative padding is legal** and
+     * crops inward from there — useful to pull a slab down towards the x-height, or
+     * to tighten a pill onto letterforms that leave a lot of vertical air. A pill
+     * cropped to nothing simply isn't emitted.
+     */
+    padding?: number | HighlightPadding;
+}
+
 /**
  * A per-run appearance override for the rich-text API. Every field is optional;
  * only the keys present override the glyph's seeded base (which inherits the
@@ -62,8 +149,9 @@ export interface DecorationSpec {
  * This is an *appearance* spec: it never changes layout, composes with
  * `displayCallback`, and is animatable. Structural keys (per-run size) live on
  * {@link RuleStyleSpec}, which segments and rules use; a per-run `font` is still
- * unimplemented. Everything here seeds `GlyphState` except `underline` /
- * `strikethrough`, which resolve per source character into merged rects.
+ * unimplemented. Everything here seeds `GlyphState` except `underline`,
+ * `strikethrough` and `highlight`, which resolve per source character into merged
+ * rects.
  */
 export interface StyleSpec {
     /** Fill colour — a scalar or a per-corner gradient. */
@@ -122,6 +210,8 @@ export interface StyleSpec {
     underline?: boolean | DecorationSpec;
     /** Strike this run through. `true` inherits everything; see {@link DecorationSpec}. */
     strikethrough?: boolean | DecorationSpec;
+    /** Paint a pill behind this run. `true` is plain marker yellow; see {@link HighlightSpec}. */
+    highlight?: boolean | HighlightSpec;
 }
 
 /**
@@ -520,6 +610,17 @@ export interface MSDFTextInstance extends
      * underline's thickness. Use `offset` where that lands wrong.
      */
     setStrikethrough(enable: boolean | DecorationSpec): this;
+    /**
+     * Paint a highlight pill behind the whole text (chainable). `true` draws the
+     * plain marker default; pass a {@link HighlightSpec} for colour, corner
+     * radius, softness, border and padding; `false` removes it.
+     *
+     * Style layers override this per run, so `setTextStyle('CRIT', { highlight:
+     * {...} })` pills one keyword. Pills batch with the glyphs and draw behind
+     * everything else — a highlighted, shadowed, underlined text is still one
+     * draw call.
+     */
+    setHighlight(enable: boolean | HighlightSpec): this;
     getTextBounds(): {
         width: number;
         height: number;

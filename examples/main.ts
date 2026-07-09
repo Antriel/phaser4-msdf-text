@@ -18,6 +18,7 @@ import { ProvenanceScene } from "./scenes/provenance";
 import { RichTextScene } from "./scenes/rich-text";
 import { VertexParamsScene } from "./scenes/vertex-params";
 import { PerRunFontScene } from "./scenes/per-run-font";
+import { HighlightScene } from "./scenes/highlight";
 
 interface Example {
   key: string;
@@ -37,6 +38,7 @@ const examples: Example[] = [
   { key: "richtext", title: "Rich Text", scene: RichTextScene },
   { key: "perrunfont", title: "Per-Run Font", scene: PerRunFontScene },
   { key: "params", title: "Weight, Outline & Decorations", scene: VertexParamsScene },
+  { key: "highlight", title: "Highlight Pills", scene: HighlightScene },
   { key: "performance", title: "Performance", scene: PerformanceScene },
   { key: "gameui", title: "Game UI Showcase", scene: GameUIScene },
   { key: "loot", title: "RPG Loot Cards", scene: LootScene },

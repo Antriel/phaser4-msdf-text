@@ -107,33 +107,90 @@ core under the opaque fill), and it cannot make a ring — that needs a
 non-monotonic function, not a remap. Revisit only with a concrete effect that the
 colour endpoints demonstrably cannot express.
 
-### Highlight pills
+### ~~Highlight pills~~ — **built**
 
-**What:** step C's decoration-rect machinery already gives every `solid` rect
-real `0..1` UVs across its own quad (`rectQuad` in
-`MSDFTextWebGLRenderer.ts:90`) — added originally just to keep `fwidth()`
-finite, but it's exactly what a UV box-SDF needs. A padded rect behind a word
-(inset the rect a few px in each direction) plus a rounded-box SDF in the
-fragment shader (only active when `solid` is set) gives a rounded, optionally
-soft marker-highlight/pill behind a run of text — the "damage number" pill
-look — for the cost of a rect variant, no new draw call.
+`setHighlight(spec)` at the object level, `highlight` on the decoration lane of
+every style layer. A pill is a `solid` quad whose three idle `params` bytes carry
+a corner radius, a border width and an edge blur, all read by a rounded-box SDF in
+the fragment shader.
 
-**Where it'd land:** a new rect kind alongside `_decorRects` (or a flag on the
-existing one), a box-SDF branch gated on `solid` in the fragment shader, and
-API surface analogous to `setUnderline`/`setStrikethrough` (`setHighlight`? —
-needs padding/corner-radius fields, unlike underline which is metric-derived).
+The sketch's guess — that `rectQuad`'s `0..1` UVs, added only to keep `fwidth()`
+finite, were "exactly what a UV box-SDF needs" — held, and better than expected:
+`1.0 / fwidth(outTexCoord)` *is* the rect's screen size in pixels, so the pill
+needed no attribute, no uniform and no draw call the decorations didn't already
+have. `screenPxRange()` was inlined because both lanes want that same vector.
+
+What the build settled beyond the sketch:
+
+- **The two lanes are one expression.** A glyph's outline layer is a pill's border
+  ring, and a glyph's fill is the pill's face inset by that ring, so the solid lane
+  computes the same `fill` / `outline` / `tone` triple against `-boxDist` that the
+  glyph lane computes against `outlineDist - outlineEdge`, and the two `mix()` on
+  `solid`. Two-tone therefore came along for free: a pill with `alpha: 0` and
+  `borderWidth: 1` is a ring that fills its own body and ramps `borderColor` →
+  `innerColor` across it — a glow blob, through the same gate a glowing shadow uses.
+- **The three channels are fractions of the pill's half-thickness**, `min(w,h)/2`,
+  which is the only length a quad knows about itself. That makes `radius: 1` a
+  stadium at any size and lets the whole pill scale with the camera. They are
+  continuous, so per-corner: a tab rounded only at the top, a pill blurred on one
+  side.
+- **The blur fades inward, not outward.** A glyph's shadow blurs symmetrically
+  about its edge because a glyph quad has bleed room around the letterform; a rect's
+  quad ends *exactly* at its box, so a centred blur loses its outer half to a hard
+  clip — and takes the outer end of the two-tone ramp with it, which is why the
+  first cut of the glow blob read as a single colour. Shifting the ramp inward by
+  half its width makes the pill's box the outer bound of everything it draws.
+  Inflating the quad instead was rejected: the inset would have to be a per-*quad*
+  constant, and `softness` is per-corner, so the shader cannot recover it from an
+  interpolated byte (this is the `shadowToneBias` failure again, one level up).
+  `padding` — which the caller owns, and which may be negative — is the knob for
+  giving a glow its room.
+- **`solid` may select a decode; the other three bytes may not.** Re-reading `.g`
+  as a radius rather than a rounding weight is exactly the thing the `params`
+  format forbids — except that `weight = 255` is written to all four corners by
+  construction, so it is uniform across the quad in the same way, and for the same
+  reason, that the `solid` short-circuit itself is. This is the sole legitimate
+  application of the rule stated under `shadowToneBias` below.
+- **Merging is a union, not a split.** A highlight never inherits the fill colour
+  (a slab of text-coloured paint behind the text would hide it), so unlike
+  underline there is no colour-change split; and the vertical extent takes the
+  highest ascender and deepest descender over the run, so a pill wraps mixed sizes
+  and mixed fonts as one shape. Only a line break or a different spec starts a rect.
+- **Underlines now antialias.** The solid lane's coverage is the box SDF's, which
+  at a rect's boundary is `0.5` rather than the old flat `1.0`. Underlines and
+  strikethroughs gained a half-pixel AA edge — a visible change to existing output,
+  and an improvement at fractional positions and under rotation.
+- **`fwidth` was replaced by the true gradient magnitude.** `|dFdx| + |dFdy|`
+  overestimates by `|cos θ| + |sin θ|`, so `1/fwidth` *under*estimates the quad and
+  scales the whole box space down. The shape survives — both axes take the same
+  factor, so it is a uniform scale — but the antialiasing width, a constant `1.0`
+  in that space, does not: a rotated edge softened to 1.41px, which reads as bad AA
+  rather than as blur. `length(vec2(dFdx(u), dFdy(u)))` per axis is exact at every
+  angle. The derivative fetches were already being paid, so the true cost is **two
+  `sqrt` per fragment**; the glyph lane, which shares the vector, gets a sharper
+  rotated edge out of it too.
 
 ### Dashed / dotted underline
 
 **What:** `fract(u · n)` against the rect's own `0..1` U coordinate, thresholded
-in the `solid` branch — same UV groundwork as the pill idea above. `n` (dash
-count) needs to reach the shader per-rect.
+in the `solid` branch — same UV groundwork as the pill above. `n` (dash count)
+needs to reach the shader per-rect.
 
-**Now unblocked:** the sentinel trick above established that a `solid` quad's
-`rounded`, `outlineWidth` and `shadowSoftness` channels are all dead weight —
-the shader short-circuits coverage before reading any of them. A dash count can
-ride any one of the three (`outlineWidth`'s byte gives 255 dashes at double
-precision). Only `weight` is spoken for, since it carries the sentinel itself.
+**No longer free.** The sketch here assumed a `solid` quad's `rounded`,
+`outlineWidth` and `shadowSoftness` bytes were all dead weight, so a dash count
+could ride any one of them. Highlight pills spent all three (radius, border,
+blur). Nothing is left.
+
+**The escape is that `solid` is a sentinel *value*, not a bit,** and it currently
+burns the whole range `[254, 255]` to mean one thing. Make weight byte `255` mean
+"box/pill" and `254` mean "dashed", and the three payload bytes get reinterpreted
+per variant — a dash count, a duty cycle, a cap radius. The guard-band question
+that dominated the original sentinel design does not recur: the byte of guard
+below `254` exists to stop a *glyph's* interpolated weight from crossing in, and a
+real glyph still clips at `253`. Telling `254` from `255` is safe for exactly the
+reason `solid` is safe — both are constant across their quad by construction, so
+there is nothing to interpolate. (At `mediump` near `1.0` they are ~8 ULP apart
+anyway.)
 
 ## From `rich-text-styling.md` — skew alternatives
 

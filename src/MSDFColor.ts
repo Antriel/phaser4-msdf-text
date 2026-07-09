@@ -17,6 +17,15 @@
  * "outline = 0.15 of the range") and what lets `distanceRange` cancel out of
  * every shader branch. The shader in `MSDFBatchHandler.ts` decodes with the
  * exact inverse of {@link packParams} — there is no second source of truth.
+ *
+ * A **solid** quad ({@link packSolidParams}) reinterprets the upper three
+ * channels: `rounded` becomes a corner radius, `outlineWidth` a border width and
+ * `shadowSoftness` an edge blur, each a fraction of the rect's own half-thickness
+ * rather than of any `distanceRange`. Re-decoding a channel from an interpolated
+ * selector is exactly what this format forbids, but `weight = 255` is not
+ * interpolated: a rect writes it to all four corners by construction, so it is
+ * uniform across the quad in the same way, and for the same reason, the `solid`
+ * short-circuit itself is.
  */
 
 /** A value per glyph quad corner. */
@@ -49,10 +58,11 @@ export interface PackedCorners {
 const WEIGHT_MAX_BYTE = 253;
 
 /**
- * The whole `params` value for an underline / strikethrough rect: coverage `1`,
- * no distance field, no outline. `weight = 255` *is* the signal — a solid quad
- * never reads `weight`, `outlineWidth` or `shadowSoftness`, because the shader
- * short-circuits its coverage before touching them.
+ * The `params` value for a plain, square-cornered rect: `weight = 255` is the
+ * solid sentinel, and the other three channels are zero — no corner radius, no
+ * border, no softness, which is a hard-edged box. Equal to
+ * `packSolidParams(0, 0, 0)`; kept as a constant because underline and
+ * strikethrough rects are exactly that and never need to pack anything.
  *
  * A constant is safe under interpolation for the same reason the old bitfield
  * was not: a rect's four corners carry identical values by construction, so
@@ -110,4 +120,33 @@ export function packParams(weightNorm: number, roundedNorm: number, widthNorm: n
     const b = toByte(widthNorm * 510);
     const a = toByte(softNorm * 255);
     return ((a << 24) | (b << 16) | (g << 8) | w) >>> 0;
+}
+
+/**
+ * Pack the four `params` channels of a **solid** quad — a decoration rect or a
+ * highlight pill. `weight` is the {@link SOLID_PARAMS} sentinel; the other three
+ * describe a rounded box, evaluated by the shader against the rect's own `0..1`
+ * UVs rather than against the atlas.
+ *
+ * All three are fractions of the rect's **half-thickness** (`min(w, h) / 2`,
+ * recovered in the shader from `fwidth(texCoord)`), which is the only length a
+ * quad knows about itself. That makes them resolution- and size-independent: a
+ * radius of `1` is a stadium at any pixel size, and the pill scales with the
+ * camera exactly as the text does.
+ *
+ * They are continuous, so — like every glyph channel — they are per-corner for
+ * free: a radius that differs per corner rounds each corner by its own amount
+ * (the interpolated value near a corner is dominated by that corner's), and a
+ * per-corner softness blurs one side of a pill while the other stays crisp.
+ *
+ * @param radiusNorm Corner radius; `0` square, `1` a stadium/capsule.
+ * @param borderNorm Border ring width; `0` no border, `1` a ring that fills the pill.
+ * @param softNorm   Edge blur, fading **inward** from the box (a rect has no bleed
+ *                   room outside its quad); `0` a 1-screen-pixel antialiased edge.
+ */
+export function packSolidParams(radiusNorm: number, borderNorm: number, softNorm: number): number {
+    const g = toByte(radiusNorm * 255);
+    const b = toByte(borderNorm * 255);
+    const a = toByte(softNorm * 255);
+    return ((a << 24) | (b << 16) | (g << 8) | 0xff) >>> 0;
 }

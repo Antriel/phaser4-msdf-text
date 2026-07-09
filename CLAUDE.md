@@ -46,13 +46,16 @@ second source of truth.
   a directional outline, a faux-bold gradient, a soft-on-one-side shadow, an
   outline melting from sharp to round across a glyph. There is no bitfield: GLSL
   ES 1.00 has no `flat` qualifier, so an interpolated bitfield would be garbage.
-- `solid` (underline/strike rects) is instead a **sentinel**: weight byte `255`.
-  A solid quad's coverage short-circuits to `1` before `weight`, `outlineWidth`
-  or `shadowSoftness` is read, so the channel is free to carry the signal, and a
-  rect writes it identically to all four corners. `packParams` clips a real
-  glyph's weight to byte `253` and the shader splits at `254` — a byte of guard
-  band each side, ~4× a `mediump` varying's ULP. The cost is the top `2/255` of
-  faux bold, where the fill edge has already collapsed onto the field's clamp.
+- `solid` (rect quads: underline, strike, highlight pill) is instead a
+  **sentinel**: weight byte `255`. A rect writes it identically to all four
+  corners, so it is uniform across its quad by construction — which is what makes
+  it the format's **one legitimate selector**, and why the upper three bytes of a
+  solid quad may be *re-decoded* as a pill's radius / border / blur (see
+  Decorations). `packParams` clips a real glyph's weight to byte `253` and the
+  shader splits at `254` — a byte of guard band each side, ~4× a `mediump`
+  varying's ULP. The cost is the top `2/255` of faux bold, where the fill edge has
+  already collapsed onto the field's clamp. `packSolidParams` is the rect-side
+  packer; `SOLID_PARAMS` is its all-zero (hard-edged box) constant.
 
 **Outline** — outline and fill composite in one quad (fill *over* outline; the
 outline edge is `fillEdge - width`). Because that is per-glyph, a thick outline
@@ -128,20 +131,28 @@ the alpha channel alongside the MSDF in RGB. The fill layer always uses
   checks `fieldType`); `MSDFText` warns once if they are requested object-level
   on such a font. Per-run styles clamp silently.
 
-**Shaders** — one über-shader, one branch, inline string arrays in
+**Shaders** — one über-shader, two lanes, inline string arrays in
 `src/MSDFBatchHandler.ts`:
 - Vertex: uniform `uProjectionMatrix`; attributes `inPosition`, `inTexCoord`,
   `inColor` (fill colour — or, at zero alpha, the two-tone inner colour),
   `inOutline` (outline / shadow colour), `inParams`. Each vertex is 28 bytes: 4
   floats (pos + texcoord) + three `UNSIGNED_BYTE` vec4s.
-- Fragment: uniforms `uMainSampler` and `uUnitRange` — that is all. Coverage is
-  one expression for fill, outline and shadow (`softNorm = 0` reproduces the
-  plain AA ramp exactly), then an honest fill-over-outline composite where the
-  outline's colour is itself the two-tone `mix`. Its degenerate cases are exact:
-  zero outline alpha is a plain fill, zero fill alpha is a bare silhouette. The
-  `solid` sentinel short-circuits coverage to 1 for underline/strike rects; those
-  rects carry real `0..1` UVs so `fwidth()` stays nonzero and no Inf leaks through
-  the `mix`.
+- Fragment: uniforms `uMainSampler` and `uUnitRange` — that is all. `screenTexSize`
+  is computed once and serves both lanes: for a glyph it gives the msdfgen AA
+  width; for a rect, whose UVs span its own `0..1` box, it *is* the rect's pixel
+  size, which is the entire input of the `roundedBox` SDF. It uses the true
+  gradient magnitude, `length(vec2(dFdx(u), dFdy(u)))` per axis, **not** `fwidth`
+  — whose `|dFdx| + |dFdy|` overestimates by `|cos θ| + |sin θ|` and softens a
+  rotated edge to 1.41px. Two `sqrt`; the derivative fetches were paid either way.
+- The **glyph lane** derives `fill` / `outline` / `tone` from the distance field;
+  the **solid lane** derives the same triple from `-boxDist`. They `mix()` on
+  `solid` and feed one honest fill-over-outline composite, where the outline's
+  colour is itself the two-tone `mix`. A glyph's outline layer *is* a pill's
+  border ring; a glyph's fill *is* the pill's face, inset by that ring. Degenerate
+  cases are exact: zero outline alpha is a plain fill, zero fill alpha is a bare
+  silhouette, and a rect with all three payload bytes zero is a hard-edged box.
+- `fade` (the deep-background haze guard) is forced to `1` on a solid quad, whose
+  `outlineDist` is a stray atlas texel with nothing to say.
 - Output is premultiplied alpha (`vec4(rgb * a, a)`) — required by Phaser 4's
   batched pipeline.
 - Uses `#extension GL_OES_standard_derivatives : enable` for `fwidth`.
@@ -154,22 +165,48 @@ check-and-flush that must set the new value **after** the flush, since uniforms
 are read at draw time (`setupUniforms`). Setting it early would render the
 previous font's queued quads with the new font's range. The texture is the batch
 handler's own gate, inside `batch()`. Nothing else flushes: a shadowed, outlined,
-underlined text is **one draw call**. With per-run fonts the gate runs per glyph,
+underlined, highlighted text is **one draw call**. With per-run fonts the gate runs per glyph,
 so a text mixing N atlas textures costs N draws per pass — the only reason to
 merge atlases.
 
-**Decorations** — underline / strikethrough are appearance-lane but
+**Decorations** — highlight / underline / strikethrough are appearance-lane but
 glyph-independent. They resolve per *source* character through the normal paint
-order (object level → segments → rules → ranges), then merge into `_decorRects`,
-splitting at line breaks, `fontScale` boundaries, and — when the colour is
-inherited — resolved fill colour/alpha changes. Rects deliberately live outside
-`_characters`: the `GlyphState` array, `editGlyphs()` and every per-glyph loop
-assume one quad per renderable char and must never see a rect. Consequently
-`displayCallback` cannot see or animate them, and per-glyph transforms move
-glyphs, not decorations. Rect quads carry `SOLID_PARAMS` and batch with the glyphs;
-underlines submit before the fill loop, strikethroughs after. An inherited
-colour is resolved at *submit* time, so tweening the object's colour or alpha
-drags the underline along.
+order (object level → segments → rules → ranges), then merge into `_decorRects`.
+Rects deliberately live outside `_characters`: the `GlyphState` array,
+`editGlyphs()` and every per-glyph loop assume one quad per renderable char and
+must never see a rect. Consequently `displayCallback` cannot see or animate them,
+and per-glyph transforms move glyphs, not decorations. Every rect is a `solid`
+quad and batches with the glyphs; each carries a `pass` (`PASS_HIGHLIGHT` /
+`PASS_UNDERLINE` / `PASS_STRIKE`, exported by the renderer) placing it in the
+back-to-front submission order — pills behind everything, the text's own drop
+shadow included; underlines before the fill loop; strikethroughs after.
+
+- **Underline / strikethrough** (`buildDecorRects`) split at line breaks,
+  `fontScale` and `font` boundaries, and — when the colour is inherited — resolved
+  fill colour/alpha changes. An inherited colour is resolved at *submit* time, so
+  tweening the object's colour or alpha drags the underline along. Their params
+  are the constant `SOLID_PARAMS`.
+- **Highlight pills** (`buildHighlightRects`) never inherit the fill colour — a
+  slab of text-coloured paint behind the text would hide it — so there is no
+  colour-change split and no submit-time resolution. Their vertical extent is a
+  **union**: the highest ascender and deepest descender over the run, so one pill
+  wraps mixed sizes and mixed fonts as one shape. Only a line break or a different
+  resolved spec starts a new rect. `radius` / `borderWidth` / `softness` are packed
+  per corner by `packSolidParams` into the three bytes a solid quad leaves idle,
+  each a fraction of the pill's **half-thickness** (`min(w,h)/2` — the only length
+  a quad knows about itself), so `radius: 1` is a stadium at any size and the pill
+  scales with the camera. The border ring rides `inOutline`, its alpha zeroed at
+  zero width exactly as `packOutlineAspect` does for a glyph outline. A face
+  `alpha` of `0` frees `inColor` for the two-tone ramp's inner end, so `alpha: 0,
+  borderWidth: 1` (a ring that fills its own body) plus a `softness` is a glow blob.
+  `softness` fades **inward** — a rect's quad ends exactly at its box, so an
+  outward blur would be clipped in half; the box is the outer bound of everything
+  the pill draws, and `padding` (em-relative, and legally negative) is how a caller
+  gives a glow room.
+
+Because the solid lane's coverage is now the box SDF's, **underlines are
+antialiased**: at a rect's boundary coverage is `0.5`, not the flat `1.0` it was
+before pills.
 
 **Per-glyph state** — the display callback and `editGlyphs()` both operate on an
 array of `GlyphState` (`src/MSDFGlyphState.ts`), one per renderable glyph. Each
@@ -196,7 +233,7 @@ glyph's shadow/outline are independent of its fill.
 - **Appearance** — colour/alpha/weight/outline/shadow/scale/rotation/skew. Seeds
   `GlyphState`. `_hasAppearance` gates the per-glyph array and `applyStyleRuns`.
   A change sets `_stylesDirty` (one coalesced re-seed before the next render).
-- **Decoration** — `underline`/`strikethrough`. Appearance-lane timing
+- **Decoration** — `underline`/`strikethrough`/`highlight`. Appearance-lane timing
   (`_stylesDirty`), but they never touch `GlyphState`; `_hasDecorations` gates
   `rebuildDecorations`, which runs in *every* glyph mode because it reads
   `_characters`, not the glyph array.

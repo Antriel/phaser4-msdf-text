@@ -19,7 +19,7 @@
 
 import * as Phaser from "phaser";
 import { MSDFFont } from './MSDFFont';
-import MSDFTextWebGLRenderer from './MSDFTextWebGLRenderer';
+import MSDFTextWebGLRenderer, { PASS_HIGHLIGHT, PASS_UNDERLINE, PASS_STRIKE } from './MSDFTextWebGLRenderer';
 import { createGlyphState, type GlyphState } from './MSDFGlyphState';
 import { wrapLines } from './MSDFTextWrap';
 import { measureLines, uniformRuns, type LayoutRuns } from './MSDFMeasure';
@@ -27,6 +27,7 @@ import {
     toColorInt,
     resolveStyle,
     resolveDecoration,
+    resolveHighlight,
     matchRuns,
     hasStyleKeys,
     styleHasShadowKeys,
@@ -34,14 +35,16 @@ import {
     styleHasDecorationKeys,
     applyStyleToGlyph,
     type ResolvedDecoration,
+    type ResolvedHighlight,
     type ResolvedStyle,
     type StyleRun,
     type StyleRule
 } from './MSDFTextStyle';
-import type { Corners } from './MSDFColor';
+import { packColor, packSolidParams, type Corners, type PackedCorners } from './MSDFColor';
 import type {
     ColorValue,
     DecorationSpec,
+    HighlightSpec,
     MSDFAlign,
     RectLike,
     FitOptions,
@@ -59,6 +62,8 @@ import type {
 export type {
     ColorValue,
     DecorationSpec,
+    HighlightSpec,
+    HighlightPadding,
     MSDFAlign,
     PerCorner,
     StyleSpec,
@@ -146,6 +151,35 @@ function fontListsEqual(a: MSDFFont[], b: MSDFFont[]): boolean {
         if (a[i] !== b[i]) return false;
     }
     return true;
+}
+
+/**
+ * Pack a pill's rounded-box geometry into the three `params` bytes a `solid`
+ * quad leaves idle. Per-corner, like every other channel in the attribute.
+ */
+function packPillParams(h: ResolvedHighlight): PackedCorners {
+    return {
+        topLeft: packSolidParams(h.radius.topLeft, h.borderWidth.topLeft, h.softness.topLeft),
+        topRight: packSolidParams(h.radius.topRight, h.borderWidth.topRight, h.softness.topRight),
+        bottomLeft: packSolidParams(h.radius.bottomLeft, h.borderWidth.bottomLeft, h.softness.bottomLeft),
+        bottomRight: packSolidParams(h.radius.bottomRight, h.borderWidth.bottomRight, h.softness.bottomRight)
+    };
+}
+
+/**
+ * Pack a pill's border ring, zeroing its alpha wherever the width is zero — at
+ * zero width the ring's outer edge coincides with the face's, so it would only
+ * ever fringe the pill's antialiased edge. The same rule, for the same reason,
+ * that `packOutlineAspect` applies to a glyph's outline.
+ */
+function packBorder(h: ResolvedHighlight): PackedCorners {
+    const c = h.borderColor, a = h.borderAlpha, w = h.borderWidth;
+    return {
+        topLeft: packColor(c.topLeft, w.topLeft > 0 ? a.topLeft : 0),
+        topRight: packColor(c.topRight, w.topRight > 0 ? a.topRight : 0),
+        bottomLeft: packColor(c.bottomLeft, w.bottomLeft > 0 ? a.bottomLeft : 0),
+        bottomRight: packColor(c.bottomRight, w.bottomRight > 0 ? a.bottomRight : 0)
+    };
 }
 
 /**
@@ -296,7 +330,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         this._deadHandleWarned = false;
         this._structuralRangeWarned = false;
 
-        // ── Decorations (underline / strikethrough) ─────────────────────────
+        // ── Decorations (highlight / underline / strikethrough) ─────────────
         // Appearance lane, but glyph-independent: they resolve per *source*
         // character through the same paint order as styles, then merge into
         // rects. Never seeded into GlyphState, so `displayCallback` can't see
@@ -304,6 +338,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         // since they read `_characters`, which layout owns.
         this._underline = null;      // object-level default: ResolvedDecoration | null
         this._strikethrough = null;
+        this._highlight = null;      // object-level default: ResolvedHighlight | null
         this._decorRects = [];
         this._hasDecorations = false;
 
@@ -490,8 +525,8 @@ export const MSDFText: MSDFTextStatic = new Class({
      * - `_hasAppearance` — any run seeds a `GlyphState`. Gates the per-glyph
      *   array and `applyStyleRuns`; a `fontScale`-only or decoration-only run
      *   doesn't need either.
-     * - `_hasDecorations` — the object or any run sets an underline/strikethrough.
-     *   Gates `rebuildDecorations`, which is glyph-array-independent.
+     * - `_hasDecorations` — the object or any run sets a highlight, underline or
+     *   strikethrough. Gates `rebuildDecorations`, which is glyph-array-independent.
      * - `_sizeScales` / `_fontMap` — the structural maps. Because they are
      *   *layout* inputs, a change here sets `_dirty` (a rebuild), not
      *   `_stylesDirty` (a re-seed). That is the documented cost of a structural
@@ -511,7 +546,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         for (let i = 0; i < ranges.length && !appearance; i++) appearance = styleHasAppearanceKeys(ranges[i].style);
         this._hasAppearance = appearance;
 
-        let decorated = this._underline !== null || this._strikethrough !== null;
+        let decorated = this._underline !== null || this._strikethrough !== null || this._highlight !== null;
         for (let i = 0; i < segs.length && !decorated; i++) decorated = styleHasDecorationKeys(segs[i].style);
         for (let i = 0; i < rules.length && !decorated; i++) decorated = styleHasDecorationKeys(rules[i].style);
         for (let i = 0; i < ranges.length && !decorated; i++) decorated = styleHasDecorationKeys(ranges[i].style);
@@ -1510,7 +1545,7 @@ export const MSDFText: MSDFTextStatic = new Class({
     },
 
     // ========================================================================
-    // Decorations (underline / strikethrough)
+    // Decorations (highlight / underline / strikethrough)
     // ========================================================================
 
     /**
@@ -1519,6 +1554,17 @@ export const MSDFText: MSDFTextStatic = new Class({
      */
     setUnderline: function (enable: boolean | DecorationSpec) {
         this._underline = resolveDecoration(enable) ?? null;
+        this.refreshStyleState();
+        this._stylesDirty = true;
+        return this;
+    },
+
+    /**
+     * Paint a highlight pill behind the whole text (chainable). See
+     * {@link MSDFTextInstance.setHighlight}.
+     */
+    setHighlight: function (enable: boolean | HighlightSpec) {
+        this._highlight = resolveHighlight(enable) ?? null;
         this.refreshStyleState();
         this._stylesDirty = true;
         return this;
@@ -1554,6 +1600,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         const n = this._text.length;
         const under: (ResolvedDecoration | null)[] = new Array(n).fill(this._underline);
         const strike: (ResolvedDecoration | null)[] = new Array(n).fill(this._strikethrough);
+        const high: (ResolvedHighlight | null)[] = new Array(n).fill(this._highlight);
         // Which resolved style (if any) supplied each character's fill colour /
         // alpha. Reference identity is a sound proxy for "same colour run": two
         // characters sharing a source object certainly share a colour. Two that
@@ -1566,6 +1613,7 @@ export const MSDFText: MSDFTextStatic = new Class({
             for (let i = Math.max(0, start); i < end; i++) {
                 if (style.underline !== undefined) under[i] = style.underline;
                 if (style.strikethrough !== undefined) strike[i] = style.strikethrough;
+                if (style.highlight !== undefined) high[i] = style.highlight;
                 if (style.fillColor !== undefined) colorSrc[i] = style.fillColor;
                 if (style.fillAlpha !== undefined) alphaSrc[i] = style.fillAlpha;
             }
@@ -1581,8 +1629,9 @@ export const MSDFText: MSDFTextStatic = new Class({
         const ranges: StyleRun[] = this._rangeRuns;
         for (let r = 0; r < ranges.length; r++) paint(ranges[r].start, ranges[r].length, ranges[r].style);
 
-        this.buildDecorRects(under, colorSrc, alphaSrc, false);
-        this.buildDecorRects(strike, colorSrc, alphaSrc, true);
+        this.buildHighlightRects(high);
+        this.buildDecorRects(under, colorSrc, alphaSrc, PASS_UNDERLINE);
+        this.buildDecorRects(strike, colorSrc, alphaSrc, PASS_STRIKE);
     },
 
     /**
@@ -1601,12 +1650,13 @@ export const MSDFText: MSDFTextStatic = new Class({
         specs: (ResolvedDecoration | null)[],
         colorSrc: (Corners | undefined)[],
         alphaSrc: (Corners | undefined)[],
-        over: boolean
+        pass: number
     ): void {
         const chars = this._characters;
         const scales: Float32Array | null = this._sizeScales;
         const runFonts: MSDFFont[] = this._runFonts;
         const rects = this._decorRects;
+        const over = pass === PASS_STRIKE;
 
         let i = 0;
         while (i < chars.length) {
@@ -1652,7 +1702,7 @@ export const MSDFText: MSDFTextStatic = new Class({
                     y: first.baselineY + centre - h / 2,
                     w: x1 - x0,
                     h: h,
-                    over: over,
+                    pass: pass,
                     // A rect samples no atlas (it is `solid`), but riding its own
                     // run's texture keeps it inside that run's draw call.
                     fontIdx: fontIdx,
@@ -1660,7 +1710,94 @@ export const MSDFText: MSDFTextStatic = new Class({
                     // which the renderer resolves per frame — so tweening the
                     // text's colour drags an inherited underline along with it.
                     rgb: spec.color !== undefined ? spec.color : cs,
-                    alpha: spec.alpha !== undefined ? spec.alpha : as
+                    alpha: spec.alpha !== undefined ? spec.alpha : as,
+                    // A rule is a hard-edged box with no border and no two-tone
+                    // ramp; the renderer substitutes its constant defaults. Named
+                    // anyway so both rect kinds share one hidden class.
+                    inner: undefined,
+                    border: undefined,
+                    params: undefined
+                });
+            }
+            i = j;
+        }
+    },
+
+    /**
+     * Merge the highlighted characters into pill rects, one per visual line.
+     *
+     * Simpler than {@link buildDecorRects} in two ways. A highlight never inherits
+     * the fill colour — a slab of text-coloured paint behind the text would hide
+     * it — so there is no colour-change split. And its geometry is a *union*
+     * rather than a per-run metric: the vertical extent takes the highest ascender
+     * and deepest descender among the characters it covers, so a pill wraps a run
+     * of mixed sizes and mixed fonts as one shape instead of shattering at every
+     * boundary. Only a line break, or a different resolved spec, starts a new rect.
+     *
+     * The pill's radius, border and softness are packed here, once, into the
+     * `solid` params the shader reads as a rounded-box SDF over the rect's own
+     * `0..1` UVs — the same three bytes a glyph spends on rounding, outline width
+     * and shadow softness, which a `solid` quad has no use for.
+     */
+    buildHighlightRects: function (specs: (ResolvedHighlight | null)[]): void {
+        const chars = this._characters;
+        const scales: Float32Array | null = this._sizeScales;
+        const runFonts: MSDFFont[] = this._runFonts;
+        const rects = this._decorRects;
+        const em = this._fontSize;
+
+        let i = 0;
+        while (i < chars.length) {
+            const first = chars[i];
+            const spec = specs[first.srcIndex];
+            if (!spec) { i++; continue; }
+
+            const line = first.line;
+            const baselineY = first.baselineY;
+            let x0 = first.x;
+            let x1 = first.x + first.w;
+            // Ascender is negative in Y-down (above the baseline), descender
+            // positive. Union them over the run so mixed sizes share one pill.
+            let top = Infinity;
+            let bottom = -Infinity;
+
+            let j = i;
+            for (; j < chars.length; j++) {
+                const c = chars[j];
+                if (specs[c.srcIndex] !== spec || c.line !== line) break;
+                if (c.x < x0) x0 = c.x;
+                if (c.x + c.w > x1) x1 = c.x + c.w;
+
+                const data = runFonts[c.fontIdx].data;
+                const size = em * (scales ? scales[c.srcIndex] : 1);
+                const t = baselineY + data.ascender * size;
+                const b = baselineY + data.descender * size;
+                if (t < top) top = t;
+                if (b > bottom) bottom = b;
+            }
+
+            // Padding is em-relative to the *object's* size, not the run's, so a
+            // pill around a mixed-size run keeps one even margin.
+            x0 -= spec.padLeft * em;
+            x1 += spec.padRight * em;
+            top -= spec.padTop * em;
+            bottom += spec.padBottom * em;
+
+            if (x1 > x0 && bottom > top) {
+                rects.push({
+                    x: x0,
+                    y: top,
+                    w: x1 - x0,
+                    h: bottom - top,
+                    pass: PASS_HIGHLIGHT,
+                    fontIdx: first.fontIdx,
+                    rgb: spec.color,
+                    alpha: spec.alpha,
+                    // Read only where the face alpha is a zero byte, which is both
+                    // "no face" and "this rgb is the border ramp's inner end".
+                    inner: spec.innerColor,
+                    border: packBorder(spec),
+                    params: packPillParams(spec)
                 });
             }
             i = j;
