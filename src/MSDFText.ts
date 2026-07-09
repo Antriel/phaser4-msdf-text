@@ -225,21 +225,26 @@ export const MSDFText: MSDFTextStatic = new Class({
 
         // Faux bold, in distance-field units. Shifts the glyph's distance
         // threshold, so it never touches layout — assign/tween directly.
-        this.weight = 0;
+        // Backing field: the accessor below flags a re-seed when rich-text
+        // appearance styling is active, same as `color`.
+        this._weight = 0;
 
-        // Outline — no layout side effects, so assign/tween directly.
-        this.outlineWidth = 0;
-        this.outlineColor = 0x000000;
-        this.outlineAlpha = 1;
-        this.outlineRounded = false;
+        // Outline — no layout side effects, so assign/tween directly. Backing
+        // fields for the same reason as `weight`. `outlineLayered` is read live
+        // by the renderer every frame (never seeded into GlyphState), so it
+        // stays a plain field.
+        this._outlineWidth = 0;
+        this._outlineColor = 0x000000;
+        this._outlineAlpha = 1;
+        this._outlineRounded = false;
         this.outlineLayered = false;
 
-        // Drop shadow — plain fields, assign/tween directly.
-        this.shadowX = 0;
-        this.shadowY = 0;
-        this.shadowColor = 0x000000;
-        this.shadowAlpha = 0.5;
-        this.shadowSoftness = 0;
+        // Drop shadow — backing fields for the same reason as `weight`.
+        this._shadowX = 0;
+        this._shadowY = 0;
+        this._shadowColor = 0x000000;
+        this._shadowAlpha = 0.5;
+        this._shadowSoftness = 0;
 
         // Force the shadow pass in per-glyph modes (callback / manual) even when
         // the object has no shadow, so shadows set on individual glyphs render.
@@ -317,6 +322,61 @@ export const MSDFText: MSDFTextStatic = new Class({
     _defaultRenderNodesMap: {
         get: function () {
             return DefaultMSDFNodes;
+        }
+    },
+
+    // ========================================================================
+    // Alpha overrides
+    // ========================================================================
+    // Phaser's `Components.Alpha` mixin has no hook for "appearance changed" —
+    // it just writes `_alphaTL`/etc. directly. With rich-text styles the
+    // per-glyph array bakes the object's alpha in at seed time (like colour and
+    // weight), so these delegate to the mixin's own logic and then flag the
+    // same coalesced re-seed via `_markAppearanceDirty`.
+
+    setAlpha: function (topLeft?: number, topRight?: number, bottomLeft?: number, bottomRight?: number) {
+        Components.Alpha.setAlpha.call(this, topLeft, topRight, bottomLeft, bottomRight);
+        this._markAppearanceDirty();
+        return this;
+    },
+
+    alpha: {
+        get: function (this: any): number { return this._alpha; },
+        set: function (this: any, value: number) {
+            Components.Alpha.alpha.set.call(this, value);
+            this._markAppearanceDirty();
+        }
+    },
+
+    alphaTopLeft: {
+        get: function (this: any): number { return this._alphaTL; },
+        set: function (this: any, value: number) {
+            Components.Alpha.alphaTopLeft.set.call(this, value);
+            this._markAppearanceDirty();
+        }
+    },
+
+    alphaTopRight: {
+        get: function (this: any): number { return this._alphaTR; },
+        set: function (this: any, value: number) {
+            Components.Alpha.alphaTopRight.set.call(this, value);
+            this._markAppearanceDirty();
+        }
+    },
+
+    alphaBottomLeft: {
+        get: function (this: any): number { return this._alphaBL; },
+        set: function (this: any, value: number) {
+            Components.Alpha.alphaBottomLeft.set.call(this, value);
+            this._markAppearanceDirty();
+        }
+    },
+
+    alphaBottomRight: {
+        get: function (this: any): number { return this._alphaBR; },
+        set: function (this: any, value: number) {
+            Components.Alpha.alphaBottomRight.set.call(this, value);
+            this._markAppearanceDirty();
         }
     },
 
@@ -637,6 +697,19 @@ export const MSDFText: MSDFTextStatic = new Class({
     },
 
     /**
+     * In plain static mode the renderer reads object-level appearance fields
+     * (colour, alpha, weight, outline, shadow) fresh each frame. But with
+     * rich-text styles the per-glyph array is snapshotted (seeded once, like
+     * manual mode), so any of those fields need a flagged coalesced re-seed
+     * to propagate a live change under the styled runs.
+     */
+    _markAppearanceDirty: function () {
+        if (this._hasAppearance) {
+            this._stylesDirty = true;
+        }
+    },
+
+    /**
      * Set text color. Accepts a 0xRRGGBB number, a hex/rgb string, or an
      * `{r, g, b, a?}` object (channels in 0-255). When provided, `alpha`
      * (0-1) overrides any alpha embedded in the color value.
@@ -649,13 +722,7 @@ export const MSDFText: MSDFTextStatic = new Class({
             b: c.blueGL,
             a: alpha !== undefined ? alpha : c.alphaGL
         };
-        // In plain static mode the renderer reads this colour fresh each frame.
-        // But with rich-text styles the per-glyph array is snapshotted (seeded
-        // once, like manual mode), so flag a coalesced re-seed to propagate the
-        // new base colour under the styled runs.
-        if (this._hasAppearance) {
-            this._stylesDirty = true;
-        }
+        this._markAppearanceDirty();
         return this;
     },
 
@@ -666,10 +733,20 @@ export const MSDFText: MSDFTextStatic = new Class({
      */
     setWeight: function (weight: number) {
         this.weight = weight;
-        if (this._hasAppearance) {
-            this._stylesDirty = true;
-        }
         return this;
+    },
+
+    /**
+     * Faux-bold weight in distance-field units. See
+     * {@link MSDFTextInstance.weight}. A plain-looking field backed by an
+     * accessor solely so it can flag the same coalesced re-seed as `color`.
+     */
+    weight: {
+        get: function (this: any): number { return this._weight; },
+        set: function (this: any, value: number) {
+            this._weight = value;
+            this._markAppearanceDirty();
+        }
     },
 
     /**
@@ -1077,6 +1154,40 @@ export const MSDFText: MSDFTextStatic = new Class({
         return this.outlineWidth > 0;
     },
 
+    // Outline fields — plain-looking, but each is backed by an accessor purely
+    // to flag the same coalesced re-seed as `color` when appearance styling is
+    // active (see `_markAppearanceDirty`). `outlineLayered` needs none of this:
+    // the renderer reads it live every frame instead of seeding it, so it stays
+    // a genuine plain field.
+    outlineWidth: {
+        get: function (this: any): number { return this._outlineWidth; },
+        set: function (this: any, value: number) {
+            this._outlineWidth = value;
+            this._markAppearanceDirty();
+        }
+    },
+    outlineColor: {
+        get: function (this: any): number { return this._outlineColor; },
+        set: function (this: any, value: number) {
+            this._outlineColor = value;
+            this._markAppearanceDirty();
+        }
+    },
+    outlineAlpha: {
+        get: function (this: any): number { return this._outlineAlpha; },
+        set: function (this: any, value: number) {
+            this._outlineAlpha = value;
+            this._markAppearanceDirty();
+        }
+    },
+    outlineRounded: {
+        get: function (this: any): boolean { return this._outlineRounded; },
+        set: function (this: any, value: boolean) {
+            this._outlineRounded = value;
+            this._markAppearanceDirty();
+        }
+    },
+
     /**
      * Set the drop shadow for the text (chainable convenience wrapper).
      *
@@ -1125,6 +1236,44 @@ export const MSDFText: MSDFTextStatic = new Class({
      */
     hasShadow: function (): boolean {
         return this.shadowX !== 0 || this.shadowY !== 0 || this.shadowSoftness > 0;
+    },
+
+    // Shadow fields — same accessor-for-a-dirty-flag treatment as the outline
+    // fields above.
+    shadowX: {
+        get: function (this: any): number { return this._shadowX; },
+        set: function (this: any, value: number) {
+            this._shadowX = value;
+            this._markAppearanceDirty();
+        }
+    },
+    shadowY: {
+        get: function (this: any): number { return this._shadowY; },
+        set: function (this: any, value: number) {
+            this._shadowY = value;
+            this._markAppearanceDirty();
+        }
+    },
+    shadowColor: {
+        get: function (this: any): number { return this._shadowColor; },
+        set: function (this: any, value: number) {
+            this._shadowColor = value;
+            this._markAppearanceDirty();
+        }
+    },
+    shadowAlpha: {
+        get: function (this: any): number { return this._shadowAlpha; },
+        set: function (this: any, value: number) {
+            this._shadowAlpha = value;
+            this._markAppearanceDirty();
+        }
+    },
+    shadowSoftness: {
+        get: function (this: any): number { return this._shadowSoftness; },
+        set: function (this: any, value: number) {
+            this._shadowSoftness = value;
+            this._markAppearanceDirty();
+        }
     },
 
     // ========================================================================
