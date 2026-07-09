@@ -40,6 +40,12 @@ is built exactly once, with nothing to coordinate.
   provenance for source→glyph mapping. Also contains the **skew** feature,
   which has no dependency on the rest and can land at any time.
 
+All three of the above are **implemented**. The one remaining design doc:
+
+- **`vertex-params.md`** — the `params` vertex attribute (steps A–C): per-glyph
+  outline width / rounded / shadow softness, faux weight, underline. No
+  dependencies; must land before per-run font (2b). See Phase 2 below.
+
 ## Phase 2 — status
 
 **2a (per-run size, `fontScale`) is implemented.** Structural keys live on
@@ -53,24 +59,35 @@ source-indexed `Float32Array`, `null` on the uniform fast path) threaded through
 returning per-line `baselines[]`. Kerning is skipped across a size boundary.
 Batching was untouched, exactly as predicted.
 
-**Still out of scope:** per-run **font** (2b), faux **weight** (needs a vertex
-attribute + shader threshold) and **underline/strikethrough** (needs run-span
-geometry + a solid-colour path).
+**Still out of scope, in landing order:**
+
+1. **`vertex-params.md`** — the `params` byte4: per-glyph outline width /
+   rounded / shadow softness, faux **weight**, and **underline/strikethrough**.
+   Appearance lane, no layout component.
+2. **Per-run font (2b)** — `rich-text-styling.md`, "Phase 2". Strictly after (1).
 
 The **2a/2b split held for a sharper reason than "size is cheaper"**: the shared
 "variable line-metrics" refactor turned out to be *all* of 2a and *none* of the
-hard part of 2b. 2b's cost is in the renderer, not the metrics —
-`MSDFTextWebGLRenderer` reads `src.frame.glTexture` and calls `setPxRange` /
-`setAtlasSize` once per object, so per-run fonts make texture and both atlas
-uniforms per-glyph and need flush points beside the existing `configurePass`
-ones; `_characters` grow a font reference; and the style layer starts resolving
-font keys against the cache. None of that got cheaper by riding along with 2a.
+hard part of 2b. 2b's cost is in the renderer and loader, not the metrics —
+`_characters` grow a font reference, the style layer starts resolving font keys
+against the cache, and the renderer gains its first per-glyph flush gate. None of
+that got cheaper by riding along with 2a.
+
+**Why `vertex-params.md` goes first.** It is a *subtractive* refactor — it
+deletes four uniforms, collapses the four shader modes into one, and removes
+every uniform-driven batch flush, shipping a draw-call win with no API change.
+Per-run font is purely additive. And it corrects a claim this file used to make:
+per-run fonts do **not** make `uPxRange`/`uAtlasSize` per-glyph. Once outline
+width and shadow softness are normalised as fractions of `distanceRange`,
+`uPxRange` cancels out of every shader branch and survives only as a per-texture
+ratio. **Per-run font is a texture-binding problem and nothing else** — so after
+(1), 2b's renderer work is a single `configureFont` gate where `configurePass`
+used to be.
+
 Remaining frozen calls for 2b: kerning only between glyphs sharing a font *and*
-size; the `params` vertex byte4 is fully allocated (weight, solid/rounded flags,
-outline width, shadow softness — promoting today's per-batch uniforms to
-per-glyph state); one über-shader throughout (variant programs can't share a
-batch); the first draft may simply flush on texture change — the merged-atlas
-(`-and`) single-batch path is a later optimisation.
+size; one über-shader throughout (variant programs can't share a batch); the
+first draft may simply flush on texture change — the merged-atlas (`-and`)
+single-batch path is a later optimisation.
 
 ## Locked design decisions (rationale lives in the docs)
 
@@ -82,8 +99,11 @@ batch); the first draft may simply flush on texture change — the merged-atlas
   Phaser `Align` constants.
 - The per-glyph model is split into two lanes: **appearance** (seeded into
   `GlyphState`, per-frame safe, animatable — colour/alpha/outline/shadow/scale/
-  rotation/skew) vs **structural** (changes layout, rebuild-only — `fontSize`,
-  `font`; Phase 2). `displayCallback` stays appearance-only.
+  rotation/skew) vs **structural** (changes layout, rebuild-only — `fontScale`,
+  and `font` in 2b). `displayCallback` stays appearance-only.
+- The shader stays a single über-shader, and `params` channels are per-corner
+  where continuous but per-glyph where packed (GLSL ES 1.00 has no `flat`).
+  Rationale in `vertex-params.md`.
 - Rich-text styles have **three lifetimes**: content segments (`setRichText`,
   replaced with the text), persistent rules (`setTextStyle` — renamed from
   `setWordStyle`; re-matched on every text change), and transient ranges

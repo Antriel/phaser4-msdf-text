@@ -1,9 +1,15 @@
 # Rich text — per-run styling API (+ skew)
 
-**Status:** designed, not implemented. **Dependencies:** `srcIndex` from
-`rich-text-provenance.md` (for source→glyph mapping). The **skew** section at
-the end is self-contained and has no dependency on the rest — it can land
-independently.
+**Status: implemented** — Phase 1 (the three entry points, the three-store paint
+order, handle coalescing, skew) and Phase 2a (per-run size, `fontScale`) have all
+landed. This doc is kept as the *rationale* record: it explains why the API has
+the shape it has, and the "Verification" list below doubles as a regression
+checklist.
+
+**Still open:** per-run **font** (2b), documented at the end of this file.
+Per-glyph outline width / rounded / shadow softness, faux **weight** and
+**underline/strikethrough** moved to their own plan — see
+[`vertex-params.md`](./vertex-params.md), which must land **before** 2b.
 
 ## Goal
 
@@ -19,9 +25,10 @@ distinguished by **lifetime**:
 - **Override** — `addStyleRange(start, length, style)`: index-anchored to the
   current text; dropped on any text change.
 
-Everything here is **appearance-lane** (Phase 1): it seeds `GlyphState`, never
+Everything in the list above is **appearance-lane**: it seeds `GlyphState`, never
 changes layout, composes with `displayCallback`, and is animatable. Structural
-per-run styling (`fontSize`, `font`) is Phase 2 — see the end.
+per-run styling is the other lane: `fontScale` shipped as Phase 2a; per-run
+`font` (2b) is still open — see the end.
 
 ## The appearance/structural split (why this is all seeding)
 
@@ -32,12 +39,12 @@ Locked decision from the design session:
 | colour, alpha, gradient | appearance | seed | no | yes |
 | outline, shadow | appearance | seed | no | yes |
 | scale, rotation, **skew** | appearance | seed | no | yes |
-| **`fontSize`**, **`font`** | structural | rebuild | **yes** | no |
+| **`fontScale`**, **`font`** | structural | rebuild | **yes** | no |
 
 `displayCallback` stays appearance-only (its contract is "mutate resolved state,
 we read it straight to the GPU" — there is no relayout hook in that path).
-Structural size/font are set on segments and take effect on rebuild. Do **not**
-put `fontSize` on `GlyphState`.
+Structural size/font are set on segments and rules, and take effect on rebuild.
+Do **not** put `fontScale` on `GlyphState`.
 
 ### Refinement — where structural keys may live (pre-layout vs post-layout)
 
@@ -113,13 +120,14 @@ interface StyleSpec {
     skew?:    number;                                // shear factor; see Skew
 }
 
-// Phase 2 structural keys (per-run size, font) go HERE — and, optionally, on a
-// distinct RuleStyleSpec for setTextStyle (both resolve before layout). They must
+// Structural keys (fontScale today; font in 2b) live on RuleStyleSpec, which
+// setTextStyle and SegmentSpec both take — both resolve before layout. They must
 // never reach StyleSpec, which is the range/override spec applied AFTER layout —
 // see "Refinement: where structural keys may live" above. Ranges/callback stay
 // appearance-only forever so handle.update() keeps its "cheap re-seed, never
 // relayout" contract.
-interface SegmentSpec extends StyleSpec { text: string; }
+interface RuleStyleSpec extends StyleSpec { fontScale?: number; }
+interface SegmentSpec extends RuleStyleSpec { text: string; }
 type Segment = string | SegmentSpec;   // bare string = unstyled run
 
 // One handle type for rules and ranges.
@@ -133,13 +141,13 @@ Only the keys present in a `StyleSpec` override the seeded base; everything else
 inherits the text object's defaults. `color`/`alpha` accept either a scalar (all
 four corners) or a `PerCorner` (gradient).
 
-`outline` deliberately omits `width`/`rounded`, and `shadow` omits `softness` —
-those are per-batch uniforms today, so per-run values would break batching. Do
+`outline` omits `width`/`rounded`, and `shadow` omits `softness` — **as shipped**,
+because those are per-batch uniforms, so per-run values would break batching. Do
 **not** solve that with segment-level "breaks-batching" configs (an awkward
-middle that builds a flush mechanism we'd later delete); the plan of record is
-to promote them to per-glyph state via the Phase 2 `params` vertex attribute
-(see Phase 2 insights), at which point they join the appearance lane like
-everything else.
+middle that builds a flush mechanism we'd later delete). The plan of record is to
+promote them to per-glyph state via the `params` vertex attribute — see
+[`vertex-params.md`](./vertex-params.md) — at which point they join the
+appearance lane like everything else, per-corner included.
 
 ## Entry point 1 — `setRichText(segments)` (content)
 
@@ -320,10 +328,12 @@ perGlyph = glyphMode !== STATIC || src._hasStyles
 No new glyph *mode* constant is required — `_hasStyles` is an orthogonal flag
 that only affects whether the array is built and whether `applyStyleRuns` runs.
 
-## Skew (self-contained; no dependency on the styling API)
+## Skew — **implemented**
 
-A CPU baseline shear — faux italic. Can ship independently of everything above;
-it's just a new `GlyphState` transform.
+A CPU baseline shear — faux italic. Shipped as `GlyphState.skew`, applied by
+`applyBaselineShear` + `submitOneGlyph` in `MSDFTextWebGLRenderer.ts`. Notes kept
+for the rationale (especially the pivot decision, which looks like a bug and
+isn't).
 
 - **`GlyphState.skew: number`** — horizontal shear factor (`dx/dy`); positive
   leans the top of the glyph to the right. Store a raw factor (not radians) to
@@ -365,18 +375,21 @@ Dropped for now — the whole surface is a few hundred bytes and Phaser's `Class
 puts prototype methods in the bundle regardless. Not worth fragmenting the API.
 Revisit only if a real measurement says otherwise.
 
-## Files / methods to touch
+## Files / methods touched (done — kept as a map of where this lives)
 
 - `src/MSDFGlyphState.ts` — add `skew` (and it already gains
   `srcIndex/line/srcLine` from provenance); seed `skew = 0`.
 - `src/MSDFText.ts` — `setRichText`, `setTextStyle`, `addStyleRange`,
-  `clearStyles`; the three stores + `_hasStyles` + `_stylesDirty`;
-  `applyStyleRuns`; rule re-matching + segment/range clearing on text change
-  (`setText`/`setRichText`); fold into `prepareGlyphStates`; extend the rebuild
-  re-seed path to fire on `_hasStyles`/`_stylesDirty`; `StyleSpec`/
-  `SegmentSpec`/`StyleHandle` types; store `baselineY` per char (shared with
+  `clearStyles`; the three stores + `_hasStyles` / `_hasAppearance` /
+  `_stylesDirty`; `applyStyleRuns`; `refreshStyleState` (the single place that
+  decides re-seed vs rebuild); rule re-matching + segment/range clearing on text
+  change; fold into `prepareGlyphStates`; store `baselineY` per char (shared with
   provenance).
-- `src/MSDFTextWebGLRenderer.ts` — `perGlyph` includes `_hasStyles`; keep the
+- `src/MSDFTextStyle.ts` — the pure, `this`-free half: `resolveStyle`,
+  `matchRuns`, `applyStyleToGlyph`, `styleHasAppearanceKeys`.
+- `src/MSDFTextTypes.ts` — `StyleSpec` / `RuleStyleSpec` / `SegmentSpec` /
+  `StyleHandle` and the rest of the public type surface.
+- `src/MSDFTextWebGLRenderer.ts` — `perGlyph` includes `_hasAppearance`; keep the
   seed → segments → rules → ranges → callback order; read `g.skew` and route
   through the matrix path.
 - `src/MSDFTextWebGLRenderer.ts` / `src/BatchMSDFChar.ts` — apply the baseline
@@ -387,7 +400,7 @@ Revisit only if a real measurement says otherwise.
   on the glyph state.
 - `examples/` — a rich-text demo page (the verification artifact).
 
-## Verification
+## Verification (now a regression checklist — all of these hold today)
 
 - `setRichText(['Deal ', {text:'50', color:0xff3333}, ' damage'])` colours only
   the `50`; the `text` getter returns `'Deal 50 damage'`; wrapping still works.
@@ -419,100 +432,76 @@ Revisit only if a real measurement says otherwise.
 > `fontScale` on `SegmentSpec` and `RuleStyleSpec`, painted into a source-indexed
 > `_sizeScales` map that feeds `wrapLines` → `MSDFFont.measureLines` (which now
 > returns per-line `baselines[]`) → `rebuildText`. Kerning skipped across a size
-> boundary; batching untouched. The notes below stand as written for 2b.
+> boundary; batching untouched.
+>
+> **Faux weight, underline/strikethrough and the `params` byte4 have moved to
+> [`vertex-params.md`](./vertex-params.md)** — they are appearance-lane work with
+> no layout component, they land *before* 2b, and they make 2b materially
+> cheaper. Only the 2b notes remain below.
 
-Per-run **`fontSize`** and per-run **`font`** are structural: they change wrap,
-advance, and per-line height/baseline (a line's metrics become the max over the
-runs on it). Both ride the *same* refactor — variable line metrics in
-`rebuildText` + the `MSDFFont` measurement functions — gated behind a "does any
-run override size/font?" check so the single-font fast path is untouched when
-unused.
+Per-run **`font`** is structural: it changes wrap, advance, and per-line
+height/baseline (a line's metrics become the max over the runs on it). It rides
+the variable-line-metrics machinery 2a already built, gated behind a "does any
+run override the font?" check so the single-font fast path stays untouched.
 
-- **`font`** batches only when runs share the atlas **texture** and
-  **`distanceRange`** (the merged-atlas trick — same `uPxRange`/`uAtlasSize`, so
-  one draw call; different glyphs just index different atlas regions). A
-  different texture breaks the batch (flush/switch) — Phase 2+ or documented as
-  a batch break. This turns the current multi-instance merged-atlas workaround
-  into first-class mixed-font runs in one object, and is the natural home for a
-  real italic atlas (alongside faux-italic skew).
-- **Faux weight (bold)** needs a per-vertex attribute + a shader distance
-  threshold (unlike skew, which is pure geometry) — do it when the shader is
-  being touched anyway.
-- **Underline / strikethrough** need run-span rectangle geometry + a
-  solid-colour `uMode` (the atlas has no guaranteed solid texel). Lower value;
-  defer.
+This turns the current multi-instance merged-atlas workaround into first-class
+mixed-font runs in one object, and is the natural home for a real italic atlas
+(alongside faux-italic skew).
 
-### Phase 2 insights (freeze these before starting)
+### 2b insights (freeze these before starting)
 
-- **Split it: 2a = per-run size, 2b = per-run font.** Size is pure layout math
-  — same atlas, same texture, `uPxRange`/`uAtlasSize` unchanged, batching
-  untouched. Font drags in loader sharing, kerning tables, and batch breaks.
-  2a first; it is most of the user value at a fraction of the cost.
-- **Per-run size is a *multiplier* on the object `fontSize`, not absolute px**
-  (structural key on `SegmentSpec`, e.g. `fontScale: 1.5`; name it distinctly
-  from the appearance `scale`). Absolute px goes stale — `setFontSize(32)` on
-  an object holding a 48px run would keep the run at 48, almost never wanted —
-  and `fitInside`'s binary search loses proportionality/monotonicity. A
-  multiplier keeps both correct for free.
+- **The 2a/2b split held for a sharper reason than "size is cheaper."** The
+  shared variable-line-metrics refactor turned out to be *all* of 2a and *none*
+  of the hard part of 2b. 2b's cost is in the renderer and the loader, not the
+  metrics — none of it got cheaper by riding along with 2a.
+- **Per-run size is a *multiplier*, not absolute px.** (Shipped.) Absolute px
+  goes stale — `setFontSize(32)` on an object holding a 48px run would keep the
+  run at 48 — and `fitInside`'s binary search loses monotonicity. The same
+  reasoning does *not* apply to `font`, which has no scalar to go stale.
 - **The indices-first `computeWrap` (provenance) is the enabler.** Run-aware
   wrap measurement is "look up the active run for this source index" — trivial
-  when the wrap loop already walks source indices, a refactor if it didn't.
-  Layout becomes two scans per line: find the line's max ascent/descent over
-  its runs, then place glyphs on the shared baseline (align baselines, not
-  tops).
-- **Kerning: only between glyphs in the same font at the same size.** Kern
-  pairs across fonts don't exist and across sizes are ambiguous — skip at run
-  boundaries that change either, and document it.
-- **Touch the vertex layout once: add a `params` byte4 — and it's already
-  fully spoken for:** `[weight, flags (solid | rounded), outlineWidth,
-  shadowSoftness]`. Width/softness quantise to a byte as a fraction of the
-  atlas `distanceRange` (256 steps — imperceptible). This promotes today's
-  batch-breaking uniforms (`uOutlineWidth`, `uOutlineRounded`,
-  `uShadowSoftness`) to per-glyph appearance state, so per-run outline width
-  stops being a batching question at all, and the "solid" flag covers
-  underline/strikethrough per-vertex — the rects batch with the glyphs, no
-  per-rect `uMode` flush. `MSDFFontParser` already carries `underlineY` /
-  `underlineThickness` from the atlas JSON, so the geometry data is free.
-  Caveat to document: faux bold widens glyphs without changing advance
-  (letters can touch), and the threshold shift is bounded by `pxRange` like
-  outline width.
-- **`params` is per-vertex, so its continuous channels can go *per-corner* for
-  free** — exactly like `inColor`/`inOutline` already do. Stop replicating the
-  four copies and the shader receives an interpolated value across the quad:
-  per-corner `outlineWidth` → a directional/asymmetric outline (animate the
-  corners → the wobble effect), per-corner `shadowSoftness` → a shadow that is
-  soft on one edge and crisp on the other, per-corner `weight` → a faux-bold
-  gradient. Zero extra shader cost beyond the promotion. Two honesty caveats:
-  (1) the interpolation is **linear across the glyph's bounding box in texcoord
-  space**, not along the letter contour — a directional ramp, not a
-  contour-following pulse; (2) this is a natural extension of the per-corner
-  colour model, so if surfaced it should mirror it (`PerCorner<number>` on the
-  relevant `GlyphState`/`StyleSpec` fields).
-- **`rounded` is the exception — it can't interpolate as packed.** This shader is
-  GLSL ES 1.00 (WebGL1: `attribute`/`varying`, `GL_OES_standard_derivatives`),
-  which has **no `flat` qualifier** — every attribute interpolates. A packed
-  bitfield can't survive interpolation, so the `flags` byte (`solid | rounded`)
-  must stay **constant across a quad's 4 vertices**, i.e. per-glyph only.
-  Ironic, because `uOutlineRounded` is *already continuous* in the shader
-  (`mix(dist, tsdf, rounded)`), so per-corner rounded would blend sharp-MSDF
-  into rounded-SDF beautifully — it just needs its **own continuous byte**, not
-  a bit in `flags`. Room exists later if wanted: `solid` (underline/strike
-  rects) never uses `weight`/`outlineWidth`/`shadowSoftness`, so it can be a
-  **sentinel value** in one of those channels instead of a dedicated bit (safe:
-  all 4 corners of a rect share values, and a rect quad never shares
-  interpolation with a glyph quad), freeing a real byte for continuous
-  per-corner `rounded`. Day-one: `rounded` stays per-glyph.
+  because the wrap loop already walks source indices.
+- **Kerning: only between glyphs in the same font at the same size.** Kern pairs
+  across fonts don't exist and across sizes are ambiguous. The gate at
+  `MSDFText.ts:1441` becomes `scale === prevScale && fontIdx === prevFontIdx`,
+  and `MSDFFont.measureSpan` must make the identical call or wrapped lines
+  mismeasure. Document it.
+- **The font map has the same shape as `_sizeScales`.** A source-indexed
+  `Uint8Array` of indices into a small `_runFonts: MSDFFont[]`, `null` on the
+  uniform fast path, re-indexed onto the wrapped string by the same
+  `wrappedScales` walk. Do **not** invent a per-character object array.
+- **Measurement stops being a method on one `MSDFFont`.** This is the single
+  architectural move 2b forces: `measureSpan` / `measureLines` become functions
+  over a run-aware font source. `maxScaleIn` generalises from "max multiplier on
+  this line" to "max line metric on this line", since `lineHeight` / `ascender`
+  now vary per run too.
+- **`uPxRange` / `uAtlasSize` do *not* become per-glyph.** (This corrects an
+  earlier claim in this doc and in `README.md`.) Once `outlineWidth` and
+  `shadowSoftness` are normalised as fractions of `distanceRange` — which
+  `vertex-params.md` does — `uPxRange` cancels out of every shader branch and
+  survives only as the per-texture ratio `distanceRange / atlasSize`. Glyphs
+  sharing a texture always share that ratio, since a merged atlas carries one
+  `distanceRange` by construction. **Per-run font is a texture-binding problem
+  and nothing else.**
+- **After `vertex-params.md`, the texture is the renderer's *only* flush gate.**
+  `configurePass` will have nothing left to flush on, so 2b adds a single
+  `configureFont(texture, unitRange)` in its place. **Gotcha:** it must set the
+  new binding *after* the flush, never before — `MSDFBatchHandler.run()` reads
+  the uniforms at draw time, so setting them early would render the previous
+  font's queued glyphs with the new font's range.
+- **2b single-texture batching is an optimisation, not a prerequisite.** First
+  draft: a run whose font uses a different texture just flushes the batch — fine
+  at text scale. The native single-batch path comes later: msdf-atlas-gen packs
+  multiple fonts into one atlas (`-and`-separated inputs → one PNG + one JSON
+  with per-font variants); teach `MSDFFontParser` to yield N `MSDFFont`s from
+  such a JSON and `MSDFFontFile` to upload the texture once and register all of
+  them. Pure optimisation, no renderer change.
+- **The MTSDF guard becomes per-glyph.** `fieldType` varies per font, so the
+  `isMtsdf` check at `MSDFTextWebGLRenderer.ts:194` cannot stay object-level.
+  `vertex-params.md` already moves it to a pack-time clamp — another 2b cost
+  paid early.
 - **Stay one über-shader; don't split basic/dynamic variants.** Dynamic shader
   composition (which Phaser 4 uses elsewhere) means different programs for
   differently-featured texts — and different programs can't share a batch,
-  defeating the point of batched text. The added fragment cost (one threshold
-  add; attribute reads instead of uniform reads) is negligible at text-scale
-  glyph counts. Revisit only on a real measurement (same bar as tree-shaking).
-- **2b single-texture batching is an optimisation, not a prerequisite.** First
-  draft: a run whose font uses a different texture just flushes the batch —
-  fine at text scale, provided the renderer code stays clean (a texture check
-  alongside the existing `configurePass` flush points). The native
-  single-batch path comes later: msdf-atlas-gen packs multiple fonts into one
-  atlas (`-and`-separated inputs → one PNG + one JSON with per-font variants);
-  teach `MSDFFontParser` to yield N `MSDFFont`s from such a JSON and
-  `MSDFFontFile` to upload the texture once and register all of them.
+  defeating the point of batched text. Revisit only on a real measurement (same
+  bar as tree-shaking).
