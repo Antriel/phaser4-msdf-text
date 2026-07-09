@@ -287,7 +287,7 @@ hard-edged (`softness` is object-level).
 ### Rich text — per-run styling
 
 Style specific words or ranges — colour, gradient, alpha, outline/shadow colour,
-scale, rotation, skew — **without markup in the string** and without
+scale, rotation, skew, size — **without markup in the string** and without
 hand-counting glyphs. Three entry points over one mechanism, distinguished by
 **lifetime**:
 
@@ -334,13 +334,12 @@ hit.remove();
 
 `clearStyles()` removes all rules **and** ranges (segments are content, kept).
 
-A `StyleSpec` (and the `SegmentSpec` used by `setRichText`) accepts:
-`color`/`alpha` (a scalar, or a per-corner object for a gradient), `outline`
-(`{ color?, alpha? }`), `shadow` (`{ color?, alpha?, x?, y? }`), `scale`/
-`scaleX`/`scaleY`, `rotation` and `skew`. Only the keys you set override the
-glyph's seeded base. Outline **width**/**rounded** and shadow **softness** stay
-object-level (per-batch), so per-run `outline`/`shadow` tune only colour, alpha
-and offset:
+A `StyleSpec` accepts: `color`/`alpha` (a scalar, or a per-corner object for a
+gradient), `outline` (`{ color?, alpha? }`), `shadow` (`{ color?, alpha?, x?,
+y? }`), `scale`/`scaleX`/`scaleY`, `rotation` and `skew`. Only the keys you set
+override the glyph's seeded base. Outline **width**/**rounded** and shadow
+**softness** stay object-level (per-batch), so per-run `outline`/`shadow` tune
+only colour, alpha and offset:
 
 - A per-run **shadow renders on its own** — setting `shadow` on any run turns
   the shadow pass on, so the object needs no shadow of its own. (Per-run shadows
@@ -363,8 +362,49 @@ next render (in manual mode a styles re-seed emits `'glyphsreset'`, once/tick).
 | `handle.update` / `remove` | — | mutates the rule | mutates the range |
 | `clearStyles()` | kept | removed | removed |
 
-Per-run **`fontSize`** and **`font`** (which change layout) are a planned Phase 2
-and are not part of this appearance-only surface.
+#### Per-run size — `fontScale`
+
+Everything above is **appearance**: it seeds per-glyph state and never touches
+layout. `fontScale` is the one **structural** key — it changes advance, wrap and
+line height, so it reflows the text instead of re-seeding it.
+
+```ts
+text.setRichText([
+    { text: 'Blade of Embers\n', fontScale: 1.5, color: 0xffd23f },  // heading run
+    'Deals ',
+    { text: '50', fontScale: 1.5 },                                  // inline, same baseline
+    ' fire damage.\n',
+    { text: 'Forged in dragonflame long ago.', fontScale: 0.65 },    // fine print
+]);
+
+// Also legal as a persistent rule — every "Burn" is red and 1.4x:
+const burn = text.setTextStyle('Burn', { color: 0xff5252, fontScale: 1.4 });
+burn.update({ color: 0xff5252, fontScale: 2 });   // reflows (see below)
+```
+
+It is a **multiplier** on the object's `fontSize`, not an absolute pixel size, so
+`setFontSize` and `fitInside` stay coherent: every run keeps its proportion at
+any object size, and `fitInside`'s binary search stays monotone. Must be `> 0`.
+
+- **Line metrics are variable.** A line's box grows to its tallest run, and every
+  glyph on the line sits on one shared baseline — mixed sizes align by baseline,
+  not by top. A blank line keeps the object's own size.
+- **Kerning is skipped where the size changes.** A kern pair straddling a run
+  boundary has no well-defined size to scale by.
+- **Segments and rules only.** `addStyleRange` and `displayCallback` are applied
+  *after* layout, so they stay appearance-only — a transient, index-anchored
+  overlay that reflowed the text would break the "cheap re-seed, never relayout"
+  promise those paths make. Passing `fontScale` to `addStyleRange` is ignored
+  with a one-time warning.
+- **Cost.** Setting `fontScale` (including through `handle.update`) triggers a
+  rebuild rather than the usual coalesced re-seed, and a structural rule makes
+  `setText` a relayout too. An appearance-only update is unaffected.
+- `letterSpacing`, `lineSpacing` and shadow offsets are constant pixels and do
+  **not** scale with a run.
+
+Per-run **`font`** (mixing typefaces in one object) is not implemented — it needs
+per-glyph atlas state in the batch, unlike `fontScale`, which is pure layout math
+on one atlas.
 
 ### Per-glyph display callback
 

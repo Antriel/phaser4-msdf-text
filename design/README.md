@@ -40,23 +40,37 @@ is built exactly once, with nothing to coordinate.
   provenance for source→glyph mapping. Also contains the **skew** feature,
   which has no dependency on the rest and can land at any time.
 
-## Phase 2 (out of scope for the first cut)
+## Phase 2 — status
 
-The "variable line-metrics" phase, sketched at the end of
-`rich-text-styling.md`: per-run **size** and per-run **font** (both change
-layout, share the same metrics refactor, and — for `font` — batch only when
-runs share a texture + `distanceRange`), plus optional faux **weight** (needs
-a vertex attribute + shader threshold) and **underline/strikethrough**
-(needs run-span geometry + a solid-colour path). Key calls, frozen in that
-doc's "Phase 2 insights": split into **2a size / 2b font** (size is pure
-layout math, no batching impact); per-run size is a **multiplier** on the
-object `fontSize` (keeps `fitInside` and `setFontSize` coherent); structural
-keys live on `SegmentSpec` only; the `params` vertex byte4 is fully allocated
-(weight, solid/rounded flags, outline width, shadow softness — promoting
-today's per-batch uniforms to per-glyph state); one über-shader throughout
-(variant programs can't share a batch); 2b first draft may simply flush on
-texture change — the merged-atlas (`-and`) single-batch path is a later
-optimisation.
+**2a (per-run size, `fontScale`) is implemented.** Structural keys live on
+`SegmentSpec` *and* `setTextStyle`'s new `RuleStyleSpec` (the refinement in
+`rich-text-styling.md` superseded the original "segments only" call); ranges and
+`displayCallback` stay appearance-only. Per-run size is a **multiplier** on the
+object `fontSize`, which is what keeps `setFontSize` and `fitInside`'s monotone
+binary search coherent. The metrics refactor landed as `_sizeScales` (a
+source-indexed `Float32Array`, `null` on the uniform fast path) threaded through
+`wrapLines` → `MSDFFont.measureLines` → `rebuildText`, with `measureLines` now
+returning per-line `baselines[]`. Kerning is skipped across a size boundary.
+Batching was untouched, exactly as predicted.
+
+**Still out of scope:** per-run **font** (2b), faux **weight** (needs a vertex
+attribute + shader threshold) and **underline/strikethrough** (needs run-span
+geometry + a solid-colour path).
+
+The **2a/2b split held for a sharper reason than "size is cheaper"**: the shared
+"variable line-metrics" refactor turned out to be *all* of 2a and *none* of the
+hard part of 2b. 2b's cost is in the renderer, not the metrics —
+`MSDFTextWebGLRenderer` reads `src.frame.glTexture` and calls `setPxRange` /
+`setAtlasSize` once per object, so per-run fonts make texture and both atlas
+uniforms per-glyph and need flush points beside the existing `configurePass`
+ones; `_characters` grow a font reference; and the style layer starts resolving
+font keys against the cache. None of that got cheaper by riding along with 2a.
+Remaining frozen calls for 2b: kerning only between glyphs sharing a font *and*
+size; the `params` vertex byte4 is fully allocated (weight, solid/rounded flags,
+outline width, shadow softness — promoting today's per-batch uniforms to
+per-glyph state); one über-shader throughout (variant programs can't share a
+batch); the first draft may simply flush on texture change — the merged-atlas
+(`-and`) single-batch path is a later optimisation.
 
 ## Locked design decisions (rationale lives in the docs)
 

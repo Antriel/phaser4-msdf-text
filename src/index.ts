@@ -50,6 +50,7 @@ export type {
     MSDFTextStatic,
     PerCorner,
     StyleSpec,
+    RuleStyleSpec,
     SegmentSpec,
     Segment,
     TextStyleOpts,

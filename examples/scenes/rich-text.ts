@@ -1,6 +1,12 @@
 import type { Pane } from "tweakpane";
 import { ExampleScene } from "../harness/ExampleScene";
-import type { MSDFTextInstance, GlyphState, Segment, StyleHandle } from "../../src";
+import type {
+  MSDFTextInstance,
+  GlyphState,
+  Segment,
+  StyleHandle,
+  RuleStyleSpec,
+} from "../../src";
 
 // Gold → ember gradient for the item name (a per-corner fill).
 const NAME_GRADIENT = {
@@ -32,6 +38,25 @@ const CONTENT: Segment[] = [
   " long ago.",
 ];
 
+// Per-run **size** (`fontScale`) is structural: it changes wrap, advance and
+// line height, so it reflows rather than re-seeding. The heading run and the
+// enlarged "50" show the two things that fall out of variable line metrics — a
+// line's box grows to its tallest run, and mixed-size runs on one line share a
+// baseline (the "50" sits on the same baseline as the body text around it).
+const SIZED: Segment[] = [
+  { text: "Blade of Embers\n", fontScale: 1.5, color: NAME_GRADIENT },
+  "Deals ",
+  { text: "50", fontScale: 1.5, color: 0xffd23f },
+  " fire damage and inflicts ",
+  { text: "Burn", color: 0xff5252 },
+  " for 3 turns.\n",
+  {
+    text: "Forged in dragonflame long ago, when the mountain still burned.",
+    fontScale: 0.65,
+    color: 0x9a93b3,
+  },
+];
+
 // An alternate body used by "Change text" to prove rule persistence (the 'fire'
 // rule re-matches) and range transience (highlights are dropped).
 const ALT_TEXT =
@@ -41,6 +66,7 @@ const MODE_OPTIONS = {
   "Content segments": "content",
   "Keyword rule (setTextStyle)": "rule",
   "Range highlight (addStyleRange)": "range",
+  "Per-run size (fontScale)": "size",
   "Skew - faux italic": "skew",
   "Composition (rule + callback)": "composition",
 };
@@ -50,17 +76,23 @@ const MODE_OPTIONS = {
  *   • setRichText  — content styling that travels with the text
  *   • setTextStyle — a persistent keyword rule, re-matched on every text change
  *   • addStyleRange— a transient index range, dropped on any text change
- * plus baseline **skew** (faux italic) and composition with a displayCallback.
- * Switch modes to see each layer; the paint order is segments → rules → ranges
- * → callback, applied key-by-key.
+ * plus baseline **skew** (faux italic), per-run **size** (`fontScale`) and
+ * composition with a displayCallback. Switch modes to see each layer; the paint
+ * order is segments → rules → ranges → callback, applied key-by-key.
+ *
+ * The size mode is the one *structural* feature here: unlike every other key it
+ * changes layout, so it is confined to the layers that resolve before the layout
+ * pass (segments and rules) and it reflows instead of re-seeding.
  */
 export class RichTextScene extends ExampleScene {
   private text!: MSDFTextInstance;
-  private params = { mode: "content", skew: 0.22, altText: false };
+  private params = { mode: "content", skew: 0.22, fontScale: 1.9, altText: false };
 
-  // Live handle for the persistent rule of the current mode (drives the skew
-  // slider's handle.update). Ranges are fire-and-forget here, so no handle kept.
-  private ruleHandle: StyleHandle | null = null;
+  // Live handle for the persistent rule of the current mode (drives the skew and
+  // fontScale sliders' handle.update). Typed against RuleStyleSpec so the rule
+  // can carry the structural fontScale; ranges are fire-and-forget here, so no
+  // handle is kept for them.
+  private ruleHandle: StyleHandle<RuleStyleSpec> | null = null;
 
   constructor() {
     super({ key: "richtext" });
@@ -83,8 +115,9 @@ export class RichTextScene extends ExampleScene {
     this.applyMode("content");
 
     this.caption(
-      "text getter still returns the plain string; wrapping is unaffected. " +
-        "Rules survive a text change and re-match; ranges are dropped.",
+      "text getter still returns the plain string. Appearance styles never " +
+        "reflow; fontScale does - a line grows to its tallest run and mixed " +
+        "sizes share one baseline. Rules survive a text change; ranges are dropped.",
     );
 
     this.commonTargets.push(this.text);
@@ -100,11 +133,20 @@ export class RichTextScene extends ExampleScene {
     this.text.clearDisplayCallback();
     this.ruleHandle = null;
 
-    this.text.setRichText(CONTENT);
+    this.text.setRichText(mode === "size" ? SIZED : CONTENT);
 
     const plain = this.text.text as string;
 
-    if (mode === "rule") {
+    if (mode === "size") {
+      // A *structural* rule: fontScale is legal on setTextStyle because rules
+      // re-match before the layout pass. The slider's handle.update therefore
+      // routes to a rebuild (the text reflows), not the cheap re-seed an
+      // appearance-only update gets.
+      this.ruleHandle = this.text.setTextStyle("Burn", {
+        color: 0xff5252,
+        fontScale: this.params.fontScale,
+      });
+    } else if (mode === "rule") {
       // Every "fire" turns orange — a persistent policy, not tied to indices.
       this.ruleHandle = this.text.setTextStyle("fire", { color: 0xff8c42 });
       // A second rule shows nth targeting: only the first "the".
@@ -163,6 +205,20 @@ export class RichTextScene extends ExampleScene {
         }
       },
     );
+
+    // fontScale slider — only meaningful in size mode. Watch "Burn" grow: the
+    // line's height grows with it, the surrounding words keep their baseline,
+    // and the wrap re-flows when it stops fitting.
+    f.addBinding(this.params, "fontScale", {
+      label: "fontScale (Burn)",
+      min: 0.4,
+      max: 3,
+      step: 0.05,
+    }).on("change", (e) => {
+      if (this.params.mode === "size" && this.ruleHandle) {
+        this.ruleHandle.update({ color: 0xff5252, fontScale: e.value as number });
+      }
+    });
 
     // Prove rule persistence + range transience with a *real* text change.
     // setText keeps rules (they re-match 'fire'/'the' in the new text) and

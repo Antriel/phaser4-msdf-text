@@ -37,8 +37,9 @@ export interface PerCorner<T> {
  * text object's colour/alpha/outline/shadow). `color`/`alpha` accept a scalar
  * (all four corners the same) or a {@link PerCorner} (a gradient across the
  * glyph quad). This is an *appearance* spec: it seeds `GlyphState`, never
- * changes layout, composes with `displayCallback`, and is animatable. Per-run
- * `fontSize`/`font` (structural) are Phase 2 and are not here.
+ * changes layout, composes with `displayCallback`, and is animatable. Structural
+ * keys (per-run size) live on {@link RuleStyleSpec}, which segments and rules
+ * use; a per-run `font` is still unimplemented.
  */
 export interface StyleSpec {
     /** Fill colour — a scalar or a per-corner gradient. */
@@ -61,8 +62,39 @@ export interface StyleSpec {
     skew?: number;
 }
 
+/**
+ * A style that may also carry **structural** keys — ones that change layout and
+ * therefore take effect on a rebuild rather than a per-glyph re-seed.
+ *
+ * Structural keys are only legal on style layers resolved *before* the layout
+ * pass: content segments ({@link SegmentSpec}) and persistent rules
+ * ({@link MSDFTextInstance.setTextStyle}, whose matches are re-cached on every
+ * text change). They must never appear on {@link StyleSpec}, which is the
+ * override layer applied *after* layout — a transient range or a
+ * `displayCallback` that reflowed the text would silently break the "cheap
+ * re-seed, never relayout" contract those paths promise.
+ */
+export interface RuleStyleSpec extends StyleSpec {
+    /**
+     * Per-run font size as a **multiplier** on the object's `fontSize` (e.g.
+     * `1.5` for a heading run, `0.75` for fine print). Must be `> 0`; other
+     * values are ignored with a one-time dev warning.
+     *
+     * A multiplier rather than absolute pixels so `setFontSize` and `fitInside`
+     * stay coherent: the run keeps its proportion at any object size, and
+     * `fitInside`'s binary search stays monotone.
+     *
+     * **Structural** — it changes wrap, advance and line height, so setting it
+     * (including via `handle.update`) triggers a relayout, not a re-seed. Kerning
+     * is skipped across a boundary where the size changes. Deliberately named
+     * apart from the appearance-lane `scale`, which stretches the rendered glyph
+     * about its centre without touching layout.
+     */
+    fontScale?: number;
+}
+
 /** A styled run of text for {@link MSDFTextInstance.setRichText}. */
-export interface SegmentSpec extends StyleSpec {
+export interface SegmentSpec extends RuleStyleSpec {
     /** The run's text. Concatenated (in order) into the object's plain text. */
     text: string;
 }
@@ -87,10 +119,13 @@ export interface TextStyleOpts {
  * a transient range ({@link MSDFTextInstance.addStyleRange}). Changes coalesce
  * into a single re-seed before the next render. A range handle dies on any text
  * change — its methods then no-op with a one-time dev warning.
+ *
+ * A rule handle is a `StyleHandle<RuleStyleSpec>`: it accepts structural keys,
+ * and an update that changes one costs a relayout rather than a re-seed.
  */
-export interface StyleHandle {
+export interface StyleHandle<S extends StyleSpec = StyleSpec> {
     /** Replace the style. */
-    update(style: StyleSpec): void;
+    update(style: S): void;
     /** Drop the rule/range. */
     remove(): void;
 }
@@ -300,13 +335,21 @@ export interface MSDFTextInstance extends
      * re-matched against the new text each time. Returns a {@link StyleHandle}
      * to update/remove the rule. Substring match by default; see
      * {@link TextStyleOpts} for `wholeWord`/`nth`/`caseSensitive`/`all`.
+     *
+     * Rules take a {@link RuleStyleSpec}, so they may carry the structural
+     * `fontScale` ("every `H1` is 1.5×") — its matches are re-cached before the
+     * layout pass. The cost is that such a rule makes `setText` (and
+     * `handle.update`) a relayout rather than a re-seed.
      */
-    setTextStyle(match: string, style: StyleSpec, opts?: TextStyleOpts): StyleHandle;
+    setTextStyle(match: string, style: RuleStyleSpec, opts?: TextStyleOpts): StyleHandle<RuleStyleSpec>;
     /**
      * Style a **transient range** of the current text by index (override
      * styling). Anchored to `this.text`, which the caller owns; **any** text
      * change drops all ranges and kills their handles (no clamping). Returns a
      * {@link StyleHandle}. Use for highlights over text known to be stable.
+     *
+     * Appearance-only: this layer is applied *after* layout, so it takes a
+     * {@link StyleSpec} and never the structural `fontScale`.
      */
     addStyleRange(start: number, length: number, style: StyleSpec): StyleHandle;
     /**

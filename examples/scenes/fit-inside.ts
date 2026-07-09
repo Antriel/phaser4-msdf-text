@@ -89,7 +89,7 @@ export class FitInsideScene extends ExampleScene {
 
     this.readout.setText(
       `font size ${this.text.fontSize.toFixed(1)}px  ` +
-        `•  block ${Math.round(this.text.width)}x${Math.round(this.text.height)}`,
+        `|  block ${Math.round(this.text.width)}x${Math.round(this.text.height)}`,
     );
   }
 

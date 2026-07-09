@@ -95,6 +95,35 @@ The callback runs **once per frame** with the whole glyph array, not once per
 glyph and not once per pass, so the passes read already-resolved state and a
 glyph's shadow/outline are independent of its fill.
 
+**Rich-text lanes** — the three style layers (`_segmentRuns` content,
+`_styleRules` policy, `_rangeRuns` override; painted in that order, then
+`displayCallback`) split into two lanes:
+- **Appearance** — colour/alpha/outline/shadow/scale/rotation/skew. Seeds
+  `GlyphState`. `_hasAppearance` gates the per-glyph array and `applyStyleRuns`.
+  A change sets `_stylesDirty` (one coalesced re-seed before the next render).
+- **Structural** — `fontScale` (a *multiplier* on the object `fontSize`; absolute
+  px would go stale under `setFontSize` and break `fitInside`'s monotone binary
+  search). It never reaches `GlyphState`; it is painted into `_sizeScales`, a
+  `Float32Array` of per-**source**-character multipliers (`null` = uniform, the
+  fast path), which feeds wrap, measurement and layout. A change sets `_dirty` —
+  a rebuild, not a re-seed.
+
+Only layers resolved *before* the layout pass may carry structural keys, so
+`SegmentSpec` and `setTextStyle`'s `RuleStyleSpec` have `fontScale` and
+`StyleSpec` (ranges, callback — applied *after* layout) never will.
+`MSDFText.refreshStyleState()` recomputes all of `_hasStyles` /
+`_hasAppearance` / `_sizeScales` and is the single place that decides re-seed
+vs rebuild.
+
+**Variable line metrics** — with `_sizeScales`, `MSDFFont.measureLines` returns a
+`baselines[]` array: a line's box height and ascent both take the largest size on
+that line, and `rebuildText` places every glyph on that shared baseline (mixed
+sizes align by **baseline**, not by top). Kerning is applied only *within* a
+same-size run — `measureSpan`, `wrapLines` and `rebuildText` must all make that
+same call or wrapped lines mismeasure. Per-run **`font`** is unimplemented: it
+would make texture / `uPxRange` / `uAtlasSize` per-glyph and so needs batch flush
+points, unlike `fontScale`, which is pure layout math on one atlas.
+
 **Font data** — `msdf-atlas-gen` JSON, parsed by `src/MSDFFontParser.ts` into a
 runtime `MSDFFont`. Contains `atlas` metadata (type, `distanceRange`, size,
 dimensions, `yOrigin`), normalized `metrics`, per-glyph plane/atlas bounds, and
@@ -109,6 +138,9 @@ src/
   MSDFFontParser.ts        # Parses msdf-atlas-gen JSON
   MSDFFont.ts              # Parsed font: glyph metrics, kerning, measurement
   MSDFText.ts              # Text GameObject (layout, wrap, outline, shadow, per-glyph state)
+  MSDFTextTypes.ts         # Public type surface (StyleSpec / RuleStyleSpec / MSDFTextInstance)
+  MSDFTextStyle.ts         # Rich-text style engine (resolve, match, apply) — no instance state
+  MSDFTextWrap.ts          # Pure word-wrap + source-index map
   MSDFGlyphState.ts        # Per-glyph state type + factory (callback / editGlyphs)
   MSDFColor.ts             # Shared colour packing helper (packColor)
   MSDFTextFactory.ts       # add.msdfText factory

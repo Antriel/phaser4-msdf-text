@@ -413,7 +413,13 @@ Revisit only if a real measurement says otherwise.
   descender (`g`, `y`) leans consistently with its ascenders (baseline pivot,
   not per-glyph bottom). Skew animates smoothly per-frame via a callback.
 
-## Phase 2 — variable line-metrics (out of scope here)
+## Phase 2 — variable line-metrics
+
+> **Status: 2a (per-run size) implemented; 2b (per-run font) not.** Shipped as
+> `fontScale` on `SegmentSpec` and `RuleStyleSpec`, painted into a source-indexed
+> `_sizeScales` map that feeds `wrapLines` → `MSDFFont.measureLines` (which now
+> returns per-line `baselines[]`) → `rebuildText`. Kerning skipped across a size
+> boundary; batching untouched. The notes below stand as written for 2b.
 
 Per-run **`fontSize`** and per-run **`font`** are structural: they change wrap,
 advance, and per-line height/baseline (a line's metrics become the max over the

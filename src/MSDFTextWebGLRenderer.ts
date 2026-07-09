@@ -204,12 +204,13 @@ function MSDFTextWebGLRenderer(
     // Static mode keeps the object-level colours in shared buffers and never
     // touches a per-glyph array. Callback mode re-seeds the array and runs the
     // user callback once for the whole text; manual mode reads the user-owned,
-    // already-seeded array as-is. Rich-text styles (`_hasStyles`) force a
-    // persistent array even without a callback — it is seeded + styled on
+    // already-seeded array as-is. Rich-text *appearance* styles (`_hasAppearance`)
+    // force a persistent array even without a callback — it is seeded + styled on
     // rebuild and whenever styles change (`_stylesDirty`, applied pre-render),
-    // and the renderer reads it here without re-seeding.
+    // and the renderer reads it here without re-seeding. A structural-only run
+    // (`fontScale`) is already baked into the character quads, so it needs none.
     const glyphMode = src._glyphMode;
-    const hasStyles = src._hasStyles;
+    const hasStyles = src._hasAppearance;
     let glyphs: GlyphState[] | null = null;
 
     if (glyphMode === GLYPH_MODE_STATIC && !hasStyles) {

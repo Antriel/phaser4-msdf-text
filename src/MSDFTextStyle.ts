@@ -11,7 +11,7 @@
 import * as Phaser from "phaser";
 import type { Corners } from './MSDFColor';
 import type { GlyphState } from './MSDFGlyphState';
-import type { ColorValue, PerCorner, StyleSpec, SegmentSpec, TextStyleOpts } from './MSDFTextTypes';
+import type { ColorValue, PerCorner, StyleSpec, RuleStyleSpec, SegmentSpec, TextStyleOpts } from './MSDFTextTypes';
 
 /** Convert any {@link ColorValue} to a packed `0xRRGGBB` number. */
 export function toColorInt(value: ColorValue): number {
@@ -23,6 +23,10 @@ export function toColorInt(value: ColorValue): number {
  * per-frame seeding does no colour parsing or scale expansion. Absent fields
  * mean "inherit the seeded base" — only present keys are applied to a glyph.
  * Colour is packed `0xRRGGBB` (per corner); alpha is `0-1` (per corner).
+ *
+ * All fields but `fontScale` are **appearance**: they are stamped onto a
+ * `GlyphState` by {@link applyStyleToGlyph}. `fontScale` is **structural** — it
+ * feeds the layout pass instead and never reaches a glyph state.
  */
 export interface ResolvedStyle {
     fillColor?: Corners;   // packed 0xRRGGBB per corner
@@ -37,6 +41,7 @@ export interface ResolvedStyle {
     scaleY?: number;
     rotation?: number;
     skew?: number;
+    fontScale?: number;    // structural — layout input, not glyph state
 }
 
 /** A styled source-index span. `start`/`length` index the plain `_text`. */
@@ -90,8 +95,11 @@ function resolveAlphaCorners(value: number | PerCorner<number>): Corners {
     return { topLeft: a, topRight: a, bottomLeft: a, bottomRight: a };
 }
 
-/** Normalise a {@link StyleSpec} into a {@link ResolvedStyle} (present keys only). */
-export function resolveStyle(spec: StyleSpec): ResolvedStyle {
+/** One-time dev warning for a `fontScale` that isn't a positive number. */
+let warnedFontScale = false;
+
+/** Normalise a {@link RuleStyleSpec} into a {@link ResolvedStyle} (present keys only). */
+export function resolveStyle(spec: RuleStyleSpec): ResolvedStyle {
     const r: ResolvedStyle = {};
     if (spec.color !== undefined) r.fillColor = resolveColorCorners(spec.color);
     if (spec.alpha !== undefined) r.fillAlpha = resolveAlphaCorners(spec.alpha);
@@ -115,15 +123,42 @@ export function resolveStyle(spec: StyleSpec): ResolvedStyle {
     if (sy !== undefined) r.scaleY = sy;
     if (spec.rotation !== undefined) r.rotation = spec.rotation;
     if (spec.skew !== undefined) r.skew = spec.skew;
+    // Structural. A non-positive multiplier would collapse or mirror the run's
+    // metrics, so drop it rather than let it corrupt the layout.
+    if (spec.fontScale !== undefined) {
+        if (spec.fontScale > 0) {
+            r.fontScale = spec.fontScale;
+        } else if (!warnedFontScale) {
+            warnedFontScale = true;
+            console.warn(
+                `[MSDFText] "fontScale" must be a positive multiplier of the ` +
+                `object's fontSize; got ${spec.fontScale}. Ignoring it.`
+            );
+        }
+    }
     return r;
 }
 
-/** Whether a spec carries at least one appearance override (so it needs a run). */
+/** Whether a spec carries at least one override (appearance or structural). */
 export function hasStyleKeys(spec: SegmentSpec): boolean {
     return spec.color !== undefined || spec.alpha !== undefined ||
         spec.outline !== undefined || spec.shadow !== undefined ||
         spec.scale !== undefined || spec.scaleX !== undefined || spec.scaleY !== undefined ||
-        spec.rotation !== undefined || spec.skew !== undefined;
+        spec.rotation !== undefined || spec.skew !== undefined ||
+        spec.fontScale !== undefined;
+}
+
+/**
+ * Whether a resolved style stamps anything onto a {@link GlyphState}. A run that
+ * carries only the structural `fontScale` changes the layout but seeds nothing,
+ * so it must not, on its own, force the per-glyph state array into existence.
+ */
+export function styleHasAppearanceKeys(s: ResolvedStyle): boolean {
+    return s.fillColor !== undefined || s.fillAlpha !== undefined ||
+        s.outlineColor !== undefined || s.outlineAlpha !== undefined ||
+        s.scaleX !== undefined || s.scaleY !== undefined ||
+        s.rotation !== undefined || s.skew !== undefined ||
+        styleHasShadowKeys(s);
 }
 
 /**

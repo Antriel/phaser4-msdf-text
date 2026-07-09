@@ -5,7 +5,7 @@
  * `wordWrapCharCode`, `letterSpacing` and `fontData`.
  */
 
-import type { MSDFFont } from './MSDFFont';
+import type { MSDFFont, SizeScales } from './MSDFFont';
 
 /**
  * Word wrap text to fit within `maxWidth`, returning both the wrapped string
@@ -27,6 +27,8 @@ import type { MSDFFont } from './MSDFFont';
  * @param wordWrapCharCode Character code word wrapping breaks on (usually space).
  * @param letterSpacing    Extra per-character spacing, in px (affects measurement).
  * @param fontData         Font used to measure candidate lines.
+ * @param scales           Optional per-character size multipliers, indexed by
+ *   position in `text` (rich-text `fontScale` runs). `null` = uniform size.
  */
 export function wrapLines(
     text: string,
@@ -34,7 +36,8 @@ export function wrapLines(
     fontSize: number,
     wordWrapCharCode: number,
     letterSpacing: number,
-    fontData: MSDFFont
+    fontData: MSDFFont,
+    scales: SizeScales = null
 ): { text: string; srcIndex: number[] } {
     const n = text ? text.length : 0;
     const outSrc: number[] = [];
@@ -51,10 +54,39 @@ export function wrapLines(
     let outText = '';
 
     // The committed part of the current output line and the pending word, held
-    // as parallel (charCode, srcIndex) runs. `lineStr`/`wordStr` mirror them
-    // as strings purely for measuring.
-    let lineChars: number[] = [], lineSrc: number[] = [], lineStr = '';
-    let wordChars: number[] = [], wordSrc: number[] = [], wordStr = '';
+    // as parallel (charCode, srcIndex) runs. The source index is what lets a
+    // measurement look up the character's `fontScale`.
+    let lineChars: number[] = [], lineSrc: number[] = [];
+    let wordChars: number[] = [], wordSrc: number[] = [];
+
+    /**
+     * Width of `line + word`, optionally plus one more character (the wrap char
+     * being tested). Walks the parallel arrays rather than a concatenated string
+     * so each character can be measured at its own size. Kerning is skipped
+     * across a size change, matching `MSDFFont.measureSpan` and the layout pass.
+     */
+    const measure = (extraCode: number, extraSrc: number): number => {
+        let width = 0, prevCode = 0, prevScale = 1, count = 0;
+
+        const add = (code: number, src: number): void => {
+            const char = fontData.getChar(code);
+            if (!char) { prevCode = 0; return; }
+            const scale = scales ? scales[src] : 1;
+            const size = fontSize * scale;
+            if (prevCode !== 0 && scale === prevScale) {
+                width += fontData.getKerning(prevCode, code) * size;
+            }
+            width += char.xAdvance * size;
+            prevCode = code; prevScale = scale; count++;
+        };
+
+        for (let k = 0; k < lineChars.length; k++) add(lineChars[k], lineSrc[k]);
+        for (let k = 0; k < wordChars.length; k++) add(wordChars[k], wordSrc[k]);
+        if (extraCode >= 0) add(extraCode, extraSrc);
+
+        if (letterSpacing !== 0 && count > 0) width += letterSpacing * count;
+        return width;
+    };
 
     // Emit the current line, trimming a trailing wrap char on a soft break
     // (mirrors the old `currentLine.trim()`), then emit the break newline.
@@ -72,22 +104,20 @@ export function wrapLines(
             outText += '\n';
             outSrc.push(breakSrc);
         }
-        lineChars = []; lineSrc = []; lineStr = '';
+        lineChars = []; lineSrc = [];
     };
 
     // End of a source paragraph (hard '\n' or end of string): place the
     // pending word, wrapping it to its own line if the line now overflows.
     const finishParagraph = (): void => {
         if (wordChars.length === 0) return;
-        const { width } = fontData.measureText(lineStr + wordStr, fontSize, letterSpacing);
-        if (width > maxWidth && lineStr.length > 0) {
+        if (measure(-1, 0) > maxWidth && lineChars.length > 0) {
             commitLine(-1);                                  // push the filled line (soft break)
-            lineChars = wordChars; lineSrc = wordSrc; lineStr = wordStr; // word starts the next line
+            lineChars = wordChars; lineSrc = wordSrc;        // word starts the next line
         } else {
             for (let k = 0; k < wordChars.length; k++) { lineChars.push(wordChars[k]); lineSrc.push(wordSrc[k]); }
-            lineStr += wordStr;
         }
-        wordChars = []; wordSrc = []; wordStr = '';
+        wordChars = []; wordSrc = [];
     };
 
     for (let i = 0; i < n; i++) {
@@ -100,20 +130,17 @@ export function wrapLines(
         }
 
         if (code === wrapCode) {                             // word boundary
-            const test = lineStr + wordStr + String.fromCharCode(code);
-            const { width } = fontData.measureText(test, fontSize, letterSpacing);
-            if (width > maxWidth && lineStr.length > 0) {
+            if (measure(code, i) > maxWidth && lineChars.length > 0) {
                 commitLine(-1);                              // soft break: the current word overflows
-                lineChars = wordChars; lineSrc = wordSrc; lineStr = wordStr;
-                lineChars.push(code); lineSrc.push(i); lineStr += String.fromCharCode(code);
+                lineChars = wordChars; lineSrc = wordSrc;
+                lineChars.push(code); lineSrc.push(i);
             } else {
                 for (let k = 0; k < wordChars.length; k++) { lineChars.push(wordChars[k]); lineSrc.push(wordSrc[k]); }
                 lineChars.push(code); lineSrc.push(i);
-                lineStr += wordStr + String.fromCharCode(code);
             }
-            wordChars = []; wordSrc = []; wordStr = '';
+            wordChars = []; wordSrc = [];
         } else {                                             // ordinary character: extend the word
-            wordChars.push(code); wordSrc.push(i); wordStr += String.fromCharCode(code);
+            wordChars.push(code); wordSrc.push(i);
         }
     }
 
