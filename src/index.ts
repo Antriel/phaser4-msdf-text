@@ -29,7 +29,7 @@ import './MSDFFontFile';
 // Public API
 export { MSDFFont } from './MSDFFont';
 export { MSDFText } from './MSDFText';
-export { parseMSDFFont } from './MSDFFontParser';
+export { parseMSDFFont, parseMSDFFontSet } from './MSDFFontParser';
 export {
     MSDFPlugin,
     installMSDFPlugin,
@@ -65,6 +65,7 @@ export type {
 } from './MSDFGlyphState';
 export type { Corners } from './MSDFColor';
 export type { MSDFFontFileConfig } from './MSDFFontFile';
+export type { MSDFFontJSON, MSDFFontVariantJSON, MSDFFontSetEntry } from './MSDFFontParser';
 export type {
     MSDFTextConfig,
     MSDFTextOutlineConfig,

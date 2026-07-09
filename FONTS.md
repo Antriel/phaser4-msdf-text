@@ -82,6 +82,49 @@ blur, outline corner radius) is bounded by `distanceRange`, so pick a larger
 shadows. Requesting a rounded outline or soft shadow on a plain `msdf` atlas is
 ignored with a one-time console warning.
 
+## Merging several fonts into one atlas
+
+If a text object mixes fonts via rich text (`font:` on a segment or rule —
+see the README's rich-text section), each font normally uses its own atlas
+texture, so a run that switches fonts ends the draw call. `msdf-atlas-gen`
+can pack multiple `-font` inputs into one atlas texture with `-and`, and this
+plugin's loader (`this.load.msdfFont`) understands the resulting JSON
+natively — mixed-font text sharing a merged atlas never flushes on texture
+change.
+
+```bash
+msdf-atlas-gen \
+  -font Anton.ttf     -fontname Anton \
+  -and -font Inter.ttf -fontname Inter \
+  -type mtsdf \
+  -size 42 \
+  -pxrange 16 \
+  -outerpxpadding 2 \
+  -potr \
+  -imageout merged.png \
+  -json merged.json
+```
+
+`-fontname` is what names each font in the JSON (`variants[].name`); without
+it, the plugin falls back to `<loadKey>#<index>`, which is harder to target
+from rich-text `font:` keys. Load the pair with a single call — the load
+`key` only needs to be a unique key for the shared texture, not one of the
+font names:
+
+```ts
+this.load.msdfFont('gameFonts', 'assets/fonts/merged.png', 'assets/fonts/merged.json');
+// registers cache entries 'Anton' and 'Inter', both backed by the 'gameFonts' texture
+```
+
+```ts
+const text = this.add.msdfText(x, y, 'Anton', 'Hello', 42);
+text.setRichText(['Deal ', { text: '50', font: 'Inter' }, ' damage']);
+```
+
+All merged fonts must share one `-type` and one `-pxrange`/`-emrange` (the
+distance range is a single per-atlas value); this is a `msdf-atlas-gen`
+constraint, not something this plugin enforces separately.
+
 ## Troubleshooting
 
 **Blurry text** — confirm the texture uses LINEAR filtering (Phaser's default;

@@ -6,7 +6,7 @@
  */
 
 import * as Phaser from "phaser";
-import { parseMSDFFont } from './MSDFFontParser';
+import { parseMSDFFontSet } from './MSDFFontParser';
 import { MSDFFont } from './MSDFFont';
 
 // @ts-ignore - Phaser internals not fully typed
@@ -157,15 +157,21 @@ export const MSDFFontFile = new Class({
                 return;
             }
 
-            // Register the parsed font in the custom msdfFont cache (created by
-            // MSDFPlugin on boot). Skip if already present — two scenes can load
-            // the same font before either finishes processing.
+            // Register the parsed font(s) in the custom msdfFont cache (created
+            // by MSDFPlugin on boot). A merged atlas (msdf-atlas-gen `-and`)
+            // yields one entry per input font, all sharing `textureKey` — so
+            // mixed-font rich text never flushes on texture change. Skip an
+            // entry already present — two scenes can load the same font before
+            // either finishes processing.
             const cache = this.loader.cacheManager.custom.msdfFont;
             if (!cache) {
                 console.warn('[MSDFFontFile] MSDF font cache not initialized. Did you install the MSDFPlugin?');
-            } else if (!cache.has(this.key)) {
-                const fontData = parseMSDFFont(json.data, this.key);
-                cache.add(this.key, new MSDFFont(fontData, textureKey));
+            } else {
+                for (const { name, data } of parseMSDFFontSet(json.data, this.key)) {
+                    if (!cache.has(name)) {
+                        cache.add(name, new MSDFFont(data, textureKey));
+                    }
+                }
             }
 
             this.complete = true;
@@ -174,14 +180,17 @@ export const MSDFFontFile = new Class({
 });
 
 /**
- * Queues a single MSDF font for loading, unless a font with that key has
- * already been parsed into the `msdfFont` cache.
+ * Queues a single MSDF font for loading, unless its texture has already been
+ * uploaded.
  *
  * Phaser's loader dedups standard files via `File.hasCacheConflict()` against
- * each file's target cache. An MSDF font is only fully usable once it lands in
- * the custom `msdfFont` cache, so that cache is the authoritative "already
- * loaded" check — applying it here makes re-`preload()`ing the same font (e.g.
- * from every scene that uses it) a no-op instead of a redundant download.
+ * each file's target cache, but an MSDF font's loader `key` is not itself a
+ * `msdfFont` cache entry — a merged atlas (`-and`) registers its *variants*
+ * under their own names, sharing one texture keyed by `key`. The texture
+ * manager is therefore the authoritative "already loaded" check for both the
+ * single-font and merged cases — applying it here makes re-`preload()`ing the
+ * same font (e.g. from every scene that uses it) a no-op instead of a
+ * redundant download.
  */
 function addMSDFFont(
     loader: Phaser.Loader.LoaderPlugin,
@@ -192,9 +201,9 @@ function addMSDFFont(
     fontDataXhrSettings?: Phaser.Types.Loader.XHRSettingsObject
 ): void {
     const fontKey = typeof key === 'string' ? key : GetFastValue(key, 'key');
-    const cache = (loader as any).cacheManager.custom.msdfFont;
+    const textureManager = (loader as any).textureManager;
 
-    if (cache && fontKey && cache.has(fontKey)) {
+    if (textureManager && fontKey && textureManager.exists(fontKey)) {
         return;
     }
 
@@ -239,6 +248,19 @@ function addMSDFFont(
  *
  * The parsed font is also available via `this.cache.custom.msdfFont.get('arial')`
  * if you need direct access to its `MSDFFont` instance.
+ *
+ * If the JSON was generated with `msdf-atlas-gen -font a.ttf -and -font b.ttf ...`
+ * (several fonts merged into one atlas texture, each given a `-fontname`), this
+ * one call registers every font under its own name — `key` need only be a
+ * unique load key for the shared texture, not one of the font names:
+ *
+ * ```javascript
+ * this.load.msdfFont('gameFonts', 'assets/fonts/merged.png', 'assets/fonts/merged.json');
+ * // later: this.add.msdfText(x, y, 'Anton', 'Hello'); this.add.msdfText(x, y, 'Inter', 'World');
+ * ```
+ *
+ * Text mixing those fonts (via `font:` on a rich-text segment/rule) shares one
+ * atlas texture, so `configureFont`'s per-font flush never fires.
  *
  * @method Phaser.Loader.LoaderPlugin#msdfFont
  * @fires Phaser.Loader.Events#ADD

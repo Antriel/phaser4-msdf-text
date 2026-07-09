@@ -44,11 +44,19 @@ export const FONT_OPTIONS: Record<string, string> = Object.fromEntries(
 /**
  * Queue every font — MSDF atlas, BitmapText, and TTF — on the given loader.
  * Run once from {@link PreloadScene} so all examples share one set of caches.
+ *
+ * The MSDF atlas is a single **merged** atlas (msdf-atlas-gen `-and`, see
+ * `public/assets/merged/`), generated with `-fontname` matching each
+ * `FONTS[].key` exactly — one `load.msdfFont` call registers all five keys
+ * against one shared texture, so mixed-font rich text (`per-run-font.ts`)
+ * batches into a single draw call instead of flushing per font. BitmapText
+ * and TTF stay per-font; only the MSDF path benefits from merging.
  */
 export function preloadFonts(load: Phaser.Loader.LoaderPlugin): void {
+  load.msdfFont("mergedFonts", "assets/merged/merged_mtsdf.png", "assets/merged/merged_mtsdf.json");
+
   for (const f of FONTS) {
     const dir = `assets/${f.base}`;
-    load.msdfFont(f.key, `${dir}/${f.base}_mtsdf.png`, `${dir}/${f.base}_mtsdf.json`);
     load.bitmapFont(f.bitmapKey, `${dir}/${f.base}_bitmap.png`, `${dir}/${f.base}_bitmap.fnt`);
     load.font(f.key, `${dir}/${f.base}.ttf`);
   }

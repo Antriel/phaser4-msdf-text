@@ -74,13 +74,30 @@ export interface MSDFKerningData {
 }
 
 /**
- * Root JSON structure from msdf-atlas-gen
+ * One font's data within a merged (`-and`) atlas. `name` comes from that
+ * font's `-fontname` at generation time; msdf-atlas-gen omits it if unset.
  */
-export interface MSDFFontJSON {
-    atlas: MSDFAtlasData;
+export interface MSDFFontVariantJSON {
+    name?: string;
     metrics: MSDFMetrics;
     glyphs: MSDFGlyphData[];
     kerning?: MSDFKerningData[];
+}
+
+/**
+ * Root JSON structure from msdf-atlas-gen.
+ *
+ * A single-font atlas carries `metrics`/`glyphs`/`kerning` at the top level.
+ * An atlas generated from several `-font ... -and -font ...` inputs shares one
+ * `atlas` block but carries a `variants` array instead — one entry per input
+ * font, packed into the same texture.
+ */
+export interface MSDFFontJSON {
+    atlas: MSDFAtlasData;
+    metrics?: MSDFMetrics;
+    glyphs?: MSDFGlyphData[];
+    kerning?: MSDFKerningData[];
+    variants?: MSDFFontVariantJSON[];
 }
 
 // ============================================================================
@@ -196,14 +213,12 @@ function atlasBoundsToUV(
 }
 
 /**
- * Parse MSDF JSON font data into runtime format
- *
- * @param json - The parsed JSON data from msdf-atlas-gen
- * @param fontName - Optional font name (defaults to 'MSDF Font')
- * @returns Parsed font data ready for rendering
+ * Parse one variant's glyph/metrics data (already resolved against the shared
+ * `atlas` block) into runtime format. Shared by `parseMSDFFont` (single-font
+ * JSON) and `parseMSDFFontSet` (one call per variant of a merged atlas).
  */
-export function parseMSDFFont(json: MSDFFontJSON, fontName: string = 'MSDF Font'): MSDFFontData {
-    const { atlas, metrics, glyphs, kerning = [] } = json;
+function parseVariant(atlas: MSDFAtlasData, variant: MSDFFontVariantJSON, fontName: string): MSDFFontData {
+    const { metrics, glyphs, kerning = [] } = variant;
     const isYUp = atlas.yOrigin === 'bottom';
 
     // Initialize character map
@@ -312,6 +327,48 @@ export function parseMSDFFont(json: MSDFFontJSON, fontName: string = 'MSDF Font'
     };
 
     return fontData;
+}
+
+/**
+ * Parse a single-font MSDF JSON (from msdf-atlas-gen) into runtime format.
+ *
+ * @param json - The parsed JSON data from msdf-atlas-gen
+ * @param fontName - Optional font name (defaults to 'MSDF Font')
+ * @returns Parsed font data ready for rendering
+ */
+export function parseMSDFFont(json: MSDFFontJSON, fontName: string = 'MSDF Font'): MSDFFontData {
+    if (json.variants) {
+        throw new Error(
+            `parseMSDFFont: "${fontName}" is a merged atlas (multiple -and inputs) — use parseMSDFFontSet to get one MSDFFontData per variant.`
+        );
+    }
+    return parseVariant(json.atlas, { metrics: json.metrics!, glyphs: json.glyphs!, kerning: json.kerning }, fontName);
+}
+
+/** One font extracted from a `parseMSDFFontSet` call, named for cache registration. */
+export interface MSDFFontSetEntry {
+    name: string;
+    data: MSDFFontData;
+}
+
+/**
+ * Parse an MSDF JSON that may contain several fonts merged into one atlas
+ * (msdf-atlas-gen `-font a.ttf -and -font b.ttf ...`). Returns one entry per
+ * font, all sharing the same atlas texture. A plain single-font JSON yields a
+ * single entry, so callers can use this unconditionally.
+ *
+ * @param json - The parsed JSON data from msdf-atlas-gen
+ * @param baseFontName - Name for a single-font JSON, or the fallback prefix
+ *   for merged variants that were generated without `-fontname`
+ */
+export function parseMSDFFontSet(json: MSDFFontJSON, baseFontName: string = 'MSDF Font'): MSDFFontSetEntry[] {
+    if (!json.variants) {
+        return [{ name: baseFontName, data: parseMSDFFont(json, baseFontName) }];
+    }
+    return json.variants.map((variant, i) => {
+        const name = variant.name || `${baseFontName}#${i}`;
+        return { name, data: parseVariant(json.atlas, variant, name) };
+    });
 }
 
 /**

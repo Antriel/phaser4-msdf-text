@@ -48,7 +48,7 @@ All three of the above are **implemented**, as is:
 
 ## Phase 2 — status
 
-**Everything in Phase 2 is implemented except step E** (the merged atlas).
+**Everything in Phase 2 is implemented, including step E** (the merged atlas).
 
 **2a (per-run size, `fontScale`) is implemented.** Structural keys live on
 `SegmentSpec` *and* `setTextStyle`'s new `RuleStyleSpec` (the refinement in
@@ -111,13 +111,25 @@ Three things the design doc didn't anticipate:
 - **`refreshStyleState` must rebuild `_runFonts` unconditionally**, because
   `setFont` swaps slot 0 out from under an otherwise unchanged `_fontMap`.
 
-**Still out of scope:**
-
-- **Step E — the merged (`-and`) atlas.** `msdf-atlas-gen` can pack several fonts
-  into one PNG + one JSON; teaching `MSDFFontParser` to yield N `MSDFFont`s from
-  such a JSON and `MSDFFontFile` to upload the texture once would make
-  `configureFont`'s flush never fire for mixed-font runs. Pure optimisation, no
-  renderer change.
+**Step E (merged `-and` atlas) is implemented.** `MSDFFontParser` gained
+`parseMSDFFontSet`, which reads a JSON's `variants` array (one entry per
+`-font ... -and -font ...` input, each named by that font's `-fontname`) and
+returns one `MSDFFontData` per variant — a plain single-font JSON still yields
+exactly one entry, so `MSDFFontFile.addToCache` calls it unconditionally.
+Every variant is registered in the `msdfFont` cache under its own name, all
+constructed with the **same** `textureKey`, since the atlas is uploaded once
+for the whole file. No renderer change was needed, exactly as predicted:
+`MSDFFont.textureKey` was already the renderer's only flush signal (2b), so
+two fonts sharing one texture already batched — the merged atlas just makes
+that the common case instead of an edge case. The one non-obvious bit: the
+loader's pre-queue dedup (`addMSDFFont`) used to check
+`msdfFontCache.has(key)`, but a merged file's `key` is only ever a texture
+load key now, never itself a cache entry — switched to
+`textureManager.exists(key)`, which is accurate for both the single-font and
+merged cases since `textureKey` always equals the load `key`. Demo: the
+existing `examples/scenes/per-run-font.ts` runs unmodified against a merged
+atlas (`examples/harness/fonts.ts`), confirming mixed-font text collapses to
+one draw call.
 
 **Why `vertex-params.md` went first.** It was a *subtractive* refactor — it
 deleted four uniforms, collapsed the four shader modes into one, and removed

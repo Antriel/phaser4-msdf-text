@@ -486,8 +486,11 @@ underline position/thickness — comes from **its own** font.
 - **An unknown key** falls back to the object's own font with a one-time warning.
 - **Cost: a run whose font uses a different atlas texture ends the draw call.**
   That is cheap at text-scale glyph counts. To keep it at one draw call, generate a
-  single merged atlas (`msdf-atlas-gen` with `-and`-separated inputs) so every run
-  shares a texture. Runs sharing a texture never flush.
+  single merged atlas (`msdf-atlas-gen` with `-and`-separated inputs, one
+  `-fontname` per input — see [FONTS.md](FONTS.md#merging-several-fonts-into-one-atlas))
+  and load it with **one** `this.load.msdfFont(key, ...)` call: the loader
+  registers each input font under its own `-fontname` in the `msdfFont` cache,
+  all sharing that one texture, so runs naming them never flush.
 - **Effects are per-run too.** `rounded` outlines and soft shadows need an MTSDF
   atlas; on a run whose font is plain `msdf` they are clamped away silently, even
   if a neighbouring run supports them.

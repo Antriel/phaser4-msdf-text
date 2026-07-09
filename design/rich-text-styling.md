@@ -11,8 +11,9 @@ Per-glyph outline width / rounded / shadow softness, faux **weight** and
 [`vertex-params.md`](./vertex-params.md), which landed **before** 2b and is what
 made 2b a texture-binding problem and nothing else.
 
-**Still open:** step E (the merged `-and` atlas, so mixed-font runs share one
-texture and `configureFont`'s flush never fires). Pure optimisation.
+Step E (the merged `-and` atlas, so mixed-font runs share one texture and
+`configureFont`'s flush never fires) **is now implemented too** — pure
+optimisation, no renderer change, exactly as predicted. See `design/README.md`.
 
 ## Goal
 

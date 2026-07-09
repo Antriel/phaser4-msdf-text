@@ -201,6 +201,17 @@ loops. A run on a different texture ends the draw call; a merged (`-and`) atlas
 avoids that with no renderer change. `fieldType` is per-font, so the MTSDF clamp
 is per-binding.
 
+**Merged atlases** — `msdf-atlas-gen -font a -and -font b ...` (each input given
+a `-fontname`) packs several fonts into one texture and emits a `variants` array
+in the JSON instead of top-level `metrics`/`glyphs`. `MSDFFontParser.parseMSDFFontSet`
+yields one `MSDFFontData` per variant (a plain single-font JSON still yields
+exactly one, so the loader calls it unconditionally); `MSDFFontFile.addToCache`
+registers each under its own `-fontname` in the `msdfFont` cache, all
+constructed with the **same** `textureKey`. Nothing downstream (renderer,
+`_runFonts`, `configureFont`) knows or cares that several cache entries share a
+texture — that sharing *is* what keeps the flush gate from firing, per the
+paragraph above.
+
 **Font data** — `msdf-atlas-gen` JSON, parsed by `src/MSDFFontParser.ts` into a
 runtime `MSDFFont`. Contains `atlas` metadata (type, `distanceRange`, size,
 dimensions, `yOrigin`), normalized `metrics`, per-glyph plane/atlas bounds, and

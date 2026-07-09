@@ -444,7 +444,7 @@ Recorded here as the prediction; every item held. Full context in
   tallest ascender and the tallest line box need not be the same run.)
 - Step E (merged `-and` atlas: parser yields N fonts, loader uploads the texture
   once) makes `configureFont`'s flush never fire. Pure optimisation, no renderer
-  change, strictly after D. **Still open.**
+  change, strictly after D. **Implemented** — see `design/README.md`.
 
 ---
 
