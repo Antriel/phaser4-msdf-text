@@ -1374,6 +1374,10 @@ export const MSDFText: MSDFTextStatic = new Class({
         this.clearCharacters();
 
         if (!this._text || this._text.length === 0) {
+            this._width = 0;
+            this._height = 0;
+            this._dirty = false;
+            this.updateDisplayOrigin();
             this.refreshGlyphs();
             return;
         }
