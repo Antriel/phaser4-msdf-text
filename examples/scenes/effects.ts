@@ -37,7 +37,7 @@ export class EffectsScene extends ExampleScene {
     this.cameras.main.setBackgroundColor(0x22202c);
     this.heading(
       "Animated Effects",
-      "One display callback, seven per-glyph effects.",
+      "One display callback, nine per-glyph effects.",
     );
 
     this.text = this.add

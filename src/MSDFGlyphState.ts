@@ -12,6 +12,13 @@
  * cover the common "all four corners the same" case; reach into the per-corner
  * `Corners` objects only for gradients.
  *
+ * `weight`, `outline.width` and `shadow.softness` are per-corner too, because
+ * they ride the same interpolated vertex attribute: a faux-bold gradient, a
+ * directional outline or a soft-on-one-side shadow all cost nothing extra. The
+ * interpolation is linear across the quad's bounding box, not along the letter
+ * contour, so think "directional ramp", not "contour-following pulse".
+ * `outline.rounded` is a bit in a packed byte, so it stays per-glyph.
+ *
  * The shape is frozen and reused across frames: keep colour fields integer and
  * alpha fields fractional so V8 holds the hidden class and field representations
  * stable across the (potentially thousands of) per-glyph iterations.
@@ -32,6 +39,27 @@ export interface GlyphShadow extends GlyphAspect {
     x: number;
     /** Per-glyph shadow Y offset in pixels (seeded from `shadowY`). */
     y: number;
+    /**
+     * Per-corner shadow blur in distance-field units (seeded from
+     * `shadowSoftness`). `0` is a hard edge. Needs an MTSDF atlas; forced to `0`
+     * on a plain MSDF font. Bounded by the atlas `distanceRange`.
+     */
+    softness: Corners;
+}
+
+export interface GlyphOutline extends GlyphAspect {
+    /**
+     * Per-corner outline width in distance-field units (seeded from
+     * `outlineWidth`). `0` disables this glyph's outline entirely — the colour
+     * and alpha are then ignored. Saturates at half the atlas `distanceRange`.
+     */
+    width: Corners;
+    /**
+     * Round this glyph's outer outline corners using the true SDF (seeded from
+     * `outlineRounded`). Needs an MTSDF atlas; forced off on a plain MSDF font.
+     * Per-glyph, not per-corner — it is a bit in a packed byte.
+     */
+    rounded: boolean;
 }
 
 export interface GlyphState {
@@ -67,16 +95,26 @@ export interface GlyphState {
      * a whole line slants consistently. Seeded to `0`; animatable like rotation.
      */
     skew: number;
+    /**
+     * Per-corner faux bold, in distance-field units — it shifts the glyph's
+     * distance threshold, so positive fattens and negative thins. The outline and
+     * shadow edges move with it. Widens the glyph **without changing its
+     * advance**, so letters can touch at high weight. Bounded by half the atlas
+     * `distanceRange`, like `outline.width`.
+     */
+    weight: Corners;
 
     /** Fill colour/alpha — the glyph face. */
     fill: GlyphAspect;
-    /** Drop-shadow colour/alpha/offset for this glyph (ignored if the text has no shadow). */
+    /** Drop-shadow colour/alpha/offset/softness for this glyph. */
     shadow: GlyphShadow;
-    /** Outline colour/alpha for this glyph (ignored if the text has no outline). */
-    outline: GlyphAspect;
+    /** Outline colour/alpha/width/rounded for this glyph. */
+    outline: GlyphOutline;
 
     /** Set both axes of glyph scale. `setScale(v)` is uniform; `setScale(x, y)` is independent. */
     setScale(x: number, y?: number): void;
+    /** Set the faux-bold weight on all four corners. */
+    setWeight(weight: number): void;
     /** Set the fill colour (`0xRRGGBB`) on all four corners. */
     setFillColor(rgb: number): void;
     /** Set the fill alpha (`0-1`) on all four corners. */
@@ -85,10 +123,14 @@ export interface GlyphState {
     setShadowColor(rgb: number): void;
     /** Set the shadow alpha (`0-1`) on all four corners. */
     setShadowAlpha(alpha: number): void;
+    /** Set the shadow softness (distance-field units) on all four corners. */
+    setShadowSoftness(softness: number): void;
     /** Set the outline colour (`0xRRGGBB`) on all four corners. */
     setOutlineColor(rgb: number): void;
     /** Set the outline alpha (`0-1`) on all four corners. */
     setOutlineAlpha(alpha: number): void;
+    /** Set the outline width (distance-field units) on all four corners. `0` disables it. */
+    setOutlineWidth(width: number): void;
 }
 
 function corners(value: number): Corners {
@@ -100,6 +142,10 @@ function corners(value: number): Corners {
 function setScale(this: GlyphState, x: number, y?: number): void {
     this.scaleX = x;
     this.scaleY = y === undefined ? x : y;
+}
+function setWeight(this: GlyphState, weight: number): void {
+    const w = this.weight;
+    w.topLeft = w.topRight = w.bottomLeft = w.bottomRight = weight;
 }
 function setFillColor(this: GlyphState, rgb: number): void {
     const t = this.fill.color;
@@ -117,6 +163,10 @@ function setShadowAlpha(this: GlyphState, alpha: number): void {
     const a = this.shadow.alpha;
     a.topLeft = a.topRight = a.bottomLeft = a.bottomRight = alpha;
 }
+function setShadowSoftness(this: GlyphState, softness: number): void {
+    const s = this.shadow.softness;
+    s.topLeft = s.topRight = s.bottomLeft = s.bottomRight = softness;
+}
 function setOutlineColor(this: GlyphState, rgb: number): void {
     const t = this.outline.color;
     t.topLeft = t.topRight = t.bottomLeft = t.bottomRight = rgb;
@@ -124,6 +174,10 @@ function setOutlineColor(this: GlyphState, rgb: number): void {
 function setOutlineAlpha(this: GlyphState, alpha: number): void {
     const a = this.outline.alpha;
     a.topLeft = a.topRight = a.bottomLeft = a.bottomRight = alpha;
+}
+function setOutlineWidth(this: GlyphState, width: number): void {
+    const w = this.outline.width;
+    w.topLeft = w.topRight = w.bottomLeft = w.bottomRight = width;
 }
 
 /** Create a fresh glyph state with a stable, fully-populated shape. */
@@ -140,15 +194,19 @@ export function createGlyphState(): GlyphState {
         scaleY: 1,
         rotation: 0,
         skew: 0,
+        weight: corners(0),
         fill: { color: corners(0xffffff), alpha: corners(1) },
-        shadow: { color: corners(0), alpha: corners(1), x: 0, y: 0 },
-        outline: { color: corners(0), alpha: corners(1) },
+        shadow: { color: corners(0), alpha: corners(1), x: 0, y: 0, softness: corners(0) },
+        outline: { color: corners(0), alpha: corners(1), width: corners(0), rounded: false },
         setScale,
+        setWeight,
         setFillColor,
         setFillAlpha,
         setShadowColor,
         setShadowAlpha,
+        setShadowSoftness,
         setOutlineColor,
-        setOutlineAlpha
+        setOutlineAlpha,
+        setOutlineWidth
     };
 }

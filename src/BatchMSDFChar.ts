@@ -4,9 +4,10 @@
  * Computes transformed quad vertices for the character and forwards them to
  * MSDFBatchHandler.batch(). Mirrors Phaser's BatchChar.js for BitmapText.
  *
- * Each vertex carries two packed colours: `colorData` (the fill, also the shadow
- * colour on the shadow pass) and `outlineData` (the per-glyph outline colour,
- * read by the combined and silhouette passes; ignored by the plain/shadow ones).
+ * Each vertex carries three packed u32s: `colorData` (the fill), `outlineData`
+ * (the outline colour — also where a shadow quad's colour rides, since shadows
+ * are drawn as outline-only quads) and `params` (weight / flags / outline width
+ * / shadow softness; see `MSDFColor.packParams`).
  */
 
 import type { MSDFBatchHandlerInstance } from './MSDFBatchHandler';
@@ -41,7 +42,8 @@ function BatchMSDFChar(
     offsetY: number,
     calcMatrix: CalcMatrix,
     colorData: PackedCorners,
-    outlineData: PackedCorners
+    outlineData: PackedCorners,
+    params: PackedCorners
 ): void {
     const x = char.x + offsetX;
     const y = char.y + offsetY;
@@ -69,14 +71,18 @@ function BatchMSDFChar(
         tx2, ty2,
         char.u0, char.v0,
         char.u1, char.v1,
-        colorData.colorBottomLeft,
-        colorData.colorTopLeft,
-        colorData.colorTopRight,
-        colorData.colorBottomRight,
-        outlineData.colorBottomLeft,
-        outlineData.colorTopLeft,
-        outlineData.colorTopRight,
-        outlineData.colorBottomRight
+        colorData.bottomLeft,
+        colorData.topLeft,
+        colorData.topRight,
+        colorData.bottomRight,
+        outlineData.bottomLeft,
+        outlineData.topLeft,
+        outlineData.topRight,
+        outlineData.bottomRight,
+        params.bottomLeft,
+        params.topLeft,
+        params.topRight,
+        params.bottomRight
     );
 }
 

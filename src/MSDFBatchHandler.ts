@@ -7,26 +7,16 @@
  *
  * Registered automatically by `MSDFPlugin` (and `installMSDFPlugin`) as the
  * `BatchHandlerMSDF` render node.
+ *
+ * There is one über-shader and one branch. Every effect that used to be a
+ * per-pass uniform (outline width, rounded, shadow softness, the pass mode) now
+ * rides the per-vertex `inParams` attribute, so a shadowed, outlined text is a
+ * single draw call and two texts with different outline widths batch together.
+ * The only remaining uniforms are the sampler, the projection matrix and
+ * `uUnitRange` — both of which are per *texture*, never per glyph.
  */
 
 import * as Phaser from "phaser";
-
-/**
- * Fragment shader render modes, selected per pass via the `uMode` uniform.
- * `OUTLINE_SILHOUETTE` + `PLAIN` are the two passes of a layered outline; the
- * silhouette (whole glyph in outline colour) is drawn for every glyph first,
- * then the fill on top, so a thick outline can't overlap a neighbouring glyph.
- */
-export const MSDFMode = {
-    /** Plain glyph fill. Also the fill pass of a layered outline and the hard drop shadow. */
-    PLAIN: 0,
-    /** Outline + fill in one pass (per-glyph; outlines may overlap neighbours). */
-    OUTLINE_COMBINED: 1,
-    /** Layered outline, pass 1: the whole glyph blob in outline colour. */
-    OUTLINE_SILHOUETTE: 2,
-    /** Soft shadow / glow (needs the true-SDF alpha channel of an MTSDF atlas). */
-    SOFT_SHADOW: 3
-} as const;
 
 const SimpleVertexShader = [
     'precision mediump float;',
@@ -34,12 +24,14 @@ const SimpleVertexShader = [
     'uniform mat4 uProjectionMatrix;',
     'attribute vec2 inPosition;',
     'attribute vec2 inTexCoord;',
-    'attribute vec4 inColor;',
-    'attribute vec4 inOutline;',  // Per-glyph outline colour (combined + silhouette passes).
+    'attribute vec4 inColor;',    // Fill colour.
+    'attribute vec4 inOutline;',  // Outline colour — also the shadow colour, which rides this layer.
+    'attribute vec4 inParams;',   // weight, flags, outlineWidth, shadowSoftness. See MSDFColor.packParams.
     '',
     'varying vec2 outTexCoord;',
     'varying vec4 outColor;',
     'varying vec4 outOutline;',
+    'varying vec4 outParams;',
     '',
     'void main()',
     '{',
@@ -47,6 +39,7 @@ const SimpleVertexShader = [
     '    outTexCoord = inTexCoord;',
     '    outColor = inColor;',
     '    outOutline = inOutline;',
+    '    outParams = inParams;',
     '}'
 ].join('\n');
 
@@ -59,16 +52,12 @@ const SimpleFragmentShader = [
     '#endif',
     '',
     'uniform sampler2D uMainSampler;',
-    'uniform vec2 uAtlasSize;',     // Atlas texture size in pixels.
-    'uniform float uPxRange;',      // distanceRange from the font JSON.
-    'uniform float uOutlineWidth;',
-    'uniform float uOutlineRounded;',  // 0 = sharp outline, 1 = rounded (true SDF).
-    'uniform float uShadowSoftness;',  // distance-field units of blur (soft shadow mode).
-    'uniform float uMode;',            // 0 plain/fill, 1 combined outline, 2 outline silhouette, 3 soft shadow.
+    'uniform vec2 uUnitRange;',  // distanceRange / atlasSize — per texture, never per glyph.
     '',
     'varying vec2 outTexCoord;',
-    'varying vec4 outColor;',
-    'varying vec4 outOutline;',  // Per-glyph outline colour (replaces the old uOutlineColor uniform).
+    'varying vec4 outColor;',    // Fill colour + alpha.
+    'varying vec4 outOutline;',  // Outline (or shadow) colour + alpha.
+    'varying vec4 outParams;',
     '',
     'float median(float r, float g, float b)',
     '{',
@@ -81,71 +70,59 @@ const SimpleFragmentShader = [
     '// across the whole glyph instead of wobbling with the sampled field.',
     'float screenPxRange()',
     '{',
-    '    vec2 unitRange = vec2(uPxRange) / uAtlasSize;',
     '    vec2 screenTexSize = vec2(1.0) / fwidth(outTexCoord);',
-    '    return max(0.5 * dot(unitRange, screenTexSize), 1.0);',
+    '    return max(0.5 * dot(uUnitRange, screenTexSize), 1.0);',
     '}',
     '',
     'void main()',
     '{',
-    '    vec4 textureSample = texture2D(uMainSampler, outTexCoord);',
-    '    float dist = median(textureSample.r, textureSample.g, textureSample.b);',
-    '    float tsdf = textureSample.a;',  // True SDF — meaningful only on MTSDF atlases.
-    '    float pxRange = screenPxRange();',
+    '    vec4 texel = texture2D(uMainSampler, outTexCoord);',
+    '    float msdf = median(texel.r, texel.g, texel.b);',
+    '    float tsdf = texel.a;',  // True SDF — meaningful only on MTSDF atlases.
+    '    float px = screenPxRange();',
     '',
-    '    if (uMode < 0.5)',
-    '    {',
-    '        // Plain text fill. Also the fill pass of a layered outline and the',
-    '        // hard (non-soft) drop shadow — both are just a glyph in some colour.',
-    '        float coverage = clamp(pxRange * (dist - 0.5) + 0.5, 0.0, 1.0);',
-    '        float a = coverage * outColor.a;',
-    '        gl_FragColor = vec4(outColor.rgb * a, a);',
-    '    }',
-    '    else if (uMode < 1.5)',
-    '    {',
-    '        // Combined outline + fill in a single pass (mode 1). The outline is',
-    '        // per-glyph, so a thick outline can overlap a neighbouring glyph —',
-    '        // use the layered mode (silhouette + fill passes) to avoid that.',
-    '        float textEdge = 0.5;',
-    '        float outlineEdge = 0.5 - (uOutlineWidth / uPxRange);',
+    '    // Unpack params. `flags` is written identically to all four vertices',
+    '    // (GLSL ES 1.00 has no `flat`), so it survives interpolation exactly.',
+    '    float flags = floor(outParams.g * 255.0 + 0.5);',
+    '    float rounded = mod(flags, 2.0);',
+    '    float solid = mod(floor(flags * 0.5), 2.0);',
     '',
-    '        // Outline edge from the true SDF (rounded corners) or the MSDF (sharp).',
-    '        float outlineDist = mix(dist, tsdf, uOutlineRounded);',
+    '    float weight = outParams.r - (128.0 / 255.0);',  // Signed fraction of the range; 128 is neutral.
+    '    float widthNorm = outParams.b * 0.5;',           // Byte spans the useful [0, 0.5].
+    '    float softNorm = outParams.a;',                  // Byte spans the full [0, 1].
     '',
-    '        float coverage = clamp(pxRange * (outlineDist - outlineEdge) + 0.5, 0.0, 1.0);',
-    '        float textMix  = clamp(pxRange * (dist        - textEdge   ) + 0.5, 0.0, 1.0);',
+    '    // The fill keeps median(rgb) so corners stay sharp; only the outline /',
+    '    // shadow layer may round itself off the true SDF. Faux bold moves both',
+    '    // edges together, so an outline tracks the weight it surrounds.',
+    '    float fillEdge = 0.5 - weight;',
+    '    float outlineEdge = fillEdge - widthNorm;',
+    '    float outlineDist = mix(msdf, tsdf, rounded);',
     '',
-    '        // Guard against haze in the deep background at extreme minification.',
-    '        float backgroundFade = smoothstep(0.0, 0.2, outlineDist);',
+    '    // One coverage expression serves fill, outline and shadow: softNorm = 0',
+    '    // reproduces the plain 1-screen-pixel AA ramp exactly.',
+    '    float fillCoverage = clamp((msdf - fillEdge) * px + 0.5, 0.0, 1.0);',
+    '    float outlineCoverage = clamp((outlineDist - outlineEdge) / max(softNorm, 1.0 / px) + 0.5, 0.0, 1.0);',
     '',
-    '        vec3 rgb = mix(outOutline.rgb, outColor.rgb, textMix);',
-    '        float a  = coverage * mix(outOutline.a, outColor.a, textMix) * backgroundFade;',
+    '    // Guard against haze in the deep background at extreme minification. A',
+    '    // soft glow has real alpha down in that region, so any nonzero softness',
+    '    // byte suppresses the fade; hard edges keep it.',
+    '    float fade = max(smoothstep(0.0, 0.2, outlineDist), step(0.5 / 255.0, softNorm));',
     '',
-    '        gl_FragColor = vec4(rgb * a, a);',
-    '    }',
-    '    else if (uMode < 2.5)',
-    '    {',
-    '        // Outline silhouette pass (mode 2, layered outline): the whole glyph',
-    '        // blob in outline colour. All silhouettes are drawn before any fill,',
-    '        // so a neighbouring glyph\'s outline can never cover this glyph\'s fill.',
-    '        float outlineEdge = 0.5 - (uOutlineWidth / uPxRange);',
-    '        float outlineDist = mix(dist, tsdf, uOutlineRounded);',
-    '        float coverage = clamp(pxRange * (outlineDist - outlineEdge) + 0.5, 0.0, 1.0);',
-    '        float backgroundFade = smoothstep(0.0, 0.2, outlineDist);',
-    '        float a = coverage * outOutline.a * backgroundFade;',
-    '        gl_FragColor = vec4(outOutline.rgb * a, a);',
-    '    }',
-    '    else',
-    '    {',
-    '        // Soft shadow / glow (mode 3): spread the true-SDF edge by',
-    '        // uShadowSoftness distance-field units, so the blur scales with the',
-    '        // text just like the outline does. The 1-screen-pixel floor keeps the',
-    '        // edge anti-aliased when the text is very small.',
-    '        float soft = max(uShadowSoftness, uPxRange / pxRange);',
-    '        float alpha = clamp(uPxRange * (tsdf - 0.5) / soft + 0.5, 0.0, 1.0);',
-    '        float a = alpha * outColor.a;',
-    '        gl_FragColor = vec4(outColor.rgb * a, a);',
-    '    }',
+    '    // Underline / strikethrough rects: full coverage, no distance field. They',
+    '    // still carry real 0..1 UVs, so fwidth() (and therefore px) stays finite.',
+    '    fillCoverage = mix(fillCoverage, 1.0, solid);',
+    '    outlineCoverage = mix(outlineCoverage, 0.0, solid);',
+    '',
+    '    // Honest fill-over-outline composite. Degenerate cases are exact: a zero',
+    '    // outline alpha leaves the plain fill, a zero fill alpha leaves the bare',
+    '    // outline silhouette (which is how the layered and shadow passes work).',
+    '    float af = fillCoverage * outColor.a;',
+    '    float ao = outlineCoverage * outOutline.a * fade;',
+    '',
+    '    float a = af + ao * (1.0 - af);',
+    '    vec3 rgb = outColor.rgb * af + outOutline.rgb * (ao * (1.0 - af));',
+    '',
+    '    gl_FragColor = vec4(rgb, a);',  // Already premultiplied.
     '}'
 ].join('\n');
 
@@ -157,12 +134,7 @@ type DrawingContext = any;
 
 interface MSDFBatchHandlerInstance {
     _currentTexture: WebGLTextureWrapper | null;
-    _pxRange: number;
-    _atlasSize: [number, number];
-    _outlineWidth: number;
-    _outlineRounded: number;
-    _shadowSoftness: number;
-    _mode: number;
+    _unitRange: [number, number];
 
     instanceCount: number;
     instancesPerBatch: number;
@@ -173,14 +145,8 @@ interface MSDFBatchHandlerInstance {
     programManager: any;
     manager: any;
 
-    setPxRange(pxRange: number): void;
-    setAtlasSize(width: number, height: number): void;
-    setOutline(width: number, rounded: number): void;
-    hasOutlineChanged(width: number, rounded: number): boolean;
-    setShadowSoftness(softness: number): void;
-    hasShadowSoftnessChanged(softness: number): boolean;
-    setMode(mode: number): void;
-    hasModeChanged(mode: number): boolean;
+    setUnitRange(x: number, y: number): void;
+    hasUnitRangeChanged(x: number, y: number): boolean;
     setupUniforms(drawingContext: DrawingContext): void;
     run(drawingContext: DrawingContext): void;
     batch(
@@ -193,7 +159,8 @@ interface MSDFBatchHandlerInstance {
         u0: number, v0: number,
         u1: number, v1: number,
         colorBL: number, colorTL: number, colorTR: number, colorBR: number,
-        outBL: number, outTL: number, outTR: number, outBR: number
+        outBL: number, outTL: number, outTR: number, outBR: number,
+        parBL: number, parTL: number, parTR: number, parBR: number
     ): void;
 
     onRunBegin(drawingContext: DrawingContext): void;
@@ -213,7 +180,8 @@ const defaultConfig = {
             { name: 'inPosition', size: 2 },
             { name: 'inTexCoord', size: 2 },
             { name: 'inColor', size: 4, type: 'UNSIGNED_BYTE', normalized: true },
-            { name: 'inOutline', size: 4, type: 'UNSIGNED_BYTE', normalized: true }
+            { name: 'inOutline', size: 4, type: 'UNSIGNED_BYTE', normalized: true },
+            { name: 'inParams', size: 4, type: 'UNSIGNED_BYTE', normalized: true }
         ]
     }
 };
@@ -226,50 +194,18 @@ class MSDFBatchHandler extends PhaserBatchHandler {
 
         const self = this as unknown as MSDFBatchHandlerInstance;
         self._currentTexture = null;
-        self._pxRange = 4;
-        self._atlasSize = [512, 512];
-        self._outlineWidth = 0;
-        self._outlineRounded = 0;
-        self._shadowSoftness = 0;
-        self._mode = MSDFMode.PLAIN;
+        self._unitRange = [4 / 512, 4 / 512];
     }
 
-    setPxRange(pxRange: number): void {
-        (this as unknown as MSDFBatchHandlerInstance)._pxRange = pxRange;
-    }
-
-    setAtlasSize(width: number, height: number): void {
+    setUnitRange(x: number, y: number): void {
         const self = this as unknown as MSDFBatchHandlerInstance;
-        self._atlasSize[0] = width;
-        self._atlasSize[1] = height;
+        self._unitRange[0] = x;
+        self._unitRange[1] = y;
     }
 
-    setOutline(width: number, rounded: number): void {
+    hasUnitRangeChanged(x: number, y: number): boolean {
         const self = this as unknown as MSDFBatchHandlerInstance;
-        self._outlineWidth = width;
-        self._outlineRounded = rounded;
-    }
-
-    hasOutlineChanged(width: number, rounded: number): boolean {
-        const self = this as unknown as MSDFBatchHandlerInstance;
-        return self._outlineWidth !== width ||
-            self._outlineRounded !== rounded;
-    }
-
-    setShadowSoftness(softness: number): void {
-        (this as unknown as MSDFBatchHandlerInstance)._shadowSoftness = softness;
-    }
-
-    hasShadowSoftnessChanged(softness: number): boolean {
-        return (this as unknown as MSDFBatchHandlerInstance)._shadowSoftness !== softness;
-    }
-
-    setMode(mode: number): void {
-        (this as unknown as MSDFBatchHandlerInstance)._mode = mode;
-    }
-
-    hasModeChanged(mode: number): boolean {
-        return (this as unknown as MSDFBatchHandlerInstance)._mode !== mode;
+        return self._unitRange[0] !== x || self._unitRange[1] !== y;
     }
 
     _generateElementIndices(instances: number): ArrayBuffer {
@@ -295,12 +231,7 @@ class MSDFBatchHandler extends PhaserBatchHandler {
         const programManager = self.programManager;
 
         programManager.setUniform('uMainSampler', 0);
-        programManager.setUniform('uPxRange', self._pxRange);
-        programManager.setUniform('uAtlasSize', self._atlasSize);
-        programManager.setUniform('uOutlineWidth', self._outlineWidth);
-        programManager.setUniform('uOutlineRounded', self._outlineRounded);
-        programManager.setUniform('uShadowSoftness', self._shadowSoftness);
-        programManager.setUniform('uMode', self._mode);
+        programManager.setUniform('uUnitRange', self._unitRange);
 
         drawingContext.renderer.setProjectionMatrixFromDrawingContext(drawingContext);
         programManager.setUniform('uProjectionMatrix', drawingContext.renderer.projectionMatrix.val);
@@ -350,7 +281,8 @@ class MSDFBatchHandler extends PhaserBatchHandler {
         u0: number, v0: number,
         u1: number, v1: number,
         colorBL: number, colorTL: number, colorTR: number, colorBR: number,
-        outBL: number, outTL: number, outTR: number, outBR: number
+        outBL: number, outTL: number, outTR: number, outBR: number,
+        parBL: number, parTL: number, parTR: number, parBR: number
     ): void {
         const self = this as unknown as MSDFBatchHandlerInstance;
 
@@ -367,7 +299,7 @@ class MSDFBatchHandler extends PhaserBatchHandler {
         const vertexViewF32 = vertexBuffer.viewF32 as Float32Array;
         const vertexViewU32 = vertexBuffer.viewU32 as Uint32Array;
 
-        // Each vertex is 6 u32-slots: x, y, u, v (f32), color (u32), outline (u32).
+        // Each vertex is 7 u32-slots: x, y, u, v (f32), color, outline, params (u32).
         // Vertex order for degenerate triangle strip: BL, TL, BR, TR
         vertexViewF32[vertexOffset32 + 0] = x0;
         vertexViewF32[vertexOffset32 + 1] = y0;
@@ -375,27 +307,31 @@ class MSDFBatchHandler extends PhaserBatchHandler {
         vertexViewF32[vertexOffset32 + 3] = v1;
         vertexViewU32[vertexOffset32 + 4] = colorBL;
         vertexViewU32[vertexOffset32 + 5] = outBL;
+        vertexViewU32[vertexOffset32 + 6] = parBL;
 
-        vertexViewF32[vertexOffset32 + 6] = x1;
-        vertexViewF32[vertexOffset32 + 7] = y1;
-        vertexViewF32[vertexOffset32 + 8] = u0;
-        vertexViewF32[vertexOffset32 + 9] = v0;
-        vertexViewU32[vertexOffset32 + 10] = colorTL;
-        vertexViewU32[vertexOffset32 + 11] = outTL;
+        vertexViewF32[vertexOffset32 + 7] = x1;
+        vertexViewF32[vertexOffset32 + 8] = y1;
+        vertexViewF32[vertexOffset32 + 9] = u0;
+        vertexViewF32[vertexOffset32 + 10] = v0;
+        vertexViewU32[vertexOffset32 + 11] = colorTL;
+        vertexViewU32[vertexOffset32 + 12] = outTL;
+        vertexViewU32[vertexOffset32 + 13] = parTL;
 
-        vertexViewF32[vertexOffset32 + 12] = x3;
-        vertexViewF32[vertexOffset32 + 13] = y3;
-        vertexViewF32[vertexOffset32 + 14] = u1;
-        vertexViewF32[vertexOffset32 + 15] = v1;
-        vertexViewU32[vertexOffset32 + 16] = colorBR;
-        vertexViewU32[vertexOffset32 + 17] = outBR;
+        vertexViewF32[vertexOffset32 + 14] = x3;
+        vertexViewF32[vertexOffset32 + 15] = y3;
+        vertexViewF32[vertexOffset32 + 16] = u1;
+        vertexViewF32[vertexOffset32 + 17] = v1;
+        vertexViewU32[vertexOffset32 + 18] = colorBR;
+        vertexViewU32[vertexOffset32 + 19] = outBR;
+        vertexViewU32[vertexOffset32 + 20] = parBR;
 
-        vertexViewF32[vertexOffset32 + 18] = x2;
-        vertexViewF32[vertexOffset32 + 19] = y2;
-        vertexViewF32[vertexOffset32 + 20] = u1;
-        vertexViewF32[vertexOffset32 + 21] = v0;
-        vertexViewU32[vertexOffset32 + 22] = colorTR;
-        vertexViewU32[vertexOffset32 + 23] = outTR;
+        vertexViewF32[vertexOffset32 + 21] = x2;
+        vertexViewF32[vertexOffset32 + 22] = y2;
+        vertexViewF32[vertexOffset32 + 23] = u1;
+        vertexViewF32[vertexOffset32 + 24] = v0;
+        vertexViewU32[vertexOffset32 + 25] = colorTR;
+        vertexViewU32[vertexOffset32 + 26] = outTR;
+        vertexViewU32[vertexOffset32 + 27] = parTR;
 
         self.instanceCount++;
 

@@ -11,11 +11,31 @@
 import * as Phaser from "phaser";
 import type { Corners } from './MSDFColor';
 import type { GlyphState } from './MSDFGlyphState';
-import type { ColorValue, PerCorner, StyleSpec, RuleStyleSpec, SegmentSpec, TextStyleOpts } from './MSDFTextTypes';
+import type {
+    ColorValue,
+    DecorationSpec,
+    PerCorner,
+    StyleSpec,
+    RuleStyleSpec,
+    SegmentSpec,
+    TextStyleOpts
+} from './MSDFTextTypes';
 
 /** Convert any {@link ColorValue} to a packed `0xRRGGBB` number. */
 export function toColorInt(value: ColorValue): number {
     return (Phaser.Display.Color.ValueToColor as any)(value).color;
+}
+
+/**
+ * An underline / strikethrough, pre-parsed. `color`/`alpha` absent mean "inherit
+ * the resolved fill", which is also what makes the rect split at every colour
+ * change in the span it covers.
+ */
+export interface ResolvedDecoration {
+    color?: Corners;   // packed 0xRRGGBB per corner
+    alpha?: Corners;   // 0-1 per corner
+    thickness: number; // multiplier on the font's underlineThickness
+    offset: number;    // em-relative shift from the default position
 }
 
 /**
@@ -24,23 +44,32 @@ export function toColorInt(value: ColorValue): number {
  * mean "inherit the seeded base" — only present keys are applied to a glyph.
  * Colour is packed `0xRRGGBB` (per corner); alpha is `0-1` (per corner).
  *
- * All fields but `fontScale` are **appearance**: they are stamped onto a
+ * Three lanes. Most fields are **appearance**: they are stamped onto a
  * `GlyphState` by {@link applyStyleToGlyph}. `fontScale` is **structural** — it
- * feeds the layout pass instead and never reaches a glyph state.
+ * feeds the layout pass instead and never reaches a glyph state. The two
+ * decorations are appearance-lane but glyph-independent: they resolve per source
+ * character and merge into rects, so they never reach a glyph state either. A
+ * decoration of `null` is an explicit "off", distinct from an absent key.
  */
 export interface ResolvedStyle {
     fillColor?: Corners;   // packed 0xRRGGBB per corner
     fillAlpha?: Corners;   // 0-1 per corner
+    weight?: Corners;      // distance-field units per corner
     outlineColor?: number;
     outlineAlpha?: number;
+    outlineWidth?: Corners;
+    outlineRounded?: boolean;
     shadowColor?: number;
     shadowAlpha?: number;
+    shadowSoftness?: Corners;
     shadowX?: number;
     shadowY?: number;
     scaleX?: number;
     scaleY?: number;
     rotation?: number;
     skew?: number;
+    underline?: ResolvedDecoration | null;      // decoration lane
+    strikethrough?: ResolvedDecoration | null;  // decoration lane
     fontScale?: number;    // structural — layout input, not glyph state
 }
 
@@ -85,14 +114,33 @@ function resolveColorCorners(value: ColorValue | PerCorner<ColorValue>): Corners
     return { topLeft: c, topRight: c, bottomLeft: c, bottomRight: c };
 }
 
-/** Parse a scalar-or-per-corner alpha into `0-1` corners. */
-function resolveAlphaCorners(value: number | PerCorner<number>): Corners {
+/** Parse a scalar-or-per-corner number into `Corners`. */
+function resolveNumberCorners(value: number | PerCorner<number>): Corners {
     if (isPerCorner(value)) {
         const v = value as PerCorner<number>;
         return { topLeft: v.topLeft, topRight: v.topRight, bottomLeft: v.bottomLeft, bottomRight: v.bottomRight };
     }
     const a = value as number;
     return { topLeft: a, topRight: a, bottomLeft: a, bottomRight: a };
+}
+
+/**
+ * Parse an underline / strikethrough spec. `undefined` means the layer says
+ * nothing (inherit); `false` is an explicit off, which is why it resolves to
+ * `null` rather than folding back into `undefined`.
+ */
+export function resolveDecoration(spec: boolean | DecorationSpec | undefined): ResolvedDecoration | null | undefined {
+    if (spec === undefined) return undefined;
+    if (spec === false) return null;
+    if (spec === true) return { thickness: 1, offset: 0 };
+
+    const r: ResolvedDecoration = {
+        thickness: spec.thickness !== undefined ? spec.thickness : 1,
+        offset: spec.offset !== undefined ? spec.offset : 0
+    };
+    if (spec.color !== undefined) r.color = resolveColorCorners(spec.color);
+    if (spec.alpha !== undefined) r.alpha = resolveNumberCorners(spec.alpha);
+    return r;
 }
 
 /** One-time dev warning for a `fontScale` that isn't a positive number. */
@@ -102,14 +150,18 @@ let warnedFontScale = false;
 export function resolveStyle(spec: RuleStyleSpec): ResolvedStyle {
     const r: ResolvedStyle = {};
     if (spec.color !== undefined) r.fillColor = resolveColorCorners(spec.color);
-    if (spec.alpha !== undefined) r.fillAlpha = resolveAlphaCorners(spec.alpha);
+    if (spec.alpha !== undefined) r.fillAlpha = resolveNumberCorners(spec.alpha);
+    if (spec.weight !== undefined) r.weight = resolveNumberCorners(spec.weight);
     if (spec.outline) {
         if (spec.outline.color !== undefined) r.outlineColor = toColorInt(spec.outline.color);
         if (spec.outline.alpha !== undefined) r.outlineAlpha = spec.outline.alpha;
+        if (spec.outline.width !== undefined) r.outlineWidth = resolveNumberCorners(spec.outline.width);
+        if (spec.outline.rounded !== undefined) r.outlineRounded = !!spec.outline.rounded;
     }
     if (spec.shadow) {
         if (spec.shadow.color !== undefined) r.shadowColor = toColorInt(spec.shadow.color);
         if (spec.shadow.alpha !== undefined) r.shadowAlpha = spec.shadow.alpha;
+        if (spec.shadow.softness !== undefined) r.shadowSoftness = resolveNumberCorners(spec.shadow.softness);
         if (spec.shadow.x !== undefined) r.shadowX = spec.shadow.x;
         if (spec.shadow.y !== undefined) r.shadowY = spec.shadow.y;
     }
@@ -123,6 +175,12 @@ export function resolveStyle(spec: RuleStyleSpec): ResolvedStyle {
     if (sy !== undefined) r.scaleY = sy;
     if (spec.rotation !== undefined) r.rotation = spec.rotation;
     if (spec.skew !== undefined) r.skew = spec.skew;
+
+    const underline = resolveDecoration(spec.underline);
+    if (underline !== undefined) r.underline = underline;
+    const strikethrough = resolveDecoration(spec.strikethrough);
+    if (strikethrough !== undefined) r.strikethrough = strikethrough;
+
     // Structural. A non-positive multiplier would collapse or mirror the run's
     // metrics, so drop it rather than let it corrupt the layout.
     if (spec.fontScale !== undefined) {
@@ -139,23 +197,26 @@ export function resolveStyle(spec: RuleStyleSpec): ResolvedStyle {
     return r;
 }
 
-/** Whether a spec carries at least one override (appearance or structural). */
+/** Whether a spec carries at least one override (appearance, decoration or structural). */
 export function hasStyleKeys(spec: SegmentSpec): boolean {
-    return spec.color !== undefined || spec.alpha !== undefined ||
+    return spec.color !== undefined || spec.alpha !== undefined || spec.weight !== undefined ||
         spec.outline !== undefined || spec.shadow !== undefined ||
         spec.scale !== undefined || spec.scaleX !== undefined || spec.scaleY !== undefined ||
         spec.rotation !== undefined || spec.skew !== undefined ||
+        spec.underline !== undefined || spec.strikethrough !== undefined ||
         spec.fontScale !== undefined;
 }
 
 /**
  * Whether a resolved style stamps anything onto a {@link GlyphState}. A run that
  * carries only the structural `fontScale` changes the layout but seeds nothing,
- * so it must not, on its own, force the per-glyph state array into existence.
+ * and a run that carries only a decoration paints a rect but seeds nothing — so
+ * neither must, on its own, force the per-glyph state array into existence.
  */
 export function styleHasAppearanceKeys(s: ResolvedStyle): boolean {
-    return s.fillColor !== undefined || s.fillAlpha !== undefined ||
+    return s.fillColor !== undefined || s.fillAlpha !== undefined || s.weight !== undefined ||
         s.outlineColor !== undefined || s.outlineAlpha !== undefined ||
+        s.outlineWidth !== undefined || s.outlineRounded !== undefined ||
         s.scaleX !== undefined || s.scaleY !== undefined ||
         s.rotation !== undefined || s.skew !== undefined ||
         styleHasShadowKeys(s);
@@ -168,35 +229,39 @@ export function styleHasAppearanceKeys(s: ResolvedStyle): boolean {
  */
 export function styleHasShadowKeys(s: ResolvedStyle): boolean {
     return s.shadowColor !== undefined || s.shadowAlpha !== undefined ||
-        s.shadowX !== undefined || s.shadowY !== undefined;
+        s.shadowSoftness !== undefined || s.shadowX !== undefined || s.shadowY !== undefined;
+}
+
+/** Whether a resolved style sets an underline or strikethrough (on *or* off). */
+export function styleHasDecorationKeys(s: ResolvedStyle): boolean {
+    return s.underline !== undefined || s.strikethrough !== undefined;
+}
+
+/** Copy a resolved corner set onto a glyph's corner set. */
+function copyCorners(target: Corners, source: Corners): void {
+    target.topLeft = source.topLeft;
+    target.topRight = source.topRight;
+    target.bottomLeft = source.bottomLeft;
+    target.bottomRight = source.bottomRight;
+}
+
+/** Set all four of a glyph's corners to one value. */
+function setCorners(target: Corners, value: number): void {
+    target.topLeft = target.topRight = target.bottomLeft = target.bottomRight = value;
 }
 
 /** Apply a resolved style's present keys onto one glyph state (overwrite). */
 export function applyStyleToGlyph(g: GlyphState, s: ResolvedStyle): void {
-    if (s.fillColor) {
-        const t = g.fill.color, v = s.fillColor;
-        t.topLeft = v.topLeft; t.topRight = v.topRight; t.bottomLeft = v.bottomLeft; t.bottomRight = v.bottomRight;
-    }
-    if (s.fillAlpha) {
-        const a = g.fill.alpha, v = s.fillAlpha;
-        a.topLeft = v.topLeft; a.topRight = v.topRight; a.bottomLeft = v.bottomLeft; a.bottomRight = v.bottomRight;
-    }
-    if (s.outlineColor !== undefined) {
-        const t = g.outline.color;
-        t.topLeft = t.topRight = t.bottomLeft = t.bottomRight = s.outlineColor;
-    }
-    if (s.outlineAlpha !== undefined) {
-        const a = g.outline.alpha;
-        a.topLeft = a.topRight = a.bottomLeft = a.bottomRight = s.outlineAlpha;
-    }
-    if (s.shadowColor !== undefined) {
-        const t = g.shadow.color;
-        t.topLeft = t.topRight = t.bottomLeft = t.bottomRight = s.shadowColor;
-    }
-    if (s.shadowAlpha !== undefined) {
-        const a = g.shadow.alpha;
-        a.topLeft = a.topRight = a.bottomLeft = a.bottomRight = s.shadowAlpha;
-    }
+    if (s.fillColor) copyCorners(g.fill.color, s.fillColor);
+    if (s.fillAlpha) copyCorners(g.fill.alpha, s.fillAlpha);
+    if (s.weight) copyCorners(g.weight, s.weight);
+    if (s.outlineColor !== undefined) setCorners(g.outline.color, s.outlineColor);
+    if (s.outlineAlpha !== undefined) setCorners(g.outline.alpha, s.outlineAlpha);
+    if (s.outlineWidth) copyCorners(g.outline.width, s.outlineWidth);
+    if (s.outlineRounded !== undefined) g.outline.rounded = s.outlineRounded;
+    if (s.shadowColor !== undefined) setCorners(g.shadow.color, s.shadowColor);
+    if (s.shadowAlpha !== undefined) setCorners(g.shadow.alpha, s.shadowAlpha);
+    if (s.shadowSoftness) copyCorners(g.shadow.softness, s.shadowSoftness);
     if (s.shadowX !== undefined) g.shadow.x = s.shadowX;
     if (s.shadowY !== undefined) g.shadow.y = s.shadowY;
     if (s.scaleX !== undefined) g.scaleX = s.scaleX;

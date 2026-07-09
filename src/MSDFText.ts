@@ -25,17 +25,22 @@ import { wrapLines } from './MSDFTextWrap';
 import {
     toColorInt,
     resolveStyle,
+    resolveDecoration,
     matchRuns,
     hasStyleKeys,
     styleHasShadowKeys,
     styleHasAppearanceKeys,
+    styleHasDecorationKeys,
     applyStyleToGlyph,
+    type ResolvedDecoration,
     type ResolvedStyle,
     type StyleRun,
     type StyleRule
 } from './MSDFTextStyle';
+import type { Corners } from './MSDFColor';
 import type {
     ColorValue,
+    DecorationSpec,
     MSDFAlign,
     RectLike,
     FitOptions,
@@ -52,6 +57,7 @@ import type {
 // for consumers (index.ts, the factory/creator, the Phaser augmentations).
 export type {
     ColorValue,
+    DecorationSpec,
     MSDFAlign,
     PerCorner,
     StyleSpec,
@@ -217,6 +223,10 @@ export const MSDFText: MSDFTextStatic = new Class({
         // ── Plain public fields ─────────────────────────────────────────
         this.wordWrapCharCode = 32; // space character
 
+        // Faux bold, in distance-field units. Shifts the glyph's distance
+        // threshold, so it never touches layout — assign/tween directly.
+        this.weight = 0;
+
         // Outline — no layout side effects, so assign/tween directly.
         this.outlineWidth = 0;
         this.outlineColor = 0x000000;
@@ -261,6 +271,17 @@ export const MSDFText: MSDFTextStatic = new Class({
         this._rangeGen = 0;       // bumped on text change to invalidate range handles
         this._deadHandleWarned = false;
         this._structuralRangeWarned = false;
+
+        // ── Decorations (underline / strikethrough) ─────────────────────────
+        // Appearance lane, but glyph-independent: they resolve per *source*
+        // character through the same paint order as styles, then merge into
+        // rects. Never seeded into GlyphState, so `displayCallback` can't see
+        // them. Rebuilt alongside the styled seed (rebuild / `_stylesDirty`),
+        // since they read `_characters`, which layout owns.
+        this._underline = null;      // object-level default: ResolvedDecoration | null
+        this._strikethrough = null;
+        this._decorRects = [];
+        this._hasDecorations = false;
 
         // Structural styling (per-run `fontScale`): a font-size multiplier per
         // source character, or `null` for the uniform-size fast path. Feeds wrap,
@@ -376,7 +397,10 @@ export const MSDFText: MSDFTextStatic = new Class({
      * - `_hasStyles` — any layer non-empty. Gates the lifecycle bookkeeping in
      *   `onTextChanged` (rule re-matching, range dropping).
      * - `_hasAppearance` — any run seeds a `GlyphState`. Gates the per-glyph
-     *   array and `applyStyleRuns`; a `fontScale`-only run doesn't need either.
+     *   array and `applyStyleRuns`; a `fontScale`-only or decoration-only run
+     *   doesn't need either.
+     * - `_hasDecorations` — the object or any run sets an underline/strikethrough.
+     *   Gates `rebuildDecorations`, which is glyph-array-independent.
      * - `_sizeScales` — the structural size map. Because it is a *layout* input,
      *   a change here sets `_dirty` (a rebuild), not `_stylesDirty` (a re-seed).
      *   That is the documented cost of a structural rule.
@@ -393,6 +417,12 @@ export const MSDFText: MSDFTextStatic = new Class({
         for (let i = 0; i < rules.length && !appearance; i++) appearance = styleHasAppearanceKeys(rules[i].style);
         for (let i = 0; i < ranges.length && !appearance; i++) appearance = styleHasAppearanceKeys(ranges[i].style);
         this._hasAppearance = appearance;
+
+        let decorated = this._underline !== null || this._strikethrough !== null;
+        for (let i = 0; i < segs.length && !decorated; i++) decorated = styleHasDecorationKeys(segs[i].style);
+        for (let i = 0; i < rules.length && !decorated; i++) decorated = styleHasDecorationKeys(rules[i].style);
+        for (let i = 0; i < ranges.length && !decorated; i++) decorated = styleHasDecorationKeys(ranges[i].style);
+        this._hasDecorations = decorated;
 
         // `_stylesHaveShadow` is recomputed in `applyStyleRuns` (which only runs
         // while styled); clear it here so it can't linger true after all styles go.
@@ -623,6 +653,19 @@ export const MSDFText: MSDFTextStatic = new Class({
         // But with rich-text styles the per-glyph array is snapshotted (seeded
         // once, like manual mode), so flag a coalesced re-seed to propagate the
         // new base colour under the styled runs.
+        if (this._hasAppearance) {
+            this._stylesDirty = true;
+        }
+        return this;
+    },
+
+    /**
+     * Set the faux-bold weight in distance-field units (chainable). See
+     * {@link MSDFTextInstance.weight} — it never reflows, so the underlying
+     * field can also be assigned or tweened directly.
+     */
+    setWeight: function (weight: number) {
+        this.weight = weight;
         if (this._hasAppearance) {
             this._stylesDirty = true;
         }
@@ -904,12 +947,14 @@ export const MSDFText: MSDFTextStatic = new Class({
      * Lazily apply a pending style change (set `_stylesDirty` by a handle, a
      * segment update or `clearStyles`). Coalesced to one re-seed per tick by the
      * flag. In callback mode the array is re-seeded every frame anyway, so this
-     * only clears the flag; in manual/static+styles it re-seeds the persistent
-     * array (and, in manual mode, emits `'glyphsreset'` so edits can re-apply).
-     * A structural change never lands here — it sets `_dirty` and rebuilds.
+     * only rebuilds the decorations; in manual/static+styles it also re-seeds the
+     * persistent array (and, in manual mode, emits `'glyphsreset'` so edits can
+     * re-apply). A structural change never lands here — it sets `_dirty` and
+     * rebuilds.
      */
     applyStylesDirty: function (): void {
         this._stylesDirty = false;
+        this.rebuildDecorations();
         if (this._glyphMode === GLYPH_MODE_CALLBACK) {
             return;
         }
@@ -939,6 +984,9 @@ export const MSDFText: MSDFTextStatic = new Class({
         g.rotation = 0;
         g.skew = 0;
 
+        const w = g.weight, ow = this.weight;
+        w.topLeft = w.topRight = w.bottomLeft = w.bottomRight = ow;
+
         const c = this._color;
         const cA = c.a;
         const aTL = cA * this._alphaTL, aTR = cA * this._alphaTR;
@@ -962,12 +1010,19 @@ export const MSDFText: MSDFTextStatic = new Class({
         sa.bottomLeft = sAlpha * this._alphaBL; sa.bottomRight = sAlpha * this._alphaBR;
         g.shadow.x = this.shadowX;
         g.shadow.y = this.shadowY;
+        const ss = g.shadow.softness, sSoft = this.shadowSoftness;
+        ss.topLeft = ss.topRight = ss.bottomLeft = ss.bottomRight = sSoft;
 
         const ot = g.outline.color, oa = g.outline.alpha;
         const oc = this.outlineColor, oAlpha = this.outlineAlpha;
         ot.topLeft = ot.topRight = ot.bottomLeft = ot.bottomRight = oc;
         oa.topLeft = oAlpha * this._alphaTL; oa.topRight = oAlpha * this._alphaTR;
         oa.bottomLeft = oAlpha * this._alphaBL; oa.bottomRight = oAlpha * this._alphaBR;
+        // A width of 0 is what "no outline" means to the shader, so seeding the
+        // object's width is all the gating the renderer needs.
+        const owd = g.outline.width, oWidth = this.outlineWidth;
+        owd.topLeft = owd.topRight = owd.bottomLeft = owd.bottomRight = oWidth;
+        g.outline.rounded = this.outlineRounded;
     },
 
     /**
@@ -1070,6 +1125,156 @@ export const MSDFText: MSDFTextStatic = new Class({
      */
     hasShadow: function (): boolean {
         return this.shadowX !== 0 || this.shadowY !== 0 || this.shadowSoftness > 0;
+    },
+
+    // ========================================================================
+    // Decorations (underline / strikethrough)
+    // ========================================================================
+
+    /**
+     * Underline the whole text (chainable). See
+     * {@link MSDFTextInstance.setUnderline}.
+     */
+    setUnderline: function (enable: boolean | DecorationSpec) {
+        this._underline = resolveDecoration(enable) ?? null;
+        this.refreshStyleState();
+        this._stylesDirty = true;
+        return this;
+    },
+
+    /**
+     * Strike the whole text through (chainable). See
+     * {@link MSDFTextInstance.setStrikethrough}.
+     */
+    setStrikethrough: function (enable: boolean | DecorationSpec) {
+        this._strikethrough = resolveDecoration(enable) ?? null;
+        this.refreshStyleState();
+        this._stylesDirty = true;
+        return this;
+    },
+
+    /**
+     * Resolve every source character's decoration (and the colour it would
+     * inherit) through the normal paint order — object level, then segments,
+     * rules, ranges — then merge consecutive decorated characters into rects.
+     *
+     * Reads `_characters`, so it must run *after* layout; it is called from the
+     * same coalesced pass that seeds styles, and needs no dirty flag of its own.
+     * Rects deliberately live outside `_characters`: the glyph-state array,
+     * `editGlyphs()` and every per-glyph loop assume one quad per renderable
+     * character and must never see a rect.
+     */
+    rebuildDecorations: function (): void {
+        const rects = this._decorRects;
+        rects.length = 0;
+        if (!this._hasDecorations || this._characters.length === 0) return;
+
+        const n = this._text.length;
+        const under: (ResolvedDecoration | null)[] = new Array(n).fill(this._underline);
+        const strike: (ResolvedDecoration | null)[] = new Array(n).fill(this._strikethrough);
+        // Which resolved style (if any) supplied each character's fill colour /
+        // alpha. Reference identity is a sound proxy for "same colour run": two
+        // characters sharing a source object certainly share a colour. Two that
+        // don't may still match, which only costs an extra rect.
+        const colorSrc: (Corners | undefined)[] = new Array(n);
+        const alphaSrc: (Corners | undefined)[] = new Array(n);
+
+        const paint = (start: number, length: number, style: ResolvedStyle): void => {
+            const end = Math.min(start + length, n);
+            for (let i = Math.max(0, start); i < end; i++) {
+                if (style.underline !== undefined) under[i] = style.underline;
+                if (style.strikethrough !== undefined) strike[i] = style.strikethrough;
+                if (style.fillColor !== undefined) colorSrc[i] = style.fillColor;
+                if (style.fillAlpha !== undefined) alphaSrc[i] = style.fillAlpha;
+            }
+        };
+
+        const segs: StyleRun[] = this._segmentRuns;
+        for (let i = 0; i < segs.length; i++) paint(segs[i].start, segs[i].length, segs[i].style);
+        const rules: StyleRule[] = this._styleRules;
+        for (let k = 0; k < rules.length; k++) {
+            const rule = rules[k];
+            for (let r = 0; r < rule.runs.length; r++) paint(rule.runs[r].start, rule.runs[r].length, rule.style);
+        }
+        const ranges: StyleRun[] = this._rangeRuns;
+        for (let r = 0; r < ranges.length; r++) paint(ranges[r].start, ranges[r].length, ranges[r].style);
+
+        this.buildDecorRects(under, colorSrc, alphaSrc, false);
+        this.buildDecorRects(strike, colorSrc, alphaSrc, true);
+    },
+
+    /**
+     * Merge the decorated characters of one lane into rects, splitting at:
+     * visual line boundaries; `fontScale` boundaries (thickness and position are
+     * size-relative, so each segment uses its own size, like a browser across
+     * font-size spans); and — only when the colour is inherited — resolved fill
+     * colour/alpha changes, so each coloured word's rule matches it.
+     *
+     * The X extent is the union of the segment's glyph quads. Spaces have no
+     * entry in `_characters`, so the union bridges interior gaps but leading and
+     * trailing spaces never extend a rect.
+     */
+    buildDecorRects: function (
+        specs: (ResolvedDecoration | null)[],
+        colorSrc: (Corners | undefined)[],
+        alphaSrc: (Corners | undefined)[],
+        over: boolean
+    ): void {
+        const chars = this._characters;
+        const scales: Float32Array | null = this._sizeScales;
+        const data = this.fontData.data;
+        const rects = this._decorRects;
+        const thicknessEm = data.underlineThickness > 0 ? data.underlineThickness : 0.05;
+
+        let i = 0;
+        while (i < chars.length) {
+            const first = chars[i];
+            const spec = specs[first.srcIndex];
+            if (!spec) { i++; continue; }
+
+            const line = first.line;
+            const scale = scales ? scales[first.srcIndex] : 1;
+            const cs = colorSrc[first.srcIndex];
+            const as = alphaSrc[first.srcIndex];
+            let x0 = first.x;
+            let x1 = first.x + first.w;
+
+            let j = i + 1;
+            for (; j < chars.length; j++) {
+                const c = chars[j];
+                const si = c.srcIndex;
+                if (specs[si] !== spec || c.line !== line) break;
+                if ((scales ? scales[si] : 1) !== scale) break;
+                if (spec.color === undefined && colorSrc[si] !== cs) break;
+                if (spec.alpha === undefined && alphaSrc[si] !== as) break;
+                if (c.x < x0) x0 = c.x;
+                if (c.x + c.w > x1) x1 = c.x + c.w;
+            }
+
+            const size = this._fontSize * scale;
+            const h = thicknessEm * size * spec.thickness;
+            // msdf-atlas-gen emits no strike metric (and no x-height), so the
+            // strike sits at a fixed -0.25 em; `offset` is the tuning knob.
+            const centre = over
+                ? (-0.25 + spec.offset) * size
+                : (data.underlineY + spec.offset) * size;
+
+            if (h > 0 && x1 > x0) {
+                rects.push({
+                    x: x0,
+                    y: first.baselineY + centre - h / 2,
+                    w: x1 - x0,
+                    h: h,
+                    over: over,
+                    // `undefined` means "inherit the object's live colour/alpha",
+                    // which the renderer resolves per frame — so tweening the
+                    // text's colour drags an inherited underline along with it.
+                    rgb: spec.color !== undefined ? spec.color : cs,
+                    alpha: spec.alpha !== undefined ? spec.alpha : as
+                });
+            }
+            i = j;
+        }
     },
 
     // ========================================================================
@@ -1507,10 +1712,12 @@ export const MSDFText: MSDFTextStatic = new Class({
      * re-apply the edits the rebuild discarded) and whenever rich-text styles
      * are present (so a no-callback styled text has its styled array ready).
      * Callback mode re-seeds every frame instead, so it is skipped here. Clears
-     * `_stylesDirty` since the array is now freshly seeded + styled.
+     * `_stylesDirty` since the array is now freshly seeded + styled. Decoration
+     * rects are rebuilt in every mode — they read the fresh `_characters`.
      */
     refreshGlyphs: function (): void {
         this._stylesDirty = false;
+        this.rebuildDecorations();
         if (this._glyphMode === GLYPH_MODE_CALLBACK) {
             return;
         }

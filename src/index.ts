@@ -53,13 +53,15 @@ export type {
     RuleStyleSpec,
     SegmentSpec,
     Segment,
+    DecorationSpec,
     TextStyleOpts,
     StyleHandle
 } from './MSDFText';
 export type {
     GlyphState,
     GlyphAspect,
-    GlyphShadow
+    GlyphShadow,
+    GlyphOutline
 } from './MSDFGlyphState';
 export type { Corners } from './MSDFColor';
 export type { MSDFFontFileConfig } from './MSDFFontFile';

@@ -1,6 +1,9 @@
 # The `params` vertex attribute — per-glyph effects, one draw call
 
-**Status:** designed, not implemented. **Dependencies:** none. Everything here
+**Status:** implemented (steps A–C). See `design/README.md` for the two
+implementation notes that this doc did not anticipate — the outline-alpha gate at
+zero width, and submit-time resolution of inherited decoration colours.
+**Dependencies:** none. Everything here
 lives in the appearance lane and in code we already own (shader, batch handler,
 renderer, glyph state, style resolver). It does **not** touch layout,
 measurement, wrap, or the font parser.

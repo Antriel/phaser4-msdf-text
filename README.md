@@ -267,10 +267,10 @@ text at any size. Any value above `0` produces a soft shadow and requires an
 warning. The maximum usable blur is the atlas `distanceRange` — for softer
 shadows than that, regenerate with a larger `-pxrange`.
 
-Shadow colour, alpha and offset are per-glyph state, so a `displayCallback` or
-`editGlyphs` can give individual glyphs their own drop shadow. The shadow pass is
-normally skipped when the object has no shadow, so set **`perGlyphShadow = true`**
-to run it for those glyphs:
+Shadow colour, alpha, offset and softness are per-glyph state, so a
+`displayCallback` or `editGlyphs` can give individual glyphs their own drop
+shadow — soft ones included. The shadow pass is normally skipped when the object
+has no shadow, so set **`perGlyphShadow = true`** to run it for those glyphs:
 
 ```ts
 text.perGlyphShadow = true;
@@ -281,8 +281,59 @@ text.setDisplayCallback((glyphs) => {
 
 Rich-text runs that set a shadow (`setRichText` / `setTextStyle` /
 `addStyleRange`) turn the pass on automatically, so `perGlyphShadow` is only
-needed for callback- or manual-driven shadows. Per-glyph shadows are always
-hard-edged (`softness` is object-level).
+needed for callback- or manual-driven shadows.
+
+### Faux bold — `weight`
+
+```ts
+text.weight = 2.5;          // distance-field units; negative thins the glyph
+text.setWeight(2.5);        // chainable wrapper
+```
+
+`weight` shifts each glyph's distance threshold, so it fattens (or thins) the
+letterform. It is measured in **distance-field units**, like `outlineWidth`, and
+saturates at half the atlas `distanceRange`. The outline and shadow edges move
+with it, so an outlined glyph stays outlined as it thickens.
+
+It widens glyphs **without changing their advance**, so at a high weight letters
+can touch. That is the tradeoff against a real bold face; for body text at large
+weights, prefer loading the bold atlas.
+
+Weight is per-glyph and per-corner (`g.weight.topLeft`, …), so a faux-bold
+gradient down a glyph is free.
+
+### Underline & strikethrough
+
+```ts
+text.setUnderline(true);                             // inherit the fill colour
+text.setStrikethrough({ color: 0xff5252, offset: 0.02 });
+text.setUnderline(false);                            // off
+```
+
+Both accept `true`/`false` or a `DecorationSpec`: `{ color?, alpha?, thickness?,
+offset? }`. `thickness` multiplies the font's own `underlineThickness`; `offset`
+shifts the rule by an em-relative amount (positive is down). Left alone, colour
+and alpha **inherit the resolved fill**, so each coloured word gets a matching
+rule; naming a colour paints the whole span one colour instead.
+
+They are also `StyleSpec` keys, so segments, rules and ranges can set them per
+run — including `underline: false` to punch a hole in an object-level underline.
+The rects use a `solid` flag in the vertex `params`, so they **batch with the
+glyphs**: a decorated text is still one draw call.
+
+A few things worth knowing:
+
+- Decorations follow the **layout**, not the glyphs. Per-glyph `scale`,
+  `rotation` and `skew` move a glyph; the rule under it stays put.
+- `displayCallback` cannot see or animate them — they resolve from the style
+  layers only, and never reach `GlyphState`.
+- A rule splits at line breaks, at `fontScale` boundaries (thickness and
+  position are size-relative) and — when the colour is inherited — at every
+  colour change. Its X extent is the union of the span's glyph quads, so
+  interior spaces are bridged but leading/trailing ones are not.
+- Strikethrough sits at `-0.25 em` above the baseline, because msdf-atlas-gen
+  emits no strike metric. Use `offset` where that lands wrong for your face.
+- Decorations cast no shadow and take no outline.
 
 ### Rich text — per-run styling
 
@@ -335,19 +386,19 @@ hit.remove();
 `clearStyles()` removes all rules **and** ranges (segments are content, kept).
 
 A `StyleSpec` accepts: `color`/`alpha` (a scalar, or a per-corner object for a
-gradient), `outline` (`{ color?, alpha? }`), `shadow` (`{ color?, alpha?, x?,
-y? }`), `scale`/`scaleX`/`scaleY`, `rotation` and `skew`. Only the keys you set
-override the glyph's seeded base. Outline **width**/**rounded** and shadow
-**softness** stay object-level (per-batch), so per-run `outline`/`shadow` tune
-only colour, alpha and offset:
+gradient), `weight`, `outline` (`{ color?, alpha?, width?, rounded? }`), `shadow`
+(`{ color?, alpha?, x?, y?, softness? }`), `scale`/`scaleX`/`scaleY`, `rotation`,
+`skew`, `underline` and `strikethrough`. Only the keys you set override the
+glyph's seeded base. `weight`, `outline.width` and `shadow.softness` are
+continuous, so they also take a per-corner object.
 
 - A per-run **shadow renders on its own** — setting `shadow` on any run turns
-  the shadow pass on, so the object needs no shadow of its own. (Per-run shadows
-  are always hard-edged, since `softness` is object-level.)
-- A per-run **outline** still needs the object to have an `outlineWidth > 0`:
-  outline width is a per-batch uniform, so there is no per-glyph outline geometry
-  without it. Give the object a base outline and per-run `outline` colour/alpha
-  then vary per word. (Per-run width/rounded are Phase 2.)
+  the shadow pass on, so the object needs no shadow of its own.
+- A per-run **outline** likewise stands alone: `outline: { width: 2 }` outlines
+  just that run, and `width: 0` removes the outline from a run of an otherwise
+  outlined text. Differing widths batch together.
+- `rounded` and `softness` need an **MTSDF** atlas; on a plain MSDF font they are
+  clamped away silently (per-run styles skip the object-level warning).
 
 Styles paint in order of increasing dynamism — **segments → rules → ranges →
 `displayCallback`** — applied key-by-key, so a later layer that sets only
@@ -432,12 +483,14 @@ Each glyph exposes:
   axes; `setScale(x, y)` sets them independently (squash/stretch). `skew` is a
   baseline shear (`dx/dy`) — a faux italic; positive leans the top right, and
   the pivot is the glyph's *layout* baseline so a whole line slants as one.
+- **`weight`** — per-corner faux bold, in distance-field units.
 - **`fill`** — the glyph face: `{ color: Corners, alpha: Corners }`.
-- **`shadow`** — `{ color, alpha, x, y }`, controlled independently of the fill.
-  Drawn if the text has a drop shadow, or you set `perGlyphShadow = true` (see
-  the Shadow section).
-- **`outline`** — `{ color, alpha }` (only drawn if the text has an outline —
-  outline width is object-level).
+- **`shadow`** — `{ color, alpha, x, y, softness: Corners }`, controlled
+  independently of the fill. Drawn if the text has a drop shadow, or you set
+  `perGlyphShadow = true` (see the Shadow section).
+- **`outline`** — `{ color, alpha, width: Corners, rounded }`. A `width` of `0`
+  is what "no outline" means, so a glyph can be outlined even when the object is
+  not. `rounded` is per-glyph, not per-corner.
 - read-only **`index`**, **`charCode`**, and **provenance** — `srcIndex`,
   `line`, `srcLine` (see below).
 
@@ -483,6 +536,8 @@ g.setFillColor(0xff0000);                  // recolour the face, alpha untouched
 g.setFillAlpha(0.5);                       // fade the face, colour untouched
 g.setShadowColor(0x000033); g.setShadowAlpha(0.4);
 g.setOutlineColor(0xffd200); g.setOutlineAlpha(1);
+g.setWeight(2);                            // faux bold, distance-field units
+g.setOutlineWidth(1.5); g.setShadowSoftness(4);
 ```
 
 Reach into the `Corners` objects directly for a gradient:
@@ -492,8 +547,11 @@ g.fill.color.topLeft = g.fill.color.topRight = 0xff5da8;
 g.fill.color.bottomLeft = g.fill.color.bottomRight = 0x5db8ff;
 ```
 
-Outline **width** and shadow **softness** stay per-object (set via `setOutline`
-/ `setShadow`); outline and shadow **colour, alpha and offset** are per-glyph.
+`weight`, `outline.width` and `shadow.softness` are per-corner too, so a
+faux-bold gradient, a directional outline or a soft-on-one-side shadow all cost
+nothing extra. The interpolation is linear across the quad's bounding box, not
+along the letter contour — a directional ramp, not a contour-following pulse.
+`outline.rounded` is a packed bit, so it is per-glyph only.
 
 #### Persistent per-glyph state (manual mode)
 

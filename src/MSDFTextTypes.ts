@@ -32,24 +32,68 @@ export interface PerCorner<T> {
 }
 
 /**
+ * An underline or strikethrough. Passing `true` instead of this object inherits
+ * everything; passing `false` switches the decoration off for the run.
+ *
+ * Decorations follow the **layout**, not the glyphs: per-glyph `scale`,
+ * `rotation` and `skew` move a glyph without moving the rule under it. They also
+ * cast no shadow and take no outline, and `displayCallback` cannot see or
+ * animate them — they are resolved from the style layers only.
+ */
+export interface DecorationSpec {
+    /** Rule colour. Default: inherit the run's resolved fill colour. */
+    color?: ColorValue | PerCorner<ColorValue>;
+    /** Rule alpha (0-1). Default: inherit the run's resolved fill alpha. */
+    alpha?: number | PerCorner<number>;
+    /** Multiplier on the font's `underlineThickness`. Default `1`. */
+    thickness?: number;
+    /** Em-relative shift from the default position; positive moves down. Default `0`. */
+    offset?: number;
+}
+
+/**
  * A per-run appearance override for the rich-text API. Every field is optional;
  * only the keys present override the glyph's seeded base (which inherits the
- * text object's colour/alpha/outline/shadow). `color`/`alpha` accept a scalar
- * (all four corners the same) or a {@link PerCorner} (a gradient across the
- * glyph quad). This is an *appearance* spec: it seeds `GlyphState`, never
- * changes layout, composes with `displayCallback`, and is animatable. Structural
- * keys (per-run size) live on {@link RuleStyleSpec}, which segments and rules
- * use; a per-run `font` is still unimplemented.
+ * text object's colour/alpha/weight/outline/shadow). Colours, alphas and the
+ * continuous effect channels (`weight`, `outline.width`, `shadow.softness`)
+ * accept a scalar (all four corners the same) or a {@link PerCorner} (a gradient
+ * across the glyph quad).
+ *
+ * This is an *appearance* spec: it never changes layout, composes with
+ * `displayCallback`, and is animatable. Structural keys (per-run size) live on
+ * {@link RuleStyleSpec}, which segments and rules use; a per-run `font` is still
+ * unimplemented. Everything here seeds `GlyphState` except `underline` /
+ * `strikethrough`, which resolve per source character into merged rects.
  */
 export interface StyleSpec {
     /** Fill colour — a scalar or a per-corner gradient. */
     color?: ColorValue | PerCorner<ColorValue>;
     /** Fill alpha (0-1) — a scalar or a per-corner gradient. */
     alpha?: number | PerCorner<number>;
-    /** Outline colour/alpha override (outline width/rounded stay object-level). */
-    outline?: { color?: ColorValue; alpha?: number };
-    /** Shadow colour/alpha/offset override (softness stays object-level). */
-    shadow?: { color?: ColorValue; alpha?: number; x?: number; y?: number };
+    /**
+     * Faux bold in distance-field units — positive fattens, negative thins.
+     * Widens the glyph **without changing its advance**, so letters can touch at
+     * high weight. Bounded by half the atlas `distanceRange`, like outline width.
+     */
+    weight?: number | PerCorner<number>;
+    /** Outline override. `width` of `0` disables this run's outline. */
+    outline?: {
+        color?: ColorValue;
+        alpha?: number;
+        /** Outline width in distance-field units — a scalar or a per-corner ramp. */
+        width?: number | PerCorner<number>;
+        /** Round the outer corners using the true SDF (MTSDF atlas only). */
+        rounded?: boolean;
+    };
+    /** Shadow override. */
+    shadow?: {
+        color?: ColorValue;
+        alpha?: number;
+        x?: number;
+        y?: number;
+        /** Shadow blur in distance-field units — a scalar or a per-corner ramp (MTSDF atlas only). */
+        softness?: number | PerCorner<number>;
+    };
     /** Uniform glyph scale about the centre. */
     scale?: number;
     /** Horizontal glyph scale (overrides `scale` on the X axis). */
@@ -60,6 +104,10 @@ export interface StyleSpec {
     rotation?: number;
     /** Baseline shear (`dx/dy`) — faux italic. Positive leans right. */
     skew?: number;
+    /** Underline this run. `true` inherits everything; see {@link DecorationSpec}. */
+    underline?: boolean | DecorationSpec;
+    /** Strike this run through. `true` inherits everything; see {@link DecorationSpec}. */
+    strikethrough?: boolean | DecorationSpec;
 }
 
 /**
@@ -201,6 +249,18 @@ export interface MSDFTextInstance extends
     /** Character code that word wrapping breaks on. Defaults to 32 (space). */
     wordWrapCharCode: number;
 
+    /**
+     * Faux bold in distance-field units — it shifts every glyph's distance
+     * threshold, so positive fattens and negative thins. The outline and shadow
+     * edges move with it.
+     *
+     * This widens glyphs **without changing their advance**, so at a high weight
+     * letters can touch; the shift saturates at half the atlas `distanceRange`,
+     * exactly like `outlineWidth`. A plain field (no layout side effects), so it
+     * can be assigned or tweened directly. Default `0`.
+     */
+    weight: number;
+
     // Outline — plain fields (no layout side effects), so they can be assigned
     // or tweened directly. `setOutline` is a chainable convenience wrapper.
     /** Outline width in distance-field units. `0` disables the outline. */
@@ -246,8 +306,7 @@ export interface MSDFTextInstance extends
      * on individual {@link GlyphState}s; set this `true` so those shadows draw.
      * Rich-text styles that set a shadow (via `setRichText`/`setTextStyle`/
      * `addStyleRange`) enable the pass automatically, so this flag is only needed
-     * for callback/manual-driven shadows. Note that per-glyph shadows are always
-     * hard-edged — `shadowSoftness` is an object-level uniform. Default `false`.
+     * for callback/manual-driven shadows. Default `false`.
      */
     perGlyphShadow: boolean;
 
@@ -290,6 +349,8 @@ export interface MSDFTextInstance extends
     setText(text: string | string[]): this;
     setFont(font: string, size?: number, align?: MSDFAlign): this;
     setFontSize(size: number): this;
+    /** Set the faux-bold {@link weight} in distance-field units (chainable). */
+    setWeight(weight: number): this;
     setColor(color: ColorValue, alpha?: number): this;
     setLeftAlign(): this;
     setCenterAlign(): this;
@@ -377,6 +438,25 @@ export interface MSDFTextInstance extends
     setShadow(x?: number, y?: number, color?: ColorValue, alpha?: number, softness?: number): this;
     clearShadow(): this;
     hasShadow(): boolean;
+    /**
+     * Underline the whole text (chainable). `true` inherits the fill colour and
+     * the font's own underline metrics; pass a {@link DecorationSpec} to override
+     * colour, alpha, thickness or position; `false` removes it.
+     *
+     * Style layers override this per run, so `setUnderline(true)` followed by a
+     * rule carrying `underline: false` leaves that keyword un-underlined. The
+     * rects batch with the glyphs — a decorated text is still one draw call.
+     */
+    setUnderline(enable: boolean | DecorationSpec): this;
+    /**
+     * Strike the whole text through (chainable). Same contract as
+     * {@link setUnderline}, drawn *over* the glyphs rather than under them.
+     *
+     * msdf-atlas-gen emits no strike metric, so the default sits at `-0.25 em`
+     * above the baseline (about mid-x-height for typical fonts) with the
+     * underline's thickness. Use `offset` where that lands wrong.
+     */
+    setStrikethrough(enable: boolean | DecorationSpec): this;
     getTextBounds(): {
         width: number;
         height: number;
