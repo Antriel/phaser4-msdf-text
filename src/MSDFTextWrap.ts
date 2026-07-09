@@ -5,7 +5,8 @@
  * `wordWrapCharCode`, `letterSpacing` and `fontData`.
  */
 
-import type { MSDFFont, SizeScales } from './MSDFFont';
+import type { MSDFFont } from './MSDFFont';
+import { fontAt, scaleAt, type LayoutRuns } from './MSDFMeasure';
 
 /**
  * Word wrap text to fit within `maxWidth`, returning both the wrapped string
@@ -26,9 +27,9 @@ import type { MSDFFont, SizeScales } from './MSDFFont';
  * @param fontSize         Font size the wrap is measured at.
  * @param wordWrapCharCode Character code word wrapping breaks on (usually space).
  * @param letterSpacing    Extra per-character spacing, in px (affects measurement).
- * @param fontData         Font used to measure candidate lines.
- * @param scales           Optional per-character size multipliers, indexed by
- *   position in `text` (rich-text `fontScale` runs). `null` = uniform size.
+ * @param runs             Per-character font and size, indexed by position in
+ *   `text` (rich-text `font` / `fontScale` runs). Both maps `null` = one font at
+ *   one size, the fast path.
  */
 export function wrapLines(
     text: string,
@@ -36,8 +37,7 @@ export function wrapLines(
     fontSize: number,
     wordWrapCharCode: number,
     letterSpacing: number,
-    fontData: MSDFFont,
-    scales: SizeScales = null
+    runs: LayoutRuns
 ): { text: string; srcIndex: number[] } {
     const n = text ? text.length : 0;
     const outSrc: number[] = [];
@@ -55,29 +55,33 @@ export function wrapLines(
 
     // The committed part of the current output line and the pending word, held
     // as parallel (charCode, srcIndex) runs. The source index is what lets a
-    // measurement look up the character's `fontScale`.
+    // measurement look up the character's `font` and `fontScale`.
     let lineChars: number[] = [], lineSrc: number[] = [];
     let wordChars: number[] = [], wordSrc: number[] = [];
 
     /**
      * Width of `line + word`, optionally plus one more character (the wrap char
      * being tested). Walks the parallel arrays rather than a concatenated string
-     * so each character can be measured at its own size. Kerning is skipped
-     * across a size change, matching `MSDFFont.measureSpan` and the layout pass.
+     * so each character can be measured in its own font at its own size. A
+     * character missing from its run's font is skipped, and kerning is skipped
+     * across a font or size change — matching `MSDFMeasure.measureSpan` and the
+     * layout pass, which this must agree with exactly.
      */
     const measure = (extraCode: number, extraSrc: number): number => {
         let width = 0, prevCode = 0, prevScale = 1, count = 0;
+        let prevFont: MSDFFont | null = null;
 
         const add = (code: number, src: number): void => {
-            const char = fontData.getChar(code);
+            const font = fontAt(runs, src);
+            const char = font.getChar(code);
             if (!char) { prevCode = 0; return; }
-            const scale = scales ? scales[src] : 1;
+            const scale = scaleAt(runs, src);
             const size = fontSize * scale;
-            if (prevCode !== 0 && scale === prevScale) {
-                width += fontData.getKerning(prevCode, code) * size;
+            if (prevCode !== 0 && scale === prevScale && font === prevFont) {
+                width += font.getKerning(prevCode, code) * size;
             }
             width += char.xAdvance * size;
-            prevCode = code; prevScale = scale; count++;
+            prevCode = code; prevScale = scale; prevFont = font; count++;
         };
 
         for (let k = 0; k < lineChars.length; k++) add(lineChars[k], lineSrc[k]);

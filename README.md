@@ -106,6 +106,7 @@ Live, interactive demos — each link opens that example directly:
 | [Fit Inside](https://antriel.github.io/phaser4-msdf-text/#fitinside) | Reflowing text to fit a box via `fitInside` |
 | [Glyph Provenance](https://antriel.github.io/phaser4-msdf-text/#provenance) | `srcIndex` / `line` / `srcLine` — mapping glyphs back to the source |
 | [Rich Text](https://antriel.github.io/phaser4-msdf-text/#richtext) | Per-run colour, gradient, shadow, skew; keyword rules and ranges |
+| [Per-Run Font](https://antriel.github.io/phaser4-msdf-text/#perrunfont) | Mixed typefaces in one object; shared baselines, per-font metrics |
 | [Performance](https://antriel.github.io/phaser4-msdf-text/#performance) | Draw-call count under a heavy text load |
 | [Game UI Showcase](https://antriel.github.io/phaser4-msdf-text/#gameui) | A mock game HUD — score counter, combo meter, damage numbers |
 | [RPG Loot Cards](https://antriel.github.io/phaser4-msdf-text/#loot) | Procedural item cards — mixed fonts, rarity-keyed outline & glow, crisp through every tilt |
@@ -327,10 +328,11 @@ A few things worth knowing:
   `rotation` and `skew` move a glyph; the rule under it stays put.
 - `displayCallback` cannot see or animate them — they resolve from the style
   layers only, and never reach `GlyphState`.
-- A rule splits at line breaks, at `fontScale` boundaries (thickness and
-  position are size-relative) and — when the colour is inherited — at every
-  colour change. Its X extent is the union of the span's glyph quads, so
-  interior spaces are bridged but leading/trailing ones are not.
+- A rule splits at line breaks, at `fontScale` and `font` boundaries (thickness
+  and position are size- and font-relative, so each segment uses its own metrics)
+  and — when the colour is inherited — at every colour change. Its X extent is the
+  union of the span's glyph quads, so interior spaces are bridged but
+  leading/trailing ones are not.
 - Strikethrough sits at `-0.25 em` above the baseline, because msdf-atlas-gen
   emits no strike metric. Use `offset` where that lands wrong for your face.
 - Decorations cast no shadow and take no outline.
@@ -416,8 +418,8 @@ next render (in manual mode a styles re-seed emits `'glyphsreset'`, once/tick).
 #### Per-run size — `fontScale`
 
 Everything above is **appearance**: it seeds per-glyph state and never touches
-layout. `fontScale` is the one **structural** key — it changes advance, wrap and
-line height, so it reflows the text instead of re-seeding it.
+layout. `fontScale` and `font` are the **structural** keys — they change advance,
+wrap and line height, so they reflow the text instead of re-seeding it.
 
 ```ts
 text.setRichText([
@@ -453,9 +455,42 @@ any object size, and `fitInside`'s binary search stays monotone. Must be `> 0`.
 - `letterSpacing`, `lineSpacing` and shadow offsets are constant pixels and do
   **not** scale with a run.
 
-Per-run **`font`** (mixing typefaces in one object) is not implemented — it needs
-per-glyph atlas state in the batch, unlike `fontScale`, which is pure layout math
-on one atlas.
+#### Per-run font — `font`
+
+Mix typefaces in one text object. `font` names a key already loaded with
+`this.load.msdfFont(key, ...)`; runs that don't set it use the object's own font.
+Structural, exactly like `fontScale`, and legal on the same two layers.
+
+```ts
+text.setRichText([
+    { text: 'DRAGONFLAME\n', font: 'Anton', fontScale: 1.7 },  // display face
+    'Deals ',
+    { text: '50', font: 'Bangers', color: 0xffd23f },          // accent face
+    ' fire damage. Cooldown ',
+    { text: 'readySec()', font: 'JetBrainsMono', underline: true },
+]);
+
+// Also a persistent rule — every "fire" in the accent face:
+text.setTextStyle('fire', { font: 'Bangers', color: 0xff8c42 });
+```
+
+Everything a run measures with — advance, kerning, ascender, line height, and the
+underline position/thickness — comes from **its own** font.
+
+- **Mixed faces align by baseline.** A line's ascent and box height each take the
+  largest among the runs on that line, so the baseline is shared. (With one font
+  those maxima always coincide, which is why single-font layout is unchanged.)
+- **No kerning across a font boundary**, and **no glyph fallback**: a character
+  absent from its run's font is skipped, exactly as a missing character is on a
+  single-font text. It is never borrowed from the object's font or another run's.
+- **An unknown key** falls back to the object's own font with a one-time warning.
+- **Cost: a run whose font uses a different atlas texture ends the draw call.**
+  That is cheap at text-scale glyph counts. To keep it at one draw call, generate a
+  single merged atlas (`msdf-atlas-gen` with `-and`-separated inputs) so every run
+  shares a texture. Runs sharing a texture never flush.
+- **Effects are per-run too.** `rounded` outlines and soft shadows need an MTSDF
+  atlas; on a run whose font is plain `msdf` they are clamped away silently, even
+  if a neighbouring run supports them.
 
 ### Per-glyph display callback
 

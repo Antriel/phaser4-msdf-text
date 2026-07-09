@@ -1,15 +1,18 @@
 # Rich text — per-run styling API (+ skew)
 
 **Status: implemented** — Phase 1 (the three entry points, the three-store paint
-order, handle coalescing, skew) and Phase 2a (per-run size, `fontScale`) have all
-landed. This doc is kept as the *rationale* record: it explains why the API has
-the shape it has, and the "Verification" list below doubles as a regression
-checklist.
+order, handle coalescing, skew), Phase 2a (per-run size, `fontScale`) and Phase 2b
+(per-run **font**) have all landed. This doc is kept as the *rationale* record: it
+explains why the API has the shape it has, and the "Verification" list below
+doubles as a regression checklist.
 
-**Still open:** per-run **font** (2b), documented at the end of this file.
 Per-glyph outline width / rounded / shadow softness, faux **weight** and
 **underline/strikethrough** moved to their own plan — see
-[`vertex-params.md`](./vertex-params.md), which must land **before** 2b.
+[`vertex-params.md`](./vertex-params.md), which landed **before** 2b and is what
+made 2b a texture-binding problem and nothing else.
+
+**Still open:** step E (the merged `-and` atlas, so mixed-font runs share one
+texture and `configureFont`'s flush never fires). Pure optimisation.
 
 ## Goal
 
@@ -425,30 +428,61 @@ Revisit only if a real measurement says otherwise.
 - Skew: a full line at `skew = 0.25` shows a consistent slant; a word with a
   descender (`g`, `y`) leans consistently with its ascenders (baseline pivot,
   not per-glyph bottom). Skew animates smoothly per-frame via a callback.
+- **Per-run font:** a segment with `font: 'Anton'` renders in Anton and wraps at
+  Anton's advances; a line mixing faces shares one baseline and grows to the
+  tallest ascender. `setTextStyle('fire', { font })` re-matches after `setText`.
+  `addStyleRange(.., { font })` is ignored with a one-time warning. An unknown key
+  falls back to the object's font and warns once. A character absent from its
+  run's font is skipped, not borrowed. `setFont` on an object with font runs
+  reflows against the new base font (slot 0 of `_runFonts`).
 
 ## Phase 2 — variable line-metrics
 
-> **Status: 2a (per-run size) implemented; 2b (per-run font) not.** Shipped as
-> `fontScale` on `SegmentSpec` and `RuleStyleSpec`, painted into a source-indexed
-> `_sizeScales` map that feeds `wrapLines` → `MSDFFont.measureLines` (which now
-> returns per-line `baselines[]`) → `rebuildText`. Kerning skipped across a size
-> boundary; batching untouched.
+> **Status: 2a (per-run size) and 2b (per-run font) both implemented.** 2a shipped
+> as `fontScale` on `SegmentSpec` and `RuleStyleSpec`, painted into a
+> source-indexed `_sizeScales` map. 2b shipped as `font` (a cache key) on the same
+> two layers, painted into a parallel `_fontMap: Uint8Array` indexing `_runFonts`
+> (slot 0 = the object's own font). Both feed `wrapLines` → `measureLines` (which
+> returns per-line `baselines[]`) → `rebuildText`. Kerning is skipped across a size
+> *or* font boundary.
 >
-> **Faux weight, underline/strikethrough and the `params` byte4 have moved to
-> [`vertex-params.md`](./vertex-params.md)** — they are appearance-lane work with
-> no layout component, they land *before* 2b, and they make 2b materially
-> cheaper. Only the 2b notes remain below.
+> **Faux weight, underline/strikethrough and the `params` byte4 moved to
+> [`vertex-params.md`](./vertex-params.md)** — appearance-lane work with no layout
+> component. Landing them *before* 2b is what reduced 2b to texture binding.
 
 Per-run **`font`** is structural: it changes wrap, advance, and per-line
 height/baseline (a line's metrics become the max over the runs on it). It rides
 the variable-line-metrics machinery 2a already built, gated behind a "does any
 run override the font?" check so the single-font fast path stays untouched.
 
-This turns the current multi-instance merged-atlas workaround into first-class
-mixed-font runs in one object, and is the natural home for a real italic atlas
-(alongside faux-italic skew).
+This turns the multi-instance merged-atlas workaround into first-class mixed-font
+runs in one object, and is the natural home for a real italic atlas (alongside
+faux-italic skew).
 
-### 2b insights (freeze these before starting)
+### What actually landed, vs. the predictions below
+
+The 2b insight list was right on every load-bearing call. Four notes worth adding:
+
+- **Line metrics take each maximum independently.** The doc said "a line's metrics
+  become the max over the runs on it", which is under-specified: with mixed fonts
+  the tallest *ascender* and the tallest *line box* can belong to different runs.
+  `lineMetrics` maximises them separately. With one font both maxima land on the
+  same character, so single-font layout is unchanged — that equivalence is what
+  made this safe.
+- **`measureSpan`/`measureLines` became free functions over `LayoutRuns`**, in the
+  new `src/MSDFMeasure.ts`. `MSDFFont` keeps thin single-font wrappers, so the
+  public `measureText`/`measureLines` signatures survive. `maxScaleIn` generalised
+  into `lineMetrics` exactly as predicted.
+- **`configureFont` gained a per-glyph call, not a per-glyph cost.** The renderer
+  resolves one `FontBinding` per font up front (texture, `uUnitRange`,
+  `1/distanceRange`, `isMtsdf`), and only calls the gate inside the loops when
+  `_runFonts.length > 1`. A single-font text configures once, outside the passes —
+  the pre-2b code path, byte for byte.
+- **Decoration rects grew a `fontIdx`.** Underline position/thickness are
+  font-relative, so rects split at a font boundary; and giving each rect its run's
+  texture keeps a `solid` quad from forcing an extra flush.
+
+### 2b insights (frozen before starting — all held)
 
 - **The 2a/2b split held for a sharper reason than "size is cheaper."** The
   shared variable-line-metrics refactor turned out to be *all* of 2a and *none*

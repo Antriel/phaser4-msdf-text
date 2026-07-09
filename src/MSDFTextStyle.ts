@@ -45,11 +45,16 @@ export interface ResolvedDecoration {
  * Colour is packed `0xRRGGBB` (per corner); alpha is `0-1` (per corner).
  *
  * Three lanes. Most fields are **appearance**: they are stamped onto a
- * `GlyphState` by {@link applyStyleToGlyph}. `fontScale` is **structural** — it
- * feeds the layout pass instead and never reaches a glyph state. The two
- * decorations are appearance-lane but glyph-independent: they resolve per source
- * character and merge into rects, so they never reach a glyph state either. A
- * decoration of `null` is an explicit "off", distinct from an absent key.
+ * `GlyphState` by {@link applyStyleToGlyph}. `fontScale` and `font` are
+ * **structural** — they feed the layout pass instead and never reach a glyph
+ * state. The two decorations are appearance-lane but glyph-independent: they
+ * resolve per source character and merge into rects, so they never reach a glyph
+ * state either. A decoration of `null` is an explicit "off", distinct from an
+ * absent key.
+ *
+ * `font` stays a **cache key**, not a resolved `MSDFFont`: this module is
+ * `this`-free and has no scene, and a rule outlives any one text object. The key
+ * is resolved against the `msdfFont` cache in `MSDFText.buildFontMap`.
  */
 export interface ResolvedStyle {
     fillColor?: Corners;   // packed 0xRRGGBB per corner
@@ -71,6 +76,7 @@ export interface ResolvedStyle {
     underline?: ResolvedDecoration | null;      // decoration lane
     strikethrough?: ResolvedDecoration | null;  // decoration lane
     fontScale?: number;    // structural — layout input, not glyph state
+    font?: string;         // structural — msdfFont cache key, resolved at layout
 }
 
 /** A styled source-index span. `start`/`length` index the plain `_text`. */
@@ -146,6 +152,9 @@ export function resolveDecoration(spec: boolean | DecorationSpec | undefined): R
 /** One-time dev warning for a `fontScale` that isn't a positive number. */
 let warnedFontScale = false;
 
+/** One-time dev warning for a `font` that isn't a non-empty cache key. */
+let warnedFont = false;
+
 /** Normalise a {@link RuleStyleSpec} into a {@link ResolvedStyle} (present keys only). */
 export function resolveStyle(spec: RuleStyleSpec): ResolvedStyle {
     const r: ResolvedStyle = {};
@@ -194,6 +203,20 @@ export function resolveStyle(spec: RuleStyleSpec): ResolvedStyle {
             );
         }
     }
+
+    // Structural. Kept as a key; whether it names a loaded font is a question
+    // only the text object's scene cache can answer (see `buildFontMap`).
+    if (spec.font !== undefined) {
+        if (typeof spec.font === 'string' && spec.font.length > 0) {
+            r.font = spec.font;
+        } else if (!warnedFont) {
+            warnedFont = true;
+            console.warn(
+                `[MSDFText] "font" must be a non-empty msdfFont cache key; got ` +
+                `${JSON.stringify(spec.font)}. Ignoring it.`
+            );
+        }
+    }
     return r;
 }
 
@@ -204,14 +227,15 @@ export function hasStyleKeys(spec: SegmentSpec): boolean {
         spec.scale !== undefined || spec.scaleX !== undefined || spec.scaleY !== undefined ||
         spec.rotation !== undefined || spec.skew !== undefined ||
         spec.underline !== undefined || spec.strikethrough !== undefined ||
-        spec.fontScale !== undefined;
+        spec.fontScale !== undefined || spec.font !== undefined;
 }
 
 /**
  * Whether a resolved style stamps anything onto a {@link GlyphState}. A run that
- * carries only the structural `fontScale` changes the layout but seeds nothing,
- * and a run that carries only a decoration paints a rect but seeds nothing — so
- * neither must, on its own, force the per-glyph state array into existence.
+ * carries only the structural `fontScale` / `font` changes the layout but seeds
+ * nothing, and a run that carries only a decoration paints a rect but seeds
+ * nothing — so neither must, on its own, force the per-glyph state array into
+ * existence.
  */
 export function styleHasAppearanceKeys(s: ResolvedStyle): boolean {
     return s.fillColor !== undefined || s.fillAlpha !== undefined || s.weight !== undefined ||

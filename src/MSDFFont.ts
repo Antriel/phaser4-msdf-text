@@ -6,6 +6,14 @@
  */
 
 import { MSDFFontData, MSDFCharacter } from './MSDFFontParser';
+import {
+    lineMetrics,
+    measureLines as measureLinesRuns,
+    measureSpan,
+    uniformRuns,
+    type LayoutRuns,
+    type LineMeasurement
+} from './MSDFMeasure';
 
 /**
  * Per-character font-size multipliers, parallel to the string being measured
@@ -13,19 +21,6 @@ import { MSDFFontData, MSDFCharacter } from './MSDFFontParser';
  * runs produce one of these; see `MSDFText.buildSizeScales`.
  */
 export type SizeScales = ArrayLike<number> | null;
-
-/**
- * The largest multiplier over `[from, to)`. An empty span (a blank line) has no
- * runs on it, so it takes the object's own size.
- */
-function maxScaleIn(scales: SizeScales, from: number, to: number): number {
-    if (!scales) return 1;
-    let max = 0;
-    for (let i = from; i < to; i++) {
-        if (scales[i] > max) max = scales[i];
-    }
-    return max > 0 ? max : 1;
-}
 
 export class MSDFFont {
     /** Font data from parser */
@@ -37,10 +32,26 @@ export class MSDFFont {
     /** Base font size (from generation) */
     public readonly baseSize: number;
 
+    /**
+     * This font as a run source, for the single-font measurement helpers below.
+     * Cached so they allocate nothing.
+     */
+    private readonly _runs: LayoutRuns;
+
     constructor(fontData: MSDFFontData, textureKey: string) {
         this.data = fontData;
         this.textureKey = textureKey;
         this.baseSize = fontData.pointSize;
+        this._runs = uniformRuns(this);
+    }
+
+    /**
+     * Wrap optional per-character size multipliers into a run source over this
+     * one font. Returns the cached uniform runs when there are none.
+     */
+    private runs(scales: SizeScales): LayoutRuns {
+        if (!scales) return this._runs;
+        return { base: this, scales, fonts: null, fontList: null };
     }
 
     // ========================================================================
@@ -96,68 +107,12 @@ export class MSDFFont {
     // ========================================================================
 
     /**
-     * Width of `text[from, to)` laid out at `fontSize`, honouring per-character
-     * size multipliers. This is the single primitive both `measureText` and
-     * `measureLines` walk, and it mirrors the advance/kerning arithmetic of
-     * `MSDFText.rebuildText` exactly — the two must agree or wrapped lines will
-     * not match their measured widths.
-     *
-     * Kerning is applied only *within* a run of equal size: a kern pair spanning
-     * a size change is ambiguous (whose size scales it?), so it is skipped.
-     *
-     * @param scales Multipliers indexed by absolute position in `text`, or `null`.
-     */
-    private measureSpan(
-        text: string,
-        from: number,
-        to: number,
-        fontSize: number,
-        letterSpacing: number,
-        scales: SizeScales
-    ): number {
-        let width = 0;
-        let prevCharCode = 0;
-        let prevScale = 1;
-        let count = 0;
-
-        for (let i = from; i < to; i++) {
-            const charCode = text.charCodeAt(i);
-            const char = this.getChar(charCode);
-
-            if (!char) {
-                // Character not in font, skip
-                prevCharCode = 0;
-                continue;
-            }
-
-            const scale = scales ? scales[i] : 1;
-            const size = fontSize * scale;
-
-            // Add kerning with previous character (same-size runs only)
-            if (prevCharCode !== 0 && scale === prevScale) {
-                width += this.getKerning(prevCharCode, charCode) * size;
-            }
-
-            // Add advance
-            width += char.xAdvance * size;
-
-            prevCharCode = charCode;
-            prevScale = scale;
-            count++;
-        }
-
-        // Letter spacing is added after every character's advance (matching
-        // BitmapText), so a measured width includes a trailing slot. It is a
-        // constant pixel amount and does not scale with a run's size.
-        if (letterSpacing !== 0 && count > 0) {
-            width += letterSpacing * count;
-        }
-
-        return width;
-    }
-
-    /**
      * Measure the width of a text string at a given font size.
+     *
+     * Single-font convenience wrapper over `MSDFMeasure`. `MSDFText` calls the
+     * run-aware primitives directly, since a rich-text object's characters can
+     * each carry their own font.
+     *
      * @param letterSpacing Extra pixels added after every character (in pixel units, not scaled).
      * @param scales Optional per-character size multipliers, parallel to `text`.
      */
@@ -172,9 +127,10 @@ export class MSDFFont {
             return { width: 0, height: fontSize * this.data.lineHeight };
         }
 
+        const runs = this.runs(scales);
         return {
-            width: this.measureSpan(text, 0, n, fontSize, letterSpacing, scales),
-            height: fontSize * this.data.lineHeight * maxScaleIn(scales, 0, n)
+            width: measureSpan(text, 0, n, fontSize, letterSpacing, runs),
+            height: lineMetrics(0, n, fontSize, runs).height
         };
     }
 
@@ -206,9 +162,10 @@ export class MSDFFont {
     /**
      * Measure lines with detailed information.
      *
-     * With `scales`, line metrics become **variable**: a line's box height and
-     * ascent both take the largest size on that line, and every glyph on it sits
-     * on the resulting shared `baselines[i]`. Mixed-size runs therefore align by
+     * Single-font convenience wrapper over `MSDFMeasure.measureLines`. With
+     * `scales`, line metrics become **variable**: a line's box height and ascent
+     * both take the largest size on that line, and every glyph on it sits on the
+     * resulting shared `baselines[i]`. Mixed-size runs therefore align by
      * baseline, not by top — the reason this returns baselines at all, rather
      * than leaving the caller to derive them from a uniform line height.
      *
@@ -222,59 +179,8 @@ export class MSDFFont {
         lineSpacing: number = 0,
         letterSpacing: number = 0,
         scales: SizeScales = null
-    ): {
-        lines: string[];
-        widths: number[];
-        baselines: number[];
-        totalWidth: number;
-        totalHeight: number;
-        shortest: number;
-        longest: number;
-    } {
-        const lines = text.split('\n');
-        const widths: number[] = [];
-        const baselines: number[] = [];
-        let maxWidth = 0;
-        let minWidth = Infinity;
-
-        // Absolute Y of the current line's top edge, walking down the block.
-        let top = 0;
-        // Absolute index of the current line's first character in `text`.
-        let start = 0;
-
-        for (const line of lines) {
-            const end = start + line.length;
-
-            const width = this.measureSpan(text, start, end, fontSize, letterSpacing, scales);
-            widths.push(width);
-            maxWidth = Math.max(maxWidth, width);
-            if (line.length > 0) {
-                minWidth = Math.min(minWidth, width);
-            }
-
-            const scale = maxScaleIn(scales, start, end);
-            baselines.push(top + this.getAscender(fontSize) * scale);
-            top += this.getLineHeight(fontSize) * scale + lineSpacing;
-
-            start = end + 1; // skip the '\n' that split() consumed
-        }
-
-        if (minWidth === Infinity) {
-            minWidth = 0;
-        }
-
-        // `top` overshot by one trailing lineSpacing; there are always >= 1 lines.
-        const totalHeight = top - lineSpacing;
-
-        return {
-            lines,
-            widths,
-            baselines,
-            totalWidth: maxWidth,
-            totalHeight,
-            shortest: minWidth,
-            longest: maxWidth
-        };
+    ): LineMeasurement {
+        return measureLinesRuns(text, fontSize, lineSpacing, letterSpacing, this.runs(scales));
     }
 
     // ========================================================================

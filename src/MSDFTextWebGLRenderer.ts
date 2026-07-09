@@ -19,10 +19,18 @@
  *     is `fillEdge - width`, so a zero width makes it the glyph silhouette; we
  *     zero its alpha at pack time instead of branching in the shader.
  *
- * The only remaining flush gate is `configureFont`, on the per-texture
- * `uUnitRange`. Uniforms are applied per draw, so it must flush *before* it sets
- * the new value, or the previous font's queued quads render with the new font's
- * range.
+ * The only flush gate is `configureFont`, on the per-texture `uUnitRange` (the
+ * texture itself is the batch handler's own gate, inside `batch()`). Uniforms are
+ * applied per draw, so it must flush *before* it sets the new value, or the
+ * previous font's queued quads render with the new font's range.
+ *
+ * With rich-text **per-run fonts** that gate goes per glyph: each character
+ * carries a `fontIdx` into the text's `_runFonts`, and every font contributes its
+ * own texture, `uUnitRange`, `distanceRange` normaliser and `fieldType`. Those
+ * are resolved once per render into `bindings`; a text with one font (the
+ * overwhelmingly common case) has one binding and configures it once, outside the
+ * loops. A run whose font uses a different texture ends the draw call — a merged
+ * atlas is the way to avoid that, not a renderer change.
  *
  * Per-glyph state is resolved once, before any pass, into one of three sources:
  *   - static : no per-glyph array; every glyph uses the object-level colour,
@@ -84,6 +92,83 @@ const rectQuad = { x: 0, y: 0, w: 0, h: 0, u0: 0, v0: 0, u1: 1, v1: 1 };
 const tempCharData = { x: 0, y: 0, w: 0, h: 0, u0: 0, v0: 0, u1: 0, v1: 0 };
 const tempCharMatrix = new TransformMatrix();
 
+/**
+ * Everything the passes need from one font, hoisted out of the per-glyph loops.
+ * `unitX`/`unitY` are the `uUnitRange` this font's atlas wants; `invRange`
+ * normalises distance-field quantities (outline width, weight, softness) into
+ * fractions of *this* font's `distanceRange`, which is what makes those params
+ * font-independent; `isMtsdf` gates the effects that read the true-SDF alpha.
+ */
+interface FontBinding {
+    texture: any;
+    unitX: number;
+    unitY: number;
+    invRange: number;
+    isMtsdf: boolean;
+    /** Object-level params, pre-packed for this font. Static mode only. */
+    staticParams: number;
+    staticShadowParams: number;
+}
+
+/** Reused across render calls; grown to the widest `_runFonts` seen so far. */
+const bindings: FontBinding[] = [];
+
+/**
+ * Fill `bindings[0 .. runFonts.length)` from the text's font list. Slot 0 is the
+ * object's own font, whose texture is the object's own frame — the other slots
+ * resolve theirs from the frames `MSDFText.buildFontMap` cached alongside them.
+ */
+function resolveBindings(src: any, baseTexture: any): number {
+    const runFonts: any[] = src._runFonts;
+    const runFrames: any[] = src._runFrames;
+    const count = runFonts.length;
+
+    while (bindings.length < count) {
+        bindings.push({
+            texture: null, unitX: 0, unitY: 0, invRange: 0, isMtsdf: false,
+            staticParams: 0, staticShadowParams: 0
+        });
+    }
+
+    for (let i = 0; i < count; i++) {
+        const data = runFonts[i].data;
+        const range = data.distanceField.distanceRange;
+        const frame = runFrames[i];
+        const b = bindings[i];
+
+        b.texture = i === 0 ? baseTexture : (frame ? frame.glTexture : baseTexture);
+        b.unitX = range / data.atlasWidth;
+        b.unitY = range / data.atlasHeight;
+        b.invRange = 1 / range;
+        b.isMtsdf = data.distanceField.fieldType === 'mtsdf';
+    }
+
+    return count;
+}
+
+/**
+ * Pre-pack the object-level params once per font, for static mode. Rounding and
+ * softness are clamped away on a plain `msdf` atlas here, at pack time, because
+ * `fieldType` is a property of the *run's* font, not of the text object.
+ */
+function packStaticParams(src: any, count: number): void {
+    const weight = src.weight;
+    const outlineWidth = src.outlineWidth;
+    const shadowSoftness = src.shadowSoftness;
+    const outlineRounded = src.outlineRounded;
+
+    for (let i = 0; i < count; i++) {
+        const b = bindings[i];
+        const inv = b.invRange;
+        const softness = b.isMtsdf ? shadowSoftness : 0;
+        const outlineFlags = (b.isMtsdf && outlineRounded) ? PARAM_ROUNDED : 0;
+        b.staticParams = packParams(weight * inv, outlineFlags, outlineWidth * inv, 0);
+        b.staticShadowParams = packParams(
+            weight * inv, softness > 0 ? PARAM_ROUNDED : 0, 0, softness * inv
+        );
+    }
+}
+
 /** Pack a per-corner colour + alpha pair into a batch buffer. */
 function packAspect(buf: PackedCorners, color: Corners, alpha: Corners): void {
     buf.topLeft = packColor(color.topLeft, alpha.topLeft);
@@ -143,8 +228,12 @@ function maxCorner(c: Corners): number {
  * width, wrong outline thickness).
  *
  * The texture is the batch handler's own flush gate (inside `batch()`), so it is
- * not checked here. This is the single remaining gate, and the one per-run fonts
- * will extend to switch textures mid-object.
+ * not checked here — a font switch that changes both lands one flush, not two:
+ * this one runs first and empties the batch, so `batch()` then takes its
+ * `instanceCount === 0` path and simply adopts the new texture.
+ *
+ * Called once per object for a single-font text, once per glyph for a mixed-font
+ * one (two float compares when nothing changed).
  */
 function configureFont(
     batchHandler: MSDFBatchHandlerInstance,
@@ -240,13 +329,16 @@ function submitOneGlyph(
  * A rect whose `rgb`/`alpha` is absent inherits the object's, resolved here
  * rather than baked at build time, so tweening the text's colour or alpha drags
  * an inherited underline along with it.
+ *
+ * A rect is `solid` — it samples no atlas — but it still rides its own run's
+ * texture, so an underline under a per-run font costs no extra draw call.
  */
 function submitDecorations(
     drawingContext: any,
     batchHandler: MSDFBatchHandlerInstance,
-    texture: any,
     rects: any[],
     over: boolean,
+    multiFont: boolean,
     calcMatrix: any,
     originOffsetX: number,
     originOffsetY: number,
@@ -256,6 +348,9 @@ function submitDecorations(
     for (let i = 0; i < rects.length; i++) {
         const r = rects[i];
         if (r.over !== over) continue;
+
+        const b = bindings[r.fontIdx];
+        if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY);
 
         rectQuad.x = r.x;
         rectQuad.y = r.y;
@@ -269,7 +364,7 @@ function submitDecorations(
         rectColor.bottomLeft = packColor(rgb ? rgb.bottomLeft : baseRgb, alpha ? alpha.bottomLeft : baseAlpha.bottomLeft);
         rectColor.bottomRight = packColor(rgb ? rgb.bottomRight : baseRgb, alpha ? alpha.bottomRight : baseAlpha.bottomRight);
 
-        BatchMSDFChar(drawingContext, batchHandler, texture, rectQuad,
+        BatchMSDFChar(drawingContext, batchHandler, b.texture, rectQuad,
             originOffsetX, originOffsetY, calcMatrix, rectColor, zeroColor, rectParams);
     }
 }
@@ -297,8 +392,8 @@ function MSDFTextWebGLRenderer(
         return;
     }
 
-    const texture = src.frame ? src.frame.glTexture : null;
-    if (!texture) {
+    const baseTexture = src.frame ? src.frame.glTexture : null;
+    if (!baseTexture) {
         return;
     }
 
@@ -309,16 +404,16 @@ function MSDFTextWebGLRenderer(
     const originOffsetX = -src.displayOriginX;
     const originOffsetY = -src.displayOriginY;
 
-    const distanceField = src.fontData.distanceField;
-    const range = distanceField.distanceRange;
-    const invRange = 1 / range;
-    const atlas = src.fontData.atlasSize;
-    configureFont(batchHandler, drawingContext, range / atlas.width, range / atlas.height);
-
-    // Rounded outlines and soft shadows read the true-SDF alpha channel, which
-    // only carries usable data on MTSDF atlases. On a plain MSDF font they are
-    // clamped away here, at pack time, so the effects degrade to the standard look.
-    const isMtsdf = distanceField.fieldType === 'mtsdf';
+    // Every font this text uses. One binding is the fast path: configure it once
+    // here and no pass below touches the gate again. Rounded outlines and soft
+    // shadows read the true-SDF alpha channel, which only carries usable data on
+    // MTSDF atlases; on a plain MSDF font they are clamped away at pack time, per
+    // binding, so the effects degrade to the standard look per *run*.
+    const fontCount = resolveBindings(src, baseTexture);
+    const multiFont = fontCount > 1;
+    if (!multiFont) {
+        configureFont(batchHandler, drawingContext, bindings[0].unitX, bindings[0].unitY);
+    }
 
     const hasOutline = src.hasOutline();
     const hasShadow = src.hasShadow();
@@ -370,12 +465,12 @@ function MSDFTextWebGLRenderer(
         shadowBuf.bottomLeft = packColor(sc, sA * src._alphaBL);
         shadowBuf.bottomRight = packColor(sc, sA * src._alphaBR);
 
-        const softness = isMtsdf ? src.shadowSoftness : 0;
-        const outlineFlags = (isMtsdf && src.outlineRounded) ? PARAM_ROUNDED : 0;
-        fillCorners(glyphParams, packParams(src.weight * invRange, outlineFlags, src.outlineWidth * invRange, 0));
-        fillCorners(shadowParams, packParams(
-            src.weight * invRange, softness > 0 ? PARAM_ROUNDED : 0, 0, softness * invRange
-        ));
+        // Colours are font-independent, but the params are normalized by each
+        // font's `distanceRange`, so they are packed once per binding and copied
+        // into the corner buffers as the loops cross a run boundary.
+        packStaticParams(src, fontCount);
+        fillCorners(glyphParams, bindings[0].staticParams);
+        fillCorners(shadowParams, bindings[0].staticShadowParams);
     } else if (glyphMode === GLYPH_MODE_CALLBACK) {
         // Re-seed (and, if styled, re-apply style runs) every frame, then let the
         // callback layer on top of the resolved state.
@@ -410,19 +505,23 @@ function MSDFTextWebGLRenderer(
             const char = characters[i];
             if (!char || char.w === 0 || char.h === 0) continue;
 
+            const b = bindings[char.fontIdx];
+            if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY);
+
             if (perGlyph) {
                 const g = glyphs![i];
                 // A soft shadow reads the true SDF; a hard one is just the glyph
                 // silhouette in the shadow colour, so it keeps median(rgb).
-                const softness = isMtsdf ? g.shadow.softness : zeroCorners;
+                const softness = b.isMtsdf ? g.shadow.softness : zeroCorners;
                 const flags = maxCorner(softness) > 0 ? PARAM_ROUNDED : 0;
                 packAspect(shadowBuf, g.shadow.color, g.shadow.alpha);
-                packParamsAspect(shadowParams, g.weight, flags, zeroCorners, softness, invRange);
-                submitOneGlyph(drawingContext, batchHandler, texture, char,
+                packParamsAspect(shadowParams, g.weight, flags, zeroCorners, softness, b.invRange);
+                submitOneGlyph(drawingContext, batchHandler, b.texture, char,
                     g.x + g.shadow.x, g.y + g.shadow.y, g.scaleX, g.scaleY, g.rotation, g.skew,
                     calcMatrix, originOffsetX, originOffsetY, zeroColor, shadowBuf, shadowParams);
             } else {
-                submitOneGlyph(drawingContext, batchHandler, texture, char,
+                if (multiFont) fillCorners(shadowParams, b.staticShadowParams);
+                submitOneGlyph(drawingContext, batchHandler, b.texture, char,
                     char.x + dsx, char.y + dsy, 1, 1, 0, 0,
                     calcMatrix, originOffsetX, originOffsetY, zeroColor, shadowBuf, shadowParams);
             }
@@ -436,16 +535,20 @@ function MSDFTextWebGLRenderer(
             const char = characters[i];
             if (!char || char.w === 0 || char.h === 0) continue;
 
+            const b = bindings[char.fontIdx];
+            if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY);
+
             if (perGlyph) {
                 const g = glyphs![i];
-                const flags = (isMtsdf && g.outline.rounded) ? PARAM_ROUNDED : 0;
+                const flags = (b.isMtsdf && g.outline.rounded) ? PARAM_ROUNDED : 0;
                 packOutlineAspect(outlineBuf, g.outline.color, g.outline.alpha, g.outline.width);
-                packParamsAspect(glyphParams, g.weight, flags, g.outline.width, zeroCorners, invRange);
-                submitOneGlyph(drawingContext, batchHandler, texture, char,
+                packParamsAspect(glyphParams, g.weight, flags, g.outline.width, zeroCorners, b.invRange);
+                submitOneGlyph(drawingContext, batchHandler, b.texture, char,
                     g.x, g.y, g.scaleX, g.scaleY, g.rotation, g.skew,
                     calcMatrix, originOffsetX, originOffsetY, zeroColor, outlineBuf, glyphParams);
             } else {
-                submitOneGlyph(drawingContext, batchHandler, texture, char,
+                if (multiFont) fillCorners(glyphParams, b.staticParams);
+                submitOneGlyph(drawingContext, batchHandler, b.texture, char,
                     char.x, char.y, 1, 1, 0, 0,
                     calcMatrix, originOffsetX, originOffsetY, zeroColor, outlineBuf, glyphParams);
             }
@@ -454,7 +557,7 @@ function MSDFTextWebGLRenderer(
 
     // ── Underline pass — under the glyphs, over the shadows and silhouettes. ─
     if (hasDecorations) {
-        submitDecorations(drawingContext, batchHandler, texture, decorations, false,
+        submitDecorations(drawingContext, batchHandler, decorations, false, multiFont,
             calcMatrix, originOffsetX, originOffsetY, src.color, baseAlpha);
     }
 
@@ -465,6 +568,9 @@ function MSDFTextWebGLRenderer(
         const char = characters[i];
         if (!char || char.w === 0 || char.h === 0) continue;
 
+        const b = bindings[char.fontIdx];
+        if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY);
+
         if (perGlyph) {
             const g = glyphs![i];
             packAspect(fillBuf, g.fill.color, g.fill.alpha);
@@ -473,13 +579,14 @@ function MSDFTextWebGLRenderer(
                 packOutlineAspect(outlineBuf, g.outline.color, g.outline.alpha, g.outline.width);
                 outlineData = outlineBuf;
             }
-            const flags = (isMtsdf && g.outline.rounded) ? PARAM_ROUNDED : 0;
-            packParamsAspect(glyphParams, g.weight, flags, g.outline.width, zeroCorners, invRange);
-            submitOneGlyph(drawingContext, batchHandler, texture, char,
+            const flags = (b.isMtsdf && g.outline.rounded) ? PARAM_ROUNDED : 0;
+            packParamsAspect(glyphParams, g.weight, flags, g.outline.width, zeroCorners, b.invRange);
+            submitOneGlyph(drawingContext, batchHandler, b.texture, char,
                 g.x, g.y, g.scaleX, g.scaleY, g.rotation, g.skew,
                 calcMatrix, originOffsetX, originOffsetY, fillBuf, outlineData, glyphParams);
         } else {
-            submitOneGlyph(drawingContext, batchHandler, texture, char,
+            if (multiFont) fillCorners(glyphParams, b.staticParams);
+            submitOneGlyph(drawingContext, batchHandler, b.texture, char,
                 char.x, char.y, 1, 1, 0, 0,
                 calcMatrix, originOffsetX, originOffsetY, fillBuf,
                 combined && hasOutline ? outlineBuf : zeroColor, glyphParams);
@@ -488,7 +595,7 @@ function MSDFTextWebGLRenderer(
 
     // ── Strikethrough pass — over the glyphs, matching browsers. ─────────────
     if (hasDecorations) {
-        submitDecorations(drawingContext, batchHandler, texture, decorations, true,
+        submitDecorations(drawingContext, batchHandler, decorations, true, multiFont,
             calcMatrix, originOffsetX, originOffsetY, src.color, baseAlpha);
     }
 }

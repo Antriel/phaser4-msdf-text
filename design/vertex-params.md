@@ -412,9 +412,9 @@ follow the layout. Document both.
 
 ---
 
-## What step D (per-run font) inherits
+## What step D (per-run font) inherited — **now implemented**
 
-Recorded here so the fresh session doesn't re-derive it. Full context in
+Recorded here as the prediction; every item held. Full context in
 `rich-text-styling.md`.
 
 - The renderer's only flush gate is `configureFont(texture, unitRange)` —
@@ -439,9 +439,12 @@ Recorded here so the fresh session doesn't re-derive it. Full context in
   single `MSDFFont`** and becomes a function over a run-aware font source.
   `maxScaleIn` generalises from "max multiplier on this line" to "max line
   metric on this line", since `lineHeight` / `ascender` now vary per run too.
+  (Shipped as `src/MSDFMeasure.ts` over a `LayoutRuns`. One refinement: the line's
+  ascent and its box height must be maximised **independently** — across fonts the
+  tallest ascender and the tallest line box need not be the same run.)
 - Step E (merged `-and` atlas: parser yields N fonts, loader uploads the texture
   once) makes `configureFont`'s flush never fire. Pure optimisation, no renderer
-  change, strictly after D.
+  change, strictly after D. **Still open.**
 
 ---
 

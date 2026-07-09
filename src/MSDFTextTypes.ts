@@ -139,6 +139,29 @@ export interface RuleStyleSpec extends StyleSpec {
      * about its centre without touching layout.
      */
     fontScale?: number;
+
+    /**
+     * Per-run font: a key into the `msdfFont` cache, i.e. a font already loaded
+     * with `this.load.msdfFont(key, ...)`. An unknown key falls back to the
+     * object's own font, with a one-time dev warning.
+     *
+     * **Structural** — the run's advances, kerning, ascender and line height all
+     * come from its own font, so setting it (including via `handle.update`)
+     * triggers a relayout, not a re-seed. A line's height and baseline take the
+     * largest metric among the runs on it, so mixed-font runs align by baseline.
+     *
+     * Two rules to know:
+     *
+     * - **No kerning across a font boundary**, and no glyph fallback: a
+     *   character absent from *its run's* font is skipped, exactly as a missing
+     *   character is on a single-font text. It is not borrowed from the object's
+     *   font or any other run's.
+     * - A run whose font uses a **different atlas texture** ends the current
+     *   draw call. Text-scale glyph counts make that cheap, but if you mix fonts
+     *   heavily and care, generate one merged atlas (`msdf-atlas-gen` with
+     *   `-and`-separated inputs) so every run shares a texture.
+     */
+    font?: string;
 }
 
 /** A styled run of text for {@link MSDFTextInstance.setRichText}. */
@@ -398,9 +421,9 @@ export interface MSDFTextInstance extends
      * {@link TextStyleOpts} for `wholeWord`/`nth`/`caseSensitive`/`all`.
      *
      * Rules take a {@link RuleStyleSpec}, so they may carry the structural
-     * `fontScale` ("every `H1` is 1.5×") — its matches are re-cached before the
-     * layout pass. The cost is that such a rule makes `setText` (and
-     * `handle.update`) a relayout rather than a re-seed.
+     * `fontScale` and `font` ("every `H1` is 1.5× in the display face") — their
+     * matches are re-cached before the layout pass. The cost is that such a rule
+     * makes `setText` (and `handle.update`) a relayout rather than a re-seed.
      */
     setTextStyle(match: string, style: RuleStyleSpec, opts?: TextStyleOpts): StyleHandle<RuleStyleSpec>;
     /**
@@ -410,7 +433,7 @@ export interface MSDFTextInstance extends
      * {@link StyleHandle}. Use for highlights over text known to be stable.
      *
      * Appearance-only: this layer is applied *after* layout, so it takes a
-     * {@link StyleSpec} and never the structural `fontScale`.
+     * {@link StyleSpec} and never the structural `fontScale` / `font`.
      */
     addStyleRange(start: number, length: number, style: StyleSpec): StyleHandle;
     /**

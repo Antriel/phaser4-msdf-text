@@ -22,6 +22,7 @@ import { MSDFFont } from './MSDFFont';
 import MSDFTextWebGLRenderer from './MSDFTextWebGLRenderer';
 import { createGlyphState, type GlyphState } from './MSDFGlyphState';
 import { wrapLines } from './MSDFTextWrap';
+import { measureLines, uniformRuns, type LayoutRuns } from './MSDFMeasure';
 import {
     toColorInt,
     resolveStyle,
@@ -124,14 +125,27 @@ function scalesEqual(a: Float32Array | null, b: Float32Array | null): boolean {
     return true;
 }
 
-/** The largest multiplier in a size-scale map (`1` when there is none). */
-function maxScale(scales: Float32Array | null): number {
-    if (!scales || scales.length === 0) return 1;
-    let max = 0;
-    for (let i = 0; i < scales.length; i++) {
-        if (scales[i] > max) max = scales[i];
+/**
+ * Element-wise equality of two font maps (either may be `null`, meaning "the
+ * base font everywhere"). Same role as {@link scalesEqual}: it decides whether a
+ * style change actually reflows the text.
+ */
+function fontsEqual(a: Uint8Array | null, b: Uint8Array | null): boolean {
+    if (a === b) return true;
+    if (!a || !b || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) return false;
     }
-    return max > 0 ? max : 1;
+    return true;
+}
+
+/** Whether two font lists hold the same fonts in the same order. */
+function fontListsEqual(a: MSDFFont[], b: MSDFFont[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) return false;
+    }
+    return true;
 }
 
 /**
@@ -288,11 +302,23 @@ export const MSDFText: MSDFTextStatic = new Class({
         this._decorRects = [];
         this._hasDecorations = false;
 
-        // Structural styling (per-run `fontScale`): a font-size multiplier per
-        // source character, or `null` for the uniform-size fast path. Feeds wrap,
-        // measurement and layout — never `GlyphState`.
+        // ── Structural styling (per-run `fontScale` and `font`) ─────────────
+        // Two source-indexed maps, both `null` on the uniform fast path, both
+        // feeding wrap, measurement and layout — and neither ever reaching
+        // `GlyphState`. `_sizeScales` holds a font-size multiplier per source
+        // character; `_fontMap` holds an index into `_runFonts`, whose slot 0 is
+        // always this object's own font (so `0` means "the base font").
         this._sizeScales = null;
-        this._maxSizeScale = 1;
+        this._fontMap = null;
+        this._runFonts = fontData ? [fontData] : [];
+        // Texture frames parallel to `_runFonts`. Slot 0 stays `null`: the base
+        // font's frame is the object's own `frame`, which `setTexture` owns.
+        this._runFrames = [null];
+        // The tallest line box any one character could produce, in units of
+        // `fontSize` (`font.lineHeight * fontScale`, maximised over the text).
+        // `fitInside`'s free upper bound on the font size.
+        this._maxLineUnit = fontData ? fontData.data.lineHeight : 1;
+        this._missingFontWarned = false;
 
         // Bind atlas texture via the standard Texture component (no width/height
         // or origin updates — those derive from text bounds, not the atlas frame).
@@ -461,9 +487,11 @@ export const MSDFText: MSDFTextStatic = new Class({
      *   doesn't need either.
      * - `_hasDecorations` — the object or any run sets an underline/strikethrough.
      *   Gates `rebuildDecorations`, which is glyph-array-independent.
-     * - `_sizeScales` — the structural size map. Because it is a *layout* input,
-     *   a change here sets `_dirty` (a rebuild), not `_stylesDirty` (a re-seed).
-     *   That is the documented cost of a structural rule.
+     * - `_sizeScales` / `_fontMap` — the structural maps. Because they are
+     *   *layout* inputs, a change here sets `_dirty` (a rebuild), not
+     *   `_stylesDirty` (a re-seed). That is the documented cost of a structural
+     *   rule. The font list is rebuilt unconditionally, since `setFont` can swap
+     *   the base font out from under an otherwise unchanged map.
      */
     refreshStyleState: function (): void {
         const segs: StyleRun[] = this._segmentRuns;
@@ -488,12 +516,142 @@ export const MSDFText: MSDFTextStatic = new Class({
         // while styled); clear it here so it can't linger true after all styles go.
         if (!appearance) this._stylesHaveShadow = false;
 
-        const next = this.buildSizeScales();
-        if (!scalesEqual(this._sizeScales, next)) {
-            this._sizeScales = next;
-            this._maxSizeScale = maxScale(next);
+        const nextScales = this.buildSizeScales();
+        const nextFonts = this.buildFontMap();
+
+        // A structural change reflows. The font *list* is compared as well as the
+        // map, because `setFont` replaces slot 0 while leaving every index alone.
+        if (!scalesEqual(this._sizeScales, nextScales) ||
+            !fontsEqual(this._fontMap, nextFonts.map) ||
+            !fontListsEqual(this._runFonts, nextFonts.fonts)) {
             this._dirty = true;
         }
+
+        this._sizeScales = nextScales;
+        this._fontMap = nextFonts.map;
+        this._runFonts = nextFonts.fonts;
+        this._runFrames = nextFonts.frames;
+        this._maxLineUnit = this.computeMaxLineUnit();
+    },
+
+    /**
+     * Resolve the structural `font` of every segment run, then every rule match,
+     * into an index per source character — the same layer order as the size and
+     * appearance passes, so a rule's font beats an overlapping segment's. Ranges
+     * are excluded by construction: they are applied after layout and their
+     * `StyleSpec` has no structural keys.
+     *
+     * Index `0` is the object's own font, so a `null` map means "one font
+     * everywhere" — the fast path that skips the lookup in every measurement.
+     * Keys are resolved against the scene's `msdfFont` cache here rather than in
+     * `resolveStyle`, which is `this`-free and outlives any one text object.
+     */
+    buildFontMap: function (): { map: Uint8Array | null; fonts: MSDFFont[]; frames: any[] } {
+        const n = this._text.length;
+        const base: MSDFFont = this.fontData;
+        const fonts: MSDFFont[] = [base];
+        const frames: any[] = [null];   // slot 0 uses the object's own `frame`
+        let map: Uint8Array | null = null;
+
+        const sys = this.scene ? this.scene.sys : null;
+        const cache = sys ? sys.cache.custom.msdfFont : null;
+
+        /** The `fonts` slot for a cache key, registering the font on first use. */
+        const indexOf = (key: string): number => {
+            const font: MSDFFont | undefined = cache ? cache.get(key) : undefined;
+            if (!font) {
+                if (!this._missingFontWarned) {
+                    this._missingFontWarned = true;
+                    console.warn(
+                        `[MSDFText] No MSDF font is loaded under the key "${key}", so the ` +
+                        `run falls back to this text's own font ("${this.font}"). Load it ` +
+                        `with this.load.msdfFont("${key}", ...) first.`
+                    );
+                }
+                return 0;
+            }
+            const existing = fonts.indexOf(font);
+            if (existing >= 0) return existing;
+            // The map is a Uint8Array, so slot 255 is the last addressable one.
+            if (fonts.length > 255) {
+                if (!this._missingFontWarned) {
+                    this._missingFontWarned = true;
+                    console.warn('[MSDFText] More than 256 distinct per-run fonts; ignoring the rest.');
+                }
+                return 0;
+            }
+            fonts.push(font);
+            frames.push(sys.textures.getFrame(font.textureKey));
+            return fonts.length - 1;
+        };
+
+        const paint = (start: number, length: number, key: string): void => {
+            const idx = indexOf(key);
+            // Nothing to record while everything is still the base font: `null`
+            // *is* "all zeroes". Once allocated, a base-font run must be written,
+            // since it may be overpainting a different font.
+            if (!map) {
+                if (idx === 0) return;
+                map = new Uint8Array(n);
+            }
+            const end = Math.min(start + length, n);
+            for (let i = Math.max(0, start); i < end; i++) map[i] = idx;
+        };
+
+        for (let i = 0; i < this._segmentRuns.length; i++) {
+            const run: StyleRun = this._segmentRuns[i];
+            if (run.style.font !== undefined) paint(run.start, run.length, run.style.font);
+        }
+        for (let i = 0; i < this._styleRules.length; i++) {
+            const rule: StyleRule = this._styleRules[i];
+            const key = rule.style.font;
+            if (key === undefined) continue;
+            for (let r = 0; r < rule.runs.length; r++) paint(rule.runs[r].start, rule.runs[r].length, key);
+        }
+        return { map, fonts, frames };
+    },
+
+    /**
+     * The tallest line box a single character of this text can produce, per unit
+     * of `fontSize`: `max(font.lineHeight × fontScale)` over the source string.
+     *
+     * `fitInside` divides the box height by this for a free upper bound on the
+     * font size — valid because the block is at least as tall as its tallest
+     * line, which is at least as tall as its tallest character. With one font at
+     * one size it is just that font's `lineHeight`.
+     */
+    computeMaxLineUnit: function (): number {
+        const fonts: MSDFFont[] = this._runFonts;
+        // An invalid font key warns in the constructor and leaves `fontData`
+        // undefined; don't turn that into a crash here rather than at render.
+        const base = fonts.length > 0 && fonts[0] ? fonts[0].data.lineHeight : 1;
+
+        const scales: Float32Array | null = this._sizeScales;
+        const map: Uint8Array | null = this._fontMap;
+        if ((!scales && !map) || !fonts[0]) return base;
+
+        const n = this._text.length;
+        let max = 0;
+        for (let i = 0; i < n; i++) {
+            const lineHeight = map ? fonts[map[i]].data.lineHeight : base;
+            const unit = lineHeight * (scales ? scales[i] : 1);
+            if (unit > max) max = unit;
+        }
+        return max > 0 ? max : base;
+    },
+
+    /**
+     * The structural maps as a run source keyed by **source** index — what the
+     * wrap pass measures against. Not part of the public `MSDFTextInstance` type.
+     */
+    sourceRuns: function (): LayoutRuns {
+        if (!this._sizeScales && !this._fontMap) return uniformRuns(this.fontData);
+        return {
+            base: this.fontData,
+            scales: this._sizeScales,
+            fonts: this._fontMap,
+            fontList: this._runFonts
+        };
     },
 
     /**
@@ -533,21 +691,26 @@ export const MSDFText: MSDFTextStatic = new Class({
     },
 
     /**
-     * Project the source-indexed size map onto a wrapped string, so measurement
-     * and layout can index it by their own position. Wrap-inserted newlines
-     * (source index `-1`) take the object's own size; they carry no glyph.
-     * Not part of the public `MSDFTextInstance` type.
+     * Project the source-indexed structural maps onto a wrapped string, so
+     * measurement and layout can index them by their own position. Wrap-inserted
+     * newlines (source index `-1`) take the object's own font and size; they
+     * carry no glyph. Not part of the public `MSDFTextInstance` type.
      */
-    wrappedScales: function (srcIndex: number[]): Float32Array | null {
-        const scales = this._sizeScales;
-        if (!scales) return null;
+    wrappedRuns: function (srcIndex: number[]): LayoutRuns {
+        const scales: Float32Array | null = this._sizeScales;
+        const map: Uint8Array | null = this._fontMap;
+        if (!scales && !map) return uniformRuns(this.fontData);
 
-        const out = new Float32Array(srcIndex.length);
-        for (let i = 0; i < srcIndex.length; i++) {
+        const n = srcIndex.length;
+        const outScales = scales ? new Float32Array(n) : null;
+        const outFonts = map ? new Uint8Array(n) : null;
+
+        for (let i = 0; i < n; i++) {
             const si = srcIndex[i];
-            out[i] = si >= 0 ? scales[si] : 1;
+            if (outScales) outScales[i] = si >= 0 ? scales![si] : 1;
+            if (outFonts) outFonts[i] = si >= 0 ? map![si] : 0;
         }
-        return out;
+        return { base: this.fontData, scales: outScales, fonts: outFonts, fontList: this._runFonts };
     },
 
     /**
@@ -595,6 +758,9 @@ export const MSDFText: MSDFTextStatic = new Class({
 
         this.setTexture(fontData.textureKey, undefined, false, false);
         this._dirty = true;
+        // Slot 0 of the font list *is* the base font, so a swap invalidates it —
+        // along with `_maxLineUnit`, which is derived from the list's metrics.
+        this.refreshStyleState();
         this.updateDisplayOrigin();
         return this;
     },
@@ -628,19 +794,19 @@ export const MSDFText: MSDFTextStatic = new Class({
         // fewer of them (words only wrap more), so height is non-decreasing. Per-run
         // `fontScale` is a *multiplier*, so every run grows in proportion and that
         // monotonicity survives — which is precisely why it isn't absolute pixels.
+        // Per-run `font` never scales, so it can't break it either.
         const fits = (size: number): boolean => {
             const wrapped = this.computeWrap(this._text, boxW, size);
-            const m = this.fontData.measureLines(
+            const m = measureLines(
                 wrapped.text, size, this._lineSpacing, this._letterSpacing,
-                this.wrappedScales(wrapped.srcIndex)
+                this.wrappedRuns(wrapped.srcIndex)
             );
             return m.totalWidth <= boxW && m.totalHeight <= boxH;
         };
 
         // Free hard upper bound: any layout is at least one line tall, and the
-        // tallest line is at least `size * lineHeight * maxScale`, so
-        // size <= boxH / (lineHeight * maxScale).
-        let hi = Math.min(maxFontSize, boxH / (this.fontData.data.lineHeight * this._maxSizeScale));
+        // tallest line is at least `size * maxLineUnit`, so size <= boxH / maxLineUnit.
+        let hi = Math.min(maxFontSize, boxH / this._maxLineUnit);
         let lo = minFontSize;
 
         let chosen: number;
@@ -1354,10 +1520,11 @@ export const MSDFText: MSDFTextStatic = new Class({
 
     /**
      * Merge the decorated characters of one lane into rects, splitting at:
-     * visual line boundaries; `fontScale` boundaries (thickness and position are
-     * size-relative, so each segment uses its own size, like a browser across
-     * font-size spans); and — only when the colour is inherited — resolved fill
-     * colour/alpha changes, so each coloured word's rule matches it.
+     * visual line boundaries; `fontScale` **and** `font` boundaries (thickness
+     * and position are size- and font-relative, so each segment uses its own
+     * metrics, like a browser across font-size spans); and — only when the colour
+     * is inherited — resolved fill colour/alpha changes, so each coloured word's
+     * rule matches it.
      *
      * The X extent is the union of the segment's glyph quads. Spaces have no
      * entry in `_characters`, so the union bridges interior gaps but leading and
@@ -1371,9 +1538,8 @@ export const MSDFText: MSDFTextStatic = new Class({
     ): void {
         const chars = this._characters;
         const scales: Float32Array | null = this._sizeScales;
-        const data = this.fontData.data;
+        const runFonts: MSDFFont[] = this._runFonts;
         const rects = this._decorRects;
-        const thicknessEm = data.underlineThickness > 0 ? data.underlineThickness : 0.05;
 
         let i = 0;
         while (i < chars.length) {
@@ -1383,6 +1549,7 @@ export const MSDFText: MSDFTextStatic = new Class({
 
             const line = first.line;
             const scale = scales ? scales[first.srcIndex] : 1;
+            const fontIdx = first.fontIdx;
             const cs = colorSrc[first.srcIndex];
             const as = alphaSrc[first.srcIndex];
             let x0 = first.x;
@@ -1394,12 +1561,16 @@ export const MSDFText: MSDFTextStatic = new Class({
                 const si = c.srcIndex;
                 if (specs[si] !== spec || c.line !== line) break;
                 if ((scales ? scales[si] : 1) !== scale) break;
+                if (c.fontIdx !== fontIdx) break;
                 if (spec.color === undefined && colorSrc[si] !== cs) break;
                 if (spec.alpha === undefined && alphaSrc[si] !== as) break;
                 if (c.x < x0) x0 = c.x;
                 if (c.x + c.w > x1) x1 = c.x + c.w;
             }
 
+            // Underline position and thickness come from the run's own font.
+            const data = runFonts[fontIdx].data;
+            const thicknessEm = data.underlineThickness > 0 ? data.underlineThickness : 0.05;
             const size = this._fontSize * scale;
             const h = thicknessEm * size * spec.thickness;
             // msdf-atlas-gen emits no strike metric (and no x-height), so the
@@ -1415,6 +1586,9 @@ export const MSDFText: MSDFTextStatic = new Class({
                     w: x1 - x0,
                     h: h,
                     over: over,
+                    // A rect samples no atlas (it is `solid`), but riding its own
+                    // run's texture keeps it inside that run's draw call.
+                    fontIdx: fontIdx,
                     // `undefined` means "inherit the object's live colour/alpha",
                     // which the renderer resolves per frame — so tweening the
                     // text's colour drags an inherited underline along with it.
@@ -1512,19 +1686,22 @@ export const MSDFText: MSDFTextStatic = new Class({
 
     /**
      * Resolve a range/override style, stripping any structural key. Ranges are
-     * applied *after* layout, so honouring `fontScale` here would mean a
-     * transient, index-anchored overlay could reflow the text — exactly the
+     * applied *after* layout, so honouring `fontScale` or `font` here would mean
+     * a transient, index-anchored overlay could reflow the text — exactly the
      * coupling the appearance/structural split exists to prevent. TypeScript
      * already forbids it; this guards the JS caller.
      */
     resolveRangeStyle: function (style: StyleSpec): ResolvedStyle {
         const resolved = resolveStyle(style);
-        if (resolved.fontScale !== undefined) {
+        const structural = resolved.fontScale !== undefined || resolved.font !== undefined;
+        if (structural) {
+            const key = resolved.fontScale !== undefined ? 'fontScale' : 'font';
             resolved.fontScale = undefined;
+            resolved.font = undefined;
             if (!this._structuralRangeWarned) {
                 this._structuralRangeWarned = true;
                 console.warn(
-                    '[MSDFText] "fontScale" is ignored on addStyleRange: ranges are ' +
+                    `[MSDFText] "${key}" is ignored on addStyleRange: ranges are ` +
                     'applied after layout and cannot reflow the text. Put it on a ' +
                     'setRichText segment or a setTextStyle rule instead.'
                 );
@@ -1673,9 +1850,9 @@ export const MSDFText: MSDFTextStatic = new Class({
         // Get text to measure (with word wrapping if enabled).
         const wrap = this.computeWrap(this._text, this._maxWidth, this._fontSize);
 
-        const lineData = this.fontData.measureLines(
+        const lineData = measureLines(
             wrap.text, this._fontSize, this._lineSpacing, this._letterSpacing,
-            this.wrappedScales(wrap.srcIndex)
+            this.wrappedRuns(wrap.srcIndex)
         );
 
         return {
@@ -1698,16 +1875,16 @@ export const MSDFText: MSDFTextStatic = new Class({
      * Word wrap text to fit within `maxWidth`, returning the wrapped string plus
      * a parallel source-index map (see {@link wrapLines} for the map contract).
      * Thin adapter that feeds the pure wrapper the object's current wrap char,
-     * letter spacing, font and per-run size map. Not part of the public
+     * letter spacing, and per-run font/size maps. Not part of the public
      * `MSDFTextInstance` type.
      *
-     * The size map is indexed by position in `this._text`, so it is only handed
+     * Those maps are indexed by position in `this._text`, so they are only handed
      * over when `text` *is* that string — an arbitrary string passed through the
-     * legacy `wrapText` would index it out of alignment.
+     * legacy `wrapText` would index them out of alignment.
      */
     computeWrap: function (text: string, maxWidth: number, fontSize: number): { text: string; srcIndex: number[] } {
-        const scales = text === this._text ? this._sizeScales : null;
-        return wrapLines(text, maxWidth, fontSize, this.wordWrapCharCode, this._letterSpacing, this.fontData, scales);
+        const runs = text === this._text ? this.sourceRuns() : uniformRuns(this.fontData);
+        return wrapLines(text, maxWidth, fontSize, this.wordWrapCharCode, this._letterSpacing, runs);
     },
 
     /**
@@ -1743,17 +1920,21 @@ export const MSDFText: MSDFTextStatic = new Class({
         const textToRender = wrap.text;
         const srcMap = wrap.srcIndex;
 
-        // Per-run size multipliers, re-indexed onto the wrapped string (`null` on
-        // the uniform-size fast path).
-        const scales = this.wrappedScales(srcMap);
+        // Per-run fonts and size multipliers, re-indexed onto the wrapped string
+        // (both `null` inside `runs` on the uniform fast path).
+        const runs = this.wrappedRuns(srcMap);
+        const scales = runs.scales as Float32Array | null;
+        const fontIdxs = runs.fonts as Uint8Array | null;
+        const runFonts: MSDFFont[] = this._runFonts;
 
-        // Measure first: with per-run sizes a line's height and baseline depend on
-        // the largest size *anywhere on that line*, which is only known once the
-        // whole line has been seen. `lineData.baselines[i]` is that resolved
-        // baseline, so the glyph loop below places every glyph on it — mixed-size
-        // runs align by baseline, not by top. It also drives alignment.
-        const lineData = this.fontData.measureLines(
-            textToRender, this._fontSize, this._lineSpacing, this._letterSpacing, scales
+        // Measure first: with per-run sizes and fonts a line's height and baseline
+        // depend on the largest metric *anywhere on that line*, which is only known
+        // once the whole line has been seen. `lineData.baselines[i]` is that
+        // resolved baseline, so the glyph loop below places every glyph on it —
+        // mixed-size and mixed-font runs align by baseline, not by top. It also
+        // drives alignment.
+        const lineData = measureLines(
+            textToRender, this._fontSize, this._lineSpacing, this._letterSpacing, runs
         );
 
         // Layout characters. y = 0 is the top of the text block (matching BitmapText).
@@ -1763,6 +1944,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         let baselineY = lineData.baselines[0];
         let prevCharCode = 0;
         let prevScale = 1;
+        let prevFontIdx = 0;
 
         for (let i = 0; i < textToRender.length; i++) {
             const charCode = textToRender.charCodeAt(i);
@@ -1778,7 +1960,12 @@ export const MSDFText: MSDFTextStatic = new Class({
                 continue;
             }
 
-            const char = this.fontData.getChar(charCode);
+            // This character's font: its run's, never the object's. A character
+            // absent from it is skipped rather than borrowed from another font.
+            const fontIdx = fontIdxs ? fontIdxs[i] : 0;
+            const font = fontIdxs ? runFonts[fontIdx] : this.fontData;
+
+            const char = font.getChar(charCode);
             if (!char) {
                 // Character not in font
                 prevCharCode = 0;
@@ -1789,11 +1976,12 @@ export const MSDFText: MSDFTextStatic = new Class({
             const scale = scales ? scales[i] : 1;
             const size = this._fontSize * scale;
 
-            // Apply kerning — within a same-size run only. A kern pair straddling
-            // a size change has no well-defined size to scale by, so it is skipped
-            // (measurement does the same, or wrapped lines would mismeasure).
-            if (prevCharCode !== 0 && scale === prevScale) {
-                const kerning = this.fontData.getKerning(prevCharCode, charCode);
+            // Apply kerning — within a same-font, same-size run only. A kern pair
+            // straddling a size change has no well-defined size to scale by, and
+            // one straddling a font change does not exist. Measurement and wrap
+            // make the identical call, or wrapped lines would mismeasure.
+            if (prevCharCode !== 0 && scale === prevScale && fontIdx === prevFontIdx) {
+                const kerning = font.getKerning(prevCharCode, charCode);
                 cursorX += kerning * size;
             }
 
@@ -1802,6 +1990,7 @@ export const MSDFText: MSDFTextStatic = new Class({
                 cursorX += char.xAdvance * size + this._letterSpacing;
                 prevCharCode = charCode;
                 prevScale = scale;
+                prevFontIdx = fontIdx;
                 continue;
             }
 
@@ -1831,7 +2020,8 @@ export const MSDFText: MSDFTextStatic = new Class({
                 line: lineIndex,              // Visual line index, used by applyAlignment + provenance
                 srcIndex: srcMap[i],          // Index into the original text (provenance)
                 srcLine: srcLineIndex,        // Source paragraph index (provenance)
-                baselineY: baselineY          // Layout baseline (used by the skew feature)
+                baselineY: baselineY,         // Layout baseline (used by the skew feature)
+                fontIdx: fontIdx              // Slot in `_runFonts` — the renderer's texture + unitRange
             });
 
             // Advance cursor (letter spacing applies after every character, and is
@@ -1839,6 +2029,7 @@ export const MSDFText: MSDFTextStatic = new Class({
             cursorX += char.xAdvance * size + this._letterSpacing;
             prevCharCode = charCode;
             prevScale = scale;
+            prevFontIdx = fontIdx;
         }
 
         // Cache local bounds.

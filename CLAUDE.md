@@ -107,7 +107,9 @@ check-and-flush that must set the new value **after** the flush, since uniforms
 are read at draw time (`setupUniforms`). Setting it early would render the
 previous font's queued quads with the new font's range. The texture is the batch
 handler's own gate, inside `batch()`. Nothing else flushes: a shadowed, outlined,
-underlined text is **one draw call**.
+underlined text is **one draw call**. With per-run fonts the gate runs per glyph,
+so a text mixing N atlas textures costs N draws per pass — the only reason to
+merge atlases.
 
 **Decorations** — underline / strikethrough are appearance-lane but
 glyph-independent. They resolve per *source* character through the normal paint
@@ -152,29 +154,52 @@ glyph's shadow/outline are independent of its fill.
   `_characters`, not the glyph array.
 - **Structural** — `fontScale` (a *multiplier* on the object `fontSize`; absolute
   px would go stale under `setFontSize` and break `fitInside`'s monotone binary
-  search). It never reaches `GlyphState`; it is painted into `_sizeScales`, a
-  `Float32Array` of per-**source**-character multipliers (`null` = uniform, the
-  fast path), which feeds wrap, measurement and layout. A change sets `_dirty` —
+  search) and `font` (an `msdfFont` cache key; an unknown key warns once and falls
+  back to the base font). Neither reaches `GlyphState`. They are painted into two
+  parallel source-indexed maps — `_sizeScales` (`Float32Array` of multipliers) and
+  `_fontMap` (`Uint8Array` of `_runFonts` indices) — both `null` on the uniform
+  fast path, both feeding wrap, measurement and layout. A change sets `_dirty` —
   a rebuild, not a re-seed.
 
 Only layers resolved *before* the layout pass may carry structural keys, so
-`SegmentSpec` and `setTextStyle`'s `RuleStyleSpec` have `fontScale` and
-`StyleSpec` (ranges, callback — applied *after* layout) never will.
-`MSDFText.refreshStyleState()` recomputes all of `_hasStyles` /
-`_hasAppearance` / `_hasDecorations` / `_sizeScales` and is the single place that
-decides re-seed vs rebuild.
+`SegmentSpec` and `setTextStyle`'s `RuleStyleSpec` have `fontScale` / `font` and
+`StyleSpec` (ranges, callback — applied *after* layout) never will;
+`resolveRangeStyle` strips them for JS callers. `MSDFText.refreshStyleState()`
+recomputes all of `_hasStyles` / `_hasAppearance` / `_hasDecorations` /
+`_sizeScales` / `_fontMap` / `_maxLineUnit` and is the single place that decides
+re-seed vs rebuild. It rebuilds `_runFonts` unconditionally, because `setFont`
+swaps slot 0 out from under an otherwise unchanged map.
 
-**Variable line metrics** — with `_sizeScales`, `MSDFFont.measureLines` returns a
-`baselines[]` array: a line's box height and ascent both take the largest size on
-that line, and `rebuildText` places every glyph on that shared baseline (mixed
-sizes align by **baseline**, not by top). Kerning is applied only *within* a
-same-size run — `measureSpan`, `wrapLines` and `rebuildText` must all make that
-same call or wrapped lines mismeasure. Per-run **`font`** is unimplemented, but it
-is now purely a **texture-binding problem**: since the `params` channels are
-normalized by `distanceRange` at pack time, `uUnitRange` is per-texture, not
-per-glyph. It needs `configureFont` extended to switch textures per run, plus a
-font map alongside `_sizeScales` — unlike `fontScale`, which is pure layout math
-on one atlas.
+**Variable line metrics** — measurement is **not** a method on one font. It lives
+in `src/MSDFMeasure.ts` as free functions over a `LayoutRuns` — `{ base, scales,
+fonts, fontList }`, where `scales`/`fonts` are index-keyed maps and both are
+`null` on the uniform fast path. `measureLines` returns a `baselines[]` array: a
+line's ascent and box height each take the **largest of that metric** over the
+characters on the line (taken independently, since with mixed fonts the tallest
+ascender and tallest line box need not be the same run; with one font they always
+are, so single-font layout is bit-identical to before). `rebuildText` places every
+glyph on that shared baseline — mixed sizes *and* mixed fonts align by
+**baseline**, not by top.
+
+`measureSpan`, `wrapLines` and `rebuildText` must make **identical** advance and
+kerning calls or wrapped lines mismeasure. The two shared rules: a character
+missing from *its run's* font is skipped (no advance, and **no cross-font
+fallback**, ever); kerning applies only between two characters in the same font at
+the same size. `MSDFFont` keeps thin single-font wrappers (`measureText`,
+`measureLines`) for direct callers.
+
+**Per-run font** is a **texture-binding problem and nothing else** — because the
+`params` channels are normalized by `distanceRange` at pack time, `uUnitRange` is
+per-texture, never per-glyph. `_fontMap` (a source-indexed `Uint8Array`, `null`
+when uniform) indexes `_runFonts`, whose slot **0 is always the object's own
+font**; `_runFrames` holds the parallel texture frames (slot 0 `null` — the base
+font's frame is the object's own). Each `_characters[i]` carries a `fontIdx`, and
+the renderer resolves one `FontBinding` per font (texture, `uUnitRange`,
+`1/distanceRange`, `isMtsdf`) then calls `configureFont` per glyph — but only when
+there is more than one font, so the single-font path configures once outside the
+loops. A run on a different texture ends the draw call; a merged (`-and`) atlas
+avoids that with no renderer change. `fieldType` is per-font, so the MTSDF clamp
+is per-binding.
 
 **Font data** — `msdf-atlas-gen` JSON, parsed by `src/MSDFFontParser.ts` into a
 runtime `MSDFFont`. Contains `atlas` metadata (type, `distanceRange`, size,
@@ -188,7 +213,8 @@ src/
   MSDFPlugin.ts            # Global plugin; installMSDFPlugin, cache + extension check
   MSDFFontFile.ts          # Registers the `this.load.msdfFont` loader
   MSDFFontParser.ts        # Parses msdf-atlas-gen JSON
-  MSDFFont.ts              # Parsed font: glyph metrics, kerning, measurement
+  MSDFFont.ts              # Parsed font: glyph metrics, kerning, single-font measurement
+  MSDFMeasure.ts           # Run-aware measurement (LayoutRuns, measureSpan, measureLines)
   MSDFText.ts              # Text GameObject (layout, wrap, outline, shadow, decorations, per-glyph state)
   MSDFTextTypes.ts         # Public type surface (StyleSpec / RuleStyleSpec / MSDFTextInstance)
   MSDFTextStyle.ts         # Rich-text style engine (resolve, match, apply) — no instance state

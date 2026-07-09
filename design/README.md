@@ -48,6 +48,8 @@ All three of the above are **implemented**, as is:
 
 ## Phase 2 — status
 
+**Everything in Phase 2 is implemented except step E** (the merged atlas).
+
 **2a (per-run size, `fontScale`) is implemented.** Structural keys live on
 `SegmentSpec` *and* `setTextStyle`'s new `RuleStyleSpec` (the refinement in
 `rich-text-styling.md` superseded the original "segments only" call); ranges and
@@ -83,16 +85,39 @@ Two implementation notes not in the design doc, both forced by per-glyph width:
   object's live values, so tweening the text's colour drags an inherited
   underline along with it.
 
+**2b (per-run font) is implemented.** `font` (an `msdfFont` cache key) joined
+`fontScale` on `SegmentSpec` and `RuleStyleSpec`. It landed exactly as the split
+predicted: `_characters` grew a `fontIdx`, the style layer resolves font keys
+against the scene cache (in `MSDFText.buildFontMap`, not in the `this`-free
+`resolveStyle`), and the renderer gained its first per-glyph flush gate. The
+metrics refactor 2a built carried none of that weight.
+
+Measurement moved out of `MSDFFont` into `src/MSDFMeasure.ts` as free functions
+over a `LayoutRuns` (`{ base, scales, fonts, fontList }`, both maps `null` on the
+uniform fast path) — the one architectural move the doc said 2b would force.
+`maxScaleIn` became `lineMetrics`, which maximises ascent and line height
+**independently** (with mixed fonts they can come from different runs; with one
+font they can't, so single-font layout is unchanged). The renderer resolves one
+`FontBinding` per font and only touches the gate inside the loops when the text
+actually has more than one — so the single-font path is byte-for-byte the pre-2b
+one. Demo: `examples/scenes/per-run-font.ts`.
+
+Three things the design doc didn't anticipate:
+
+- **Line metrics need two independent maxima**, not one "max metric on this line".
+- **Decoration rects grew a `fontIdx`.** Underline position/thickness are
+  font-relative, so a rect splits at a font boundary — and carrying the run's
+  texture keeps a `solid` quad from forcing an extra flush.
+- **`refreshStyleState` must rebuild `_runFonts` unconditionally**, because
+  `setFont` swaps slot 0 out from under an otherwise unchanged `_fontMap`.
+
 **Still out of scope:**
 
-- **Per-run font (2b)** — `rich-text-styling.md`, "Phase 2".
-
-The **2a/2b split held for a sharper reason than "size is cheaper"**: the shared
-"variable line-metrics" refactor turned out to be *all* of 2a and *none* of the
-hard part of 2b. 2b's cost is in the renderer and loader, not the metrics —
-`_characters` grow a font reference, the style layer starts resolving font keys
-against the cache, and the renderer gains its first per-glyph flush gate. None of
-that got cheaper by riding along with 2a.
+- **Step E — the merged (`-and`) atlas.** `msdf-atlas-gen` can pack several fonts
+  into one PNG + one JSON; teaching `MSDFFontParser` to yield N `MSDFFont`s from
+  such a JSON and `MSDFFontFile` to upload the texture once would make
+  `configureFont`'s flush never fire for mixed-font runs. Pure optimisation, no
+  renderer change.
 
 **Why `vertex-params.md` went first.** It was a *subtractive* refactor — it
 deleted four uniforms, collapsed the four shader modes into one, and removed
@@ -101,16 +126,16 @@ Per-run font is purely additive. And it corrected a claim this file used to make
 per-run fonts do **not** make `uPxRange`/`uAtlasSize` per-glyph. Once outline
 width and shadow softness are normalised as fractions of `distanceRange`,
 `uPxRange` cancels out of every shader branch and survives only as a per-texture
-ratio. **Per-run font is a texture-binding problem and nothing else** — and the
-gate is already built: `configureFont(unitRange)` replaced `configurePass` and
-fixed the live multi-font uniform-ordering bug on the way. 2b's renderer work is
-just extending that gate to switch textures.
+ratio. **Per-run font turned out to be a texture-binding problem and nothing
+else** — the gate was already built: `configureFont(unitRange)` replaced
+`configurePass` and fixed the live multi-font uniform-ordering bug on the way. 2b's
+renderer work was extending that gate to switch textures, as predicted.
 
-Remaining frozen calls for 2b: kerning only between glyphs sharing a font *and*
-size; one über-shader throughout (variant programs can't share a batch); no
-cross-font glyph fallback (a char missing from its run's font is skipped, same
-as today); the first draft may simply flush on texture change — the
-merged-atlas (`-and`) single-batch path is a later optimisation.
+Frozen calls that shipped as written: kerning only between glyphs sharing a font
+*and* size; one über-shader throughout (variant programs can't share a batch); no
+cross-font glyph fallback (a char missing from its run's font is skipped, same as
+a missing char always was); flush on texture change — the merged-atlas (`-and`)
+single-batch path is a later optimisation (step E).
 
 ## Locked design decisions (rationale lives in the docs)
 
@@ -122,8 +147,8 @@ merged-atlas (`-and`) single-batch path is a later optimisation.
   Phaser `Align` constants.
 - The per-glyph model is split into two lanes: **appearance** (seeded into
   `GlyphState`, per-frame safe, animatable — colour/alpha/outline/shadow/scale/
-  rotation/skew) vs **structural** (changes layout, rebuild-only — `fontScale`,
-  and `font` in 2b). `displayCallback` stays appearance-only.
+  rotation/skew) vs **structural** (changes layout, rebuild-only — `fontScale`
+  and `font`). `displayCallback` stays appearance-only.
 - The shader stays a single über-shader, and `params` channels are per-corner
   where continuous but per-glyph where packed (GLSL ES 1.00 has no `flat`).
   Rationale in `vertex-params.md`.
