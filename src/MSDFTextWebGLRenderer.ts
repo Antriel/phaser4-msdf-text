@@ -49,8 +49,7 @@ import type { MSDFBatchHandlerInstance } from './MSDFBatchHandler';
 import {
     packColor,
     packParams,
-    PARAM_ROUNDED,
-    PARAM_SOLID,
+    SOLID_PARAMS,
     type Corners,
     type PackedCorners
 } from './MSDFColor';
@@ -77,12 +76,16 @@ const shadowParams: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bo
 // shadow's or a silhouette's fill): all-zero, so that layer contributes nothing.
 const zeroColor: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 const zeroCorners: Corners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
+// A shadow rounds itself off the true SDF exactly where it is blurred, so this
+// tracks `shadow.softness` corner for corner. Uniform softness reproduces the
+// old all-or-nothing flag; a soft-on-one-side shadow now keeps its hard side
+// crisp against `median(rgb)`, matching the fill it sits behind.
+const shadowRounded: Corners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 // The object's effective per-corner alpha, for decorations that inherit it.
 const baseAlpha: Corners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 
 // Decoration rects: full coverage, no distance field, no outline. Constant.
-const RECT_PARAM = packParams(0, PARAM_SOLID, 0, 0);
-const rectParams: PackedCorners = { topLeft: RECT_PARAM, topRight: RECT_PARAM, bottomLeft: RECT_PARAM, bottomRight: RECT_PARAM };
+const rectParams: PackedCorners = { topLeft: SOLID_PARAMS, topRight: SOLID_PARAMS, bottomLeft: SOLID_PARAMS, bottomRight: SOLID_PARAMS };
 const rectColor: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 // A rect spans the full 0..1 of its own UV box. Not because it samples anything
 // — `solid` short-circuits coverage — but so `fwidth(texCoord)` stays nonzero
@@ -161,10 +164,10 @@ function packStaticParams(src: any, count: number): void {
         const b = bindings[i];
         const inv = b.invRange;
         const softness = b.isMtsdf ? shadowSoftness : 0;
-        const outlineFlags = (b.isMtsdf && outlineRounded) ? PARAM_ROUNDED : 0;
-        b.staticParams = packParams(weight * inv, outlineFlags, outlineWidth * inv, 0);
+        const rounded = (b.isMtsdf && outlineRounded) ? 1 : 0;
+        b.staticParams = packParams(weight * inv, rounded, outlineWidth * inv, 0);
         b.staticShadowParams = packParams(
-            weight * inv, softness > 0 ? PARAM_ROUNDED : 0, 0, softness * inv
+            weight * inv, softness > 0 ? 1 : 0, 0, softness * inv
         );
     }
 }
@@ -191,23 +194,24 @@ function packOutlineAspect(buf: PackedCorners, color: Corners, alpha: Corners, w
 }
 
 /**
- * Pack the four `params` corners. `flags` is per-glyph by construction (a packed
- * bitfield cannot survive interpolation); the numeric channels are normalized by
- * the font's `distanceRange` here, on the CPU, which is what makes them
- * font-independent and lets the range cancel out of the shader.
+ * Pack the four `params` corners. Every channel is continuous, so every channel
+ * is genuinely per-corner — `rounded` included, since it stopped being a bit in
+ * a bitfield. The distance-field quantities are normalized by the font's
+ * `distanceRange` here, on the CPU, which is what makes them font-independent
+ * and lets the range cancel out of the shader.
  */
 function packParamsAspect(
     buf: PackedCorners,
     weight: Corners,
-    flags: number,
+    rounded: Corners,
     width: Corners,
     softness: Corners,
     invRange: number
 ): void {
-    buf.topLeft = packParams(weight.topLeft * invRange, flags, width.topLeft * invRange, softness.topLeft * invRange);
-    buf.topRight = packParams(weight.topRight * invRange, flags, width.topRight * invRange, softness.topRight * invRange);
-    buf.bottomLeft = packParams(weight.bottomLeft * invRange, flags, width.bottomLeft * invRange, softness.bottomLeft * invRange);
-    buf.bottomRight = packParams(weight.bottomRight * invRange, flags, width.bottomRight * invRange, softness.bottomRight * invRange);
+    buf.topLeft = packParams(weight.topLeft * invRange, rounded.topLeft, width.topLeft * invRange, softness.topLeft * invRange);
+    buf.topRight = packParams(weight.topRight * invRange, rounded.topRight, width.topRight * invRange, softness.topRight * invRange);
+    buf.bottomLeft = packParams(weight.bottomLeft * invRange, rounded.bottomLeft, width.bottomLeft * invRange, softness.bottomLeft * invRange);
+    buf.bottomRight = packParams(weight.bottomRight * invRange, rounded.bottomRight, width.bottomRight * invRange, softness.bottomRight * invRange);
 }
 
 /** Fill all four corners of a buffer with one packed value. */
@@ -215,9 +219,12 @@ function fillCorners(buf: PackedCorners, value: number): void {
     buf.topLeft = buf.topRight = buf.bottomLeft = buf.bottomRight = value;
 }
 
-/** The largest of a corner set — used to decide a per-glyph flag from per-corner data. */
-function maxCorner(c: Corners): number {
-    return Math.max(Math.max(c.topLeft, c.topRight), Math.max(c.bottomLeft, c.bottomRight));
+/** Where a corner's shadow is blurred, its silhouette rounds off the true SDF. */
+function roundedFromSoftness(buf: Corners, softness: Corners): void {
+    buf.topLeft = softness.topLeft > 0 ? 1 : 0;
+    buf.topRight = softness.topRight > 0 ? 1 : 0;
+    buf.bottomLeft = softness.bottomLeft > 0 ? 1 : 0;
+    buf.bottomRight = softness.bottomRight > 0 ? 1 : 0;
 }
 
 /**
@@ -513,9 +520,9 @@ function MSDFTextWebGLRenderer(
                 // A soft shadow reads the true SDF; a hard one is just the glyph
                 // silhouette in the shadow colour, so it keeps median(rgb).
                 const softness = b.isMtsdf ? g.shadow.softness : zeroCorners;
-                const flags = maxCorner(softness) > 0 ? PARAM_ROUNDED : 0;
+                roundedFromSoftness(shadowRounded, softness);
                 packAspect(shadowBuf, g.shadow.color, g.shadow.alpha);
-                packParamsAspect(shadowParams, g.weight, flags, zeroCorners, softness, b.invRange);
+                packParamsAspect(shadowParams, g.weight, shadowRounded, zeroCorners, softness, b.invRange);
                 submitOneGlyph(drawingContext, batchHandler, b.texture, char,
                     g.x + g.shadow.x, g.y + g.shadow.y, g.scaleX, g.scaleY, g.rotation, g.skew,
                     calcMatrix, originOffsetX, originOffsetY, zeroColor, shadowBuf, shadowParams);
@@ -540,9 +547,9 @@ function MSDFTextWebGLRenderer(
 
             if (perGlyph) {
                 const g = glyphs![i];
-                const flags = (b.isMtsdf && g.outline.rounded) ? PARAM_ROUNDED : 0;
+                const rounded = b.isMtsdf ? g.outline.rounded : zeroCorners;
                 packOutlineAspect(outlineBuf, g.outline.color, g.outline.alpha, g.outline.width);
-                packParamsAspect(glyphParams, g.weight, flags, g.outline.width, zeroCorners, b.invRange);
+                packParamsAspect(glyphParams, g.weight, rounded, g.outline.width, zeroCorners, b.invRange);
                 submitOneGlyph(drawingContext, batchHandler, b.texture, char,
                     g.x, g.y, g.scaleX, g.scaleY, g.rotation, g.skew,
                     calcMatrix, originOffsetX, originOffsetY, zeroColor, outlineBuf, glyphParams);
@@ -579,8 +586,8 @@ function MSDFTextWebGLRenderer(
                 packOutlineAspect(outlineBuf, g.outline.color, g.outline.alpha, g.outline.width);
                 outlineData = outlineBuf;
             }
-            const flags = (b.isMtsdf && g.outline.rounded) ? PARAM_ROUNDED : 0;
-            packParamsAspect(glyphParams, g.weight, flags, g.outline.width, zeroCorners, b.invRange);
+            const rounded = b.isMtsdf ? g.outline.rounded : zeroCorners;
+            packParamsAspect(glyphParams, g.weight, rounded, g.outline.width, zeroCorners, b.invRange);
             submitOneGlyph(drawingContext, batchHandler, b.texture, char,
                 g.x, g.y, g.scaleX, g.scaleY, g.rotation, g.skew,
                 calcMatrix, originOffsetX, originOffsetY, fillBuf, outlineData, glyphParams);

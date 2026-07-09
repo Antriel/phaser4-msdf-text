@@ -30,22 +30,29 @@ from a single texture per font. Published as the npm package
   ratio, `uUnitRange = distanceRange / atlasSize`.
 
 **The `params` attribute** — every per-glyph effect rides one normalized
-`UNSIGNED_BYTE` vec4, `inParams`: `.r` weight (faux bold), `.g` flags, `.b`
+`UNSIGNED_BYTE` vec4, `inParams`: `.r` weight (faux bold), `.g` rounded, `.b`
 outline width, `.a` shadow softness. Packing lives in `packParams`
 (`src/MSDFColor.ts`); the shader decodes with its exact inverse, and there is no
 second source of truth.
-- The numeric channels are **fractions of the atlas `distanceRange`**, normalized
-  on the CPU with *that glyph's* font. That is what makes them font-independent
-  and what makes `distanceRange` cancel out of every shader branch (it survives
-  only inside `screenPxRange()`, coupled to the atlas size as `uUnitRange`).
+- The distance-field channels are **fractions of the atlas `distanceRange`**,
+  normalized on the CPU with *that glyph's* font. That is what makes them
+  font-independent and what makes `distanceRange` cancel out of every shader
+  branch (it survives only inside `screenPxRange()`, coupled to the atlas size as
+  `uUnitRange`).
 - `.b` spans `[0, distanceRange/2]` and `.r` spans `±distanceRange/2` — the
   distance field clamps at 0, so a full-range encoding would waste half a byte.
   Weight's neutral point is byte `128`, which decodes to `128/255`, **not** `0.5`.
-- `.g` is a bitfield (`PARAM_ROUNDED`, `PARAM_SOLID`) and must be written
-  identically to all four vertices of a quad: GLSL ES 1.00 has no `flat`
-  qualifier, so anything else would interpolate into garbage. The other three
-  channels are continuous, so they are **per-corner for free** — a directional
-  outline, a faux-bold gradient, a soft-on-one-side shadow.
+- **All four channels are continuous**, so all four are **per-corner for free** —
+  a directional outline, a faux-bold gradient, a soft-on-one-side shadow, an
+  outline melting from sharp to round across a glyph. There is no bitfield: GLSL
+  ES 1.00 has no `flat` qualifier, so an interpolated bitfield would be garbage.
+- `solid` (underline/strike rects) is instead a **sentinel**: weight byte `255`.
+  A solid quad's coverage short-circuits to `1` before `weight`, `outlineWidth`
+  or `shadowSoftness` is read, so the channel is free to carry the signal, and a
+  rect writes it identically to all four corners. `packParams` clips a real
+  glyph's weight to byte `253` and the shader splits at `254` — a byte of guard
+  band each side, ~4× a `mediump` varying's ULP. The cost is the top `2/255` of
+  faux bold, where the fill edge has already collapsed onto the field's clamp.
 
 **Outline** — outline and fill composite in one quad (fill *over* outline; the
 outline edge is `fillEdge - width`). Because that is per-glyph, a thick outline
@@ -58,9 +65,9 @@ blending. Tradeoffs: a second set of glyph quads, and the outline now composites
 under the fill, so translucent text shows the outline through the fill. Every
 pass shares the `submitOneGlyph` helper in `MSDFTextWebGLRenderer.ts`.
 
-Outline **colour, alpha, width** and shadow **softness** are all per-vertex, so
-two texts with different outline widths — or one outlined and one not — batch
-together. A width of `0` *is* what "no outline" means; since at zero width the
+Outline **colour, alpha, width, rounded** and shadow **softness** are all
+per-vertex, so two texts with different outline widths — or one outlined and one
+not — batch together. A width of `0` *is* what "no outline" means; since at zero width the
 outline edge coincides with the fill edge, `packOutlineAspect` zeroes the outline
 alpha wherever the width is zero rather than branching in the shader.
 
@@ -70,10 +77,14 @@ the alpha channel alongside the MSDF in RGB. The fill layer always uses
 *outline* would also round its glyph's *fill* — and the outline/shadow layer uses
 `mix(median, tsdf, rounded)`:
 - Rounded outline (`setOutline(..., rounded)`) — the outline edge comes from the
-  alpha SDF, which rounds outer corners; the letterform edge stays sharp.
+  alpha SDF, which rounds outer corners; the letterform edge stays sharp. The
+  object-level flag seeds `0` or `1`, but `GlyphState.outline.rounded` is a
+  per-corner `0..1` `Corners`: intermediates `mix()` sharp into round.
 - Soft shadow / glow (`setShadow(..., softness)`) — a shadow quad is an
   **outline-only quad**: fill alpha 0, shadow colour in the `inOutline`
-  attribute, width 0, softness (and `rounded`, when soft) in `params`. Softness
+  attribute, width 0, softness in `params` — with `rounded` tracking softness
+  corner for corner, so a shadow's hard side stays crisp against the fill it
+  sits behind (uniform softness reproduces the old per-glyph flag). Softness
   is measured in **distance-field units** (like `outlineWidth`), so the blur
   scales with the text at any size; it is bounded by the atlas `distanceRange`,
   with a 1-screen-pixel AA floor. A *hard* shadow keeps the `backgroundFade`
@@ -92,7 +103,7 @@ the alpha channel alongside the MSDF in RGB. The fill layer always uses
   one expression for fill, outline and shadow (`softNorm = 0` reproduces the
   plain AA ramp exactly), then an honest fill-over-outline composite. Its
   degenerate cases are exact: zero outline alpha is a plain fill, zero fill alpha
-  is a bare silhouette. The `solid` flag short-circuits coverage to 1 for
+  is a bare silhouette. The `solid` sentinel short-circuits coverage to 1 for
   underline/strike rects; those rects carry real `0..1` UVs so `fwidth()` stays
   nonzero and no Inf leaks through the `mix`.
 - Output is premultiplied alpha (`vec4(rgb * a, a)`) — required by Phaser 4's
@@ -119,7 +130,7 @@ inherited — resolved fill colour/alpha changes. Rects deliberately live outsid
 `_characters`: the `GlyphState` array, `editGlyphs()` and every per-glyph loop
 assume one quad per renderable char and must never see a rect. Consequently
 `displayCallback` cannot see or animate them, and per-glyph transforms move
-glyphs, not decorations. Rect quads set `PARAM_SOLID` and batch with the glyphs;
+glyphs, not decorations. Rect quads carry `SOLID_PARAMS` and batch with the glyphs;
 underlines submit before the fill loop, strikethroughs after. An inherited
 colour is resolved at *submit* time, so tweening the object's colour or alpha
 drags the underline along.

@@ -13,53 +13,24 @@ verify the referenced code still looks the way it's described before starting.
 
 ## From `vertex-params.md` — free byte, and unused attribute slots
 
-### The `rounded` sentinel trick (frees a continuous per-corner byte)
+### ~~The `rounded` sentinel trick~~ — **built**
 
-**Who benefits: real glyphs' outline/shadow rendering — not the rects.** The
-rects (`solid` quads) are only the *enabler* below; they gain nothing from this
-themselves. The payoff is that a normal glyph's outline or shadow could get a
-per-corner `rounded` gradient (one corner sharp-MSDF, the opposite corner
-rounded-SDF, or animated over time) instead of today's all-or-nothing
-per-glyph switch.
+`params.g` is now the raw continuous `rounded` byte, per-corner, and `solid` is
+a sentinel (`weight` byte `255`) rather than a bit. `PARAM_ROUNDED` /
+`PARAM_SOLID` are gone; `SOLID_PARAMS` replaces them.
 
-**What:** `params.g` (`flags`) is a bitfield — `PARAM_ROUNDED | PARAM_SOLID` —
-and bitfields can't be per-corner (GLSL ES 1.00 has no `flat` qualifier, so an
-interpolated bitfield is garbage). That forces `rounded` to be constant across
-all four corners of a quad, even though the shader already treats it as
-continuous (`mix(median(rgb), tsdf, rounded)`) and a genuinely per-corner value
-would blend sharp-MSDF into rounded-SDF beautifully.
+The doc's open problem — that `packParams` saturates, so byte `255` in `weight`
+was not an impossible input — was settled by **clipping a real glyph's weight to
+byte `253`** and having the shader split at `254`. That leaves a full byte of
+guard band on each side of the threshold (~4× a `mediump` varying's ULP near
+`1.0`, so interpolation can't cross it), at the cost of the top `2/255` of the
+faux-bold range — an extreme where the fill edge has already collapsed onto the
+distance field's own clamp and letters overlap.
 
-**The unlock:** `solid` quads (underline/strike rects) never use `weight`,
-`outlineWidth` or `shadowSoftness` — the shader short-circuits their coverage to
-`1.0` before those channels are read at all. So `solid` could be signalled by a
-**sentinel value** in one of those three channels instead of a dedicated bit in
-`flags` (e.g. reserve `weight`'s top byte value to mean "this is a solid quad";
-the shader checks that channel first and only falls through to normal per-glyph
-math otherwise). A constant sentinel is safe under interpolation for the same
-reason a bitfield isn't — a rect's four corners already carry identical values
-by construction, so there's nothing to interpolate. That frees `flags` down to
-a single remaining job (`PARAM_ROUNDED`), which then no longer needs to *be* a
-bitfield — `params.g` can become the raw continuous `rounded` byte directly,
-decoded exactly like `outlineWidth`.
-
-**Open problem, not resolved by the original design doc:** picking the sentinel
-isn't free. `packParams` saturates (`toByte(weightNorm * 255 + 128)` clamps at
-both ends), so byte value `255` in `weight` already means "any weight strong
-enough to clip" — not a unique, otherwise-impossible input. Reserving `255` as
-the solid-sentinel means real text at max faux bold would misread as a solid
-rect. Whichever channel/value is chosen needs either a value that legitimate
-glyph data genuinely can't produce, or a deliberate, documented sacrifice of
-that channel's extreme (arguably fine for max faux bold, which is already a
-degenerate, glyphs-overlap extreme — but that's a call for whoever builds this,
-not a settled decision).
-
-**Cost:** `packParams`/the shader's flag decode need a branch on the sentinel
-instead of a mask check; `PARAM_SOLID` disappears as a constant. Contained to
-`MSDFColor.ts` (`packParams`, `PARAM_ROUNDED`/`PARAM_SOLID`) and the fragment
-shader's flag decode in `MSDFBatchHandler.ts`.
-
-**Prerequisite:** none — everything it touches already exists. Confirmed still
-current: `PARAM_ROUNDED = 1`, `PARAM_SOLID = 2` in `src/MSDFColor.ts`.
+`GlyphState.outline.rounded` went `boolean` → `Corners` (`0..1` per corner);
+`setOutline(..., rounded)` still seeds its ends. Shadow quads now derive
+`rounded` from `shadow.softness` corner for corner instead of one per-glyph flag
+from `maxCorner(softness)`.
 
 ### Two-tone shadows / glows
 
@@ -105,13 +76,13 @@ needs padding/corner-radius fields, unlike underline which is metric-derived).
 
 **What:** `fract(u · n)` against the rect's own `0..1` U coordinate, thresholded
 in the `solid` branch — same UV groundwork as the pill idea above. `n` (dash
-count) would need to reach the shader per-rect, which the current `params`
-byte4 has no free channel for on a `solid` quad *unless* combined with the
-`rounded`-sentinel trick above (freeing a channel on `solid` quads specifically,
-since they don't need `weight`/`outlineWidth`/`shadowSoftness` today).
+count) needs to reach the shader per-rect.
 
-**Dependency:** cleanest if done after the `rounded` sentinel trick, since that
-establishes the pattern of repurposing a `solid` quad's unused channels.
+**Now unblocked:** the sentinel trick above established that a `solid` quad's
+`rounded`, `outlineWidth` and `shadowSoftness` channels are all dead weight —
+the shader short-circuits coverage before reading any of them. A dash count can
+ride any one of the three (`outlineWidth`'s byte gives 255 dashes at double
+precision). Only `weight` is spoken for, since it carries the sentinel itself.
 
 ## From `rich-text-styling.md` — skew alternatives
 

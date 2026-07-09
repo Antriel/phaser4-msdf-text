@@ -6,7 +6,7 @@ import type { MSDFTextInstance, GlyphState, Segment } from "../../src";
 // outlined text cost three draw calls and two texts with different outline
 // widths could never share one. They now ride the per-vertex `params` attribute,
 // so all of this is a single draw call — including the underline rects, which
-// batch with the glyphs via a `solid` flag rather than a mode switch.
+// batch with the glyphs via a `solid` sentinel rather than a mode switch.
 
 const BODY: Segment[] = [
   "A ",
@@ -116,9 +116,10 @@ export class VertexParamsScene extends ExampleScene {
       ]);
       this.text.setOutline(0.9, 0x1a1030);
     } else if (mode === "corners") {
-      // weight, outline.width and shadow.softness are continuous, so they
-      // interpolate across the quad exactly like the colour corners do. The ramp
-      // is linear across the quad's bounding box, not along the letter contour.
+      // Every params channel is continuous, so all four interpolate across the
+      // quad exactly like the colour corners do — rounding included, now that
+      // `solid` is a sentinel rather than a bit and `params.g` is a raw byte. The
+      // ramp is linear across the quad's bounding box, not the letter contour.
       this.text.setText("Gradient weight and directional outlines");
       this.text.setOutline(1, 0xffd23f);
       this.text.setDisplayCallback((glyphs: GlyphState[]) => {
@@ -132,6 +133,11 @@ export class VertexParamsScene extends ExampleScene {
           const o = g.outline.width;
           o.topLeft = o.bottomLeft = 0.2;
           o.topRight = o.bottomRight = 3.0;
+          // Sharp median(rgb) on the left, rounded true-SDF on the right: the
+          // thick side of the outline melts its corners as the width grows.
+          const r = g.outline.rounded;
+          r.topLeft = r.bottomLeft = 0;
+          r.topRight = r.bottomRight = 1;
         }
       });
     } else if (mode === "glow") {

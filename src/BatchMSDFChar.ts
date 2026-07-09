@@ -6,8 +6,8 @@
  *
  * Each vertex carries three packed u32s: `colorData` (the fill), `outlineData`
  * (the outline colour — also where a shadow quad's colour rides, since shadows
- * are drawn as outline-only quads) and `params` (weight / flags / outline width
- * / shadow softness; see `MSDFColor.packParams`).
+ * are drawn as outline-only quads) and `params` (weight / rounded / outline
+ * width / shadow softness; see `MSDFColor.packParams`).
  */
 
 import type { MSDFBatchHandlerInstance } from './MSDFBatchHandler';

@@ -526,9 +526,9 @@ Each glyph exposes:
 - **`shadow`** — `{ color, alpha, x, y, softness: Corners }`, controlled
   independently of the fill. Drawn if the text has a drop shadow, or you set
   `perGlyphShadow = true` (see the Shadow section).
-- **`outline`** — `{ color, alpha, width: Corners, rounded }`. A `width` of `0`
-  is what "no outline" means, so a glyph can be outlined even when the object is
-  not. `rounded` is per-glyph, not per-corner.
+- **`outline`** — `{ color, alpha, width: Corners, rounded: Corners }`. A `width`
+  of `0` is what "no outline" means, so a glyph can be outlined even when the
+  object is not. `rounded` runs `0` (sharp) to `1` (fully rounded) per corner.
 - read-only **`index`**, **`charCode`**, and **provenance** — `srcIndex`,
   `line`, `srcLine` (see below).
 
@@ -585,11 +585,11 @@ g.fill.color.topLeft = g.fill.color.topRight = 0xff5da8;
 g.fill.color.bottomLeft = g.fill.color.bottomRight = 0x5db8ff;
 ```
 
-`weight`, `outline.width` and `shadow.softness` are per-corner too, so a
-faux-bold gradient, a directional outline or a soft-on-one-side shadow all cost
-nothing extra. The interpolation is linear across the quad's bounding box, not
-along the letter contour — a directional ramp, not a contour-following pulse.
-`outline.rounded` is a packed bit, so it is per-glyph only.
+`weight`, `outline.width`, `outline.rounded` and `shadow.softness` are per-corner
+too, so a faux-bold gradient, a directional outline, a soft-on-one-side shadow or
+an outline melting from sharp to round all cost nothing extra. The interpolation
+is linear across the quad's bounding box, not along the letter contour — a
+directional ramp, not a contour-following pulse.
 
 #### Persistent per-glyph state (manual mode)
 

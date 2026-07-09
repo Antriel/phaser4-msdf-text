@@ -26,7 +26,7 @@ const SimpleVertexShader = [
     'attribute vec2 inTexCoord;',
     'attribute vec4 inColor;',    // Fill colour.
     'attribute vec4 inOutline;',  // Outline colour — also the shadow colour, which rides this layer.
-    'attribute vec4 inParams;',   // weight, flags, outlineWidth, shadowSoftness. See MSDFColor.packParams.
+    'attribute vec4 inParams;',   // weight, rounded, outlineWidth, shadowSoftness. See MSDFColor.packParams.
     '',
     'varying vec2 outTexCoord;',
     'varying vec4 outColor;',
@@ -81,13 +81,14 @@ const SimpleFragmentShader = [
     '    float tsdf = texel.a;',  // True SDF — meaningful only on MTSDF atlases.
     '    float px = screenPxRange();',
     '',
-    '    // Unpack params. `flags` is written identically to all four vertices',
-    '    // (GLSL ES 1.00 has no `flat`), so it survives interpolation exactly.',
-    '    float flags = floor(outParams.g * 255.0 + 0.5);',
-    '    float rounded = mod(flags, 2.0);',
-    '    float solid = mod(floor(flags * 0.5), 2.0);',
+    '    // Unpack params. A weight byte of 255 is the "solid quad" sentinel, which',
+    '    // a real glyph cannot reach: packParams clips it to 253. Both sides of the',
+    '    // 254 threshold keep a byte of guard band, so interpolation cannot cross',
+    '    // it — and a rect writes the same sentinel to all four corners anyway.',
+    '    float solid = step(254.0 / 255.0, outParams.r);',
     '',
     '    float weight = outParams.r - (128.0 / 255.0);',  // Signed fraction of the range; 128 is neutral.
+    '    float rounded = outParams.g;',                   // Byte spans the full [0, 1]; per-corner.
     '    float widthNorm = outParams.b * 0.5;',           // Byte spans the useful [0, 0.5].
     '    float softNorm = outParams.a;',                  // Byte spans the full [0, 1].
     '',

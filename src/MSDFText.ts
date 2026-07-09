@@ -1265,7 +1265,9 @@ export const MSDFText: MSDFTextStatic = new Class({
         // object's width is all the gating the renderer needs.
         const owd = g.outline.width, oWidth = this.outlineWidth;
         owd.topLeft = owd.topRight = owd.bottomLeft = owd.bottomRight = oWidth;
-        g.outline.rounded = this.outlineRounded;
+        // Rounding is continuous per corner; the object-level flag seeds its ends.
+        const ord = g.outline.rounded, oRound = this.outlineRounded ? 1 : 0;
+        ord.topLeft = ord.topRight = ord.bottomLeft = ord.bottomRight = oRound;
     },
 
     /**

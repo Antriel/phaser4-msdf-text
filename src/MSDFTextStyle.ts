@@ -282,7 +282,7 @@ export function applyStyleToGlyph(g: GlyphState, s: ResolvedStyle): void {
     if (s.outlineColor !== undefined) setCorners(g.outline.color, s.outlineColor);
     if (s.outlineAlpha !== undefined) setCorners(g.outline.alpha, s.outlineAlpha);
     if (s.outlineWidth) copyCorners(g.outline.width, s.outlineWidth);
-    if (s.outlineRounded !== undefined) g.outline.rounded = s.outlineRounded;
+    if (s.outlineRounded !== undefined) setCorners(g.outline.rounded, s.outlineRounded ? 1 : 0);
     if (s.shadowColor !== undefined) setCorners(g.shadow.color, s.shadowColor);
     if (s.shadowAlpha !== undefined) setCorners(g.shadow.alpha, s.shadowAlpha);
     if (s.shadowSoftness) copyCorners(g.shadow.softness, s.shadowSoftness);
