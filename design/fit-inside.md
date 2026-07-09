@@ -1,8 +1,8 @@
 # `fitInside(rect, options?)` — reflowing fit-to-box
 
-**Status:** designed, not implemented. **Dependencies:** none (needs a small
-parameterisation of `wrapText`, described below). Fully independent of the rich
-text work.
+**Status:** implemented. **Dependencies:** none (needed a small
+parameterisation of `wrapText`, described below — shipped as `computeWrap`).
+Fully independent of the rich text work.
 
 ## Motivation
 

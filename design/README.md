@@ -13,6 +13,11 @@ files/methods to touch, edge cases, and how to verify.
    scale, skew) without markup in the string, via structured segments and
    imperative range/word helpers.
 
+Everything below is implemented. Cheap follow-ups that surfaced along the way
+but were deliberately left unbuilt are collected in
+**[`future-ideas.md`](./future-ideas.md)** rather than scattered across these
+docs — read that one when looking for the next small thing to build.
+
 ## Implementable units (Phase 1) and landing order
 
 ```
@@ -67,7 +72,8 @@ designed: four uniforms and the four shader modes are gone, `uPxRange` +
 `configureFont(unitRange)` (fixing the latent multi-font uniform-ordering bug),
 and the fill-over-outline composite replaced the `mix`. A shadowed, outlined,
 underlined text is one draw call. `rounded` stayed a bit; the sentinel trick that
-would free a continuous byte for per-corner `rounded` is still deferred.
+would free a continuous byte for per-corner `rounded` is still deferred (see
+`future-ideas.md`).
 `GlyphState` and `StyleSpec` gained `weight`, `outline.width`, `outline.rounded`
 and `shadow.softness` (per-corner where continuous), plus `underline` /
 `strikethrough` and the object-level `weight` / `setUnderline` /

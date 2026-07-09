@@ -372,6 +372,7 @@ isn't).
 - **Future:** a bottom-pivot variant is the same formula with `Yb = charY + h`,
   and a shader-based skew stays possible if we ever want it decoupled from
   geometry. Default is baseline. Keep the door open but don't build both now.
+  Tracked in [`future-ideas.md`](./future-ideas.md).
 
 ## Tree-shaking
 

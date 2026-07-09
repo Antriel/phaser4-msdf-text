@@ -451,7 +451,10 @@ Recorded here as the prediction; every item held. Full context in
 ## What this unlocks (recorded so we don't re-derive; none of it is scope)
 
 Cheap follow-ups that fall out of the new layout — most are one shader line
-plus one optional API key:
+plus one optional API key. **Expanded and tracked in
+[`future-ideas.md`](./future-ideas.md)**, alongside the `rounded`-sentinel
+trick below and a couple of skew/decoration follow-ups from
+`rich-text-styling.md`.
 
 - **Two-tone shadows / glows.** After the shadow-colour migration, a shadow
   quad's *fill* attribute is unused. Feed it a second colour and

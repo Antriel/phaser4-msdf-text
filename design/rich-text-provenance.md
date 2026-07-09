@@ -1,8 +1,8 @@
 # Glyph provenance — `srcIndex` / `line` / `srcLine` (+ wrap bug fix)
 
-**Status:** designed, not implemented. **Dependencies:** none. **Prerequisite
+**Status:** implemented. **Dependencies:** none. **Prerequisite
 for:** `rich-text-styling.md` (source→glyph mapping). Independently valuable — it
-fixes a real bug.
+fixed a real bug.
 
 ## Motivation
 
