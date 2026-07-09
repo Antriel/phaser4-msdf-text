@@ -61,10 +61,12 @@ export interface ResolvedStyle {
     fillAlpha?: Corners;   // 0-1 per corner
     weight?: Corners;      // distance-field units per corner
     outlineColor?: number;
+    outlineInnerColor?: number;
     outlineAlpha?: number;
     outlineWidth?: Corners;
     outlineRounded?: boolean;
     shadowColor?: number;
+    shadowInnerColor?: number;
     shadowAlpha?: number;
     shadowSoftness?: Corners;
     shadowX?: number;
@@ -163,12 +165,14 @@ export function resolveStyle(spec: RuleStyleSpec): ResolvedStyle {
     if (spec.weight !== undefined) r.weight = resolveNumberCorners(spec.weight);
     if (spec.outline) {
         if (spec.outline.color !== undefined) r.outlineColor = toColorInt(spec.outline.color);
+        if (spec.outline.innerColor !== undefined) r.outlineInnerColor = toColorInt(spec.outline.innerColor);
         if (spec.outline.alpha !== undefined) r.outlineAlpha = spec.outline.alpha;
         if (spec.outline.width !== undefined) r.outlineWidth = resolveNumberCorners(spec.outline.width);
         if (spec.outline.rounded !== undefined) r.outlineRounded = !!spec.outline.rounded;
     }
     if (spec.shadow) {
         if (spec.shadow.color !== undefined) r.shadowColor = toColorInt(spec.shadow.color);
+        if (spec.shadow.innerColor !== undefined) r.shadowInnerColor = toColorInt(spec.shadow.innerColor);
         if (spec.shadow.alpha !== undefined) r.shadowAlpha = spec.shadow.alpha;
         if (spec.shadow.softness !== undefined) r.shadowSoftness = resolveNumberCorners(spec.shadow.softness);
         if (spec.shadow.x !== undefined) r.shadowX = spec.shadow.x;
@@ -239,7 +243,8 @@ export function hasStyleKeys(spec: SegmentSpec): boolean {
  */
 export function styleHasAppearanceKeys(s: ResolvedStyle): boolean {
     return s.fillColor !== undefined || s.fillAlpha !== undefined || s.weight !== undefined ||
-        s.outlineColor !== undefined || s.outlineAlpha !== undefined ||
+        s.outlineColor !== undefined || s.outlineInnerColor !== undefined ||
+        s.outlineAlpha !== undefined ||
         s.outlineWidth !== undefined || s.outlineRounded !== undefined ||
         s.scaleX !== undefined || s.scaleY !== undefined ||
         s.rotation !== undefined || s.skew !== undefined ||
@@ -252,7 +257,8 @@ export function styleHasAppearanceKeys(s: ResolvedStyle): boolean {
  * itself has no shadow — a styled run can give individual glyphs a drop shadow.
  */
 export function styleHasShadowKeys(s: ResolvedStyle): boolean {
-    return s.shadowColor !== undefined || s.shadowAlpha !== undefined ||
+    return s.shadowColor !== undefined || s.shadowInnerColor !== undefined ||
+        s.shadowAlpha !== undefined ||
         s.shadowSoftness !== undefined || s.shadowX !== undefined || s.shadowY !== undefined;
 }
 
@@ -279,11 +285,23 @@ export function applyStyleToGlyph(g: GlyphState, s: ResolvedStyle): void {
     if (s.fillColor) copyCorners(g.fill.color, s.fillColor);
     if (s.fillAlpha) copyCorners(g.fill.alpha, s.fillAlpha);
     if (s.weight) copyCorners(g.weight, s.weight);
-    if (s.outlineColor !== undefined) setCorners(g.outline.color, s.outlineColor);
+    // A layer that recolours the outline/shadow but says nothing about the inner
+    // end of the ramp means a *solid* colour, so `color` seeds `innerColor` here
+    // exactly as it does at the object level — otherwise a run that only changes
+    // `outline.color` would ramp into whatever inner colour the object had.
+    if (s.outlineColor !== undefined) {
+        setCorners(g.outline.color, s.outlineColor);
+        setCorners(g.outline.innerColor, s.outlineColor);
+    }
+    if (s.outlineInnerColor !== undefined) setCorners(g.outline.innerColor, s.outlineInnerColor);
     if (s.outlineAlpha !== undefined) setCorners(g.outline.alpha, s.outlineAlpha);
     if (s.outlineWidth) copyCorners(g.outline.width, s.outlineWidth);
     if (s.outlineRounded !== undefined) setCorners(g.outline.rounded, s.outlineRounded ? 1 : 0);
-    if (s.shadowColor !== undefined) setCorners(g.shadow.color, s.shadowColor);
+    if (s.shadowColor !== undefined) {
+        setCorners(g.shadow.color, s.shadowColor);
+        setCorners(g.shadow.innerColor, s.shadowColor);
+    }
+    if (s.shadowInnerColor !== undefined) setCorners(g.shadow.innerColor, s.shadowInnerColor);
     if (s.shadowAlpha !== undefined) setCorners(g.shadow.alpha, s.shadowAlpha);
     if (s.shadowSoftness) copyCorners(g.shadow.softness, s.shadowSoftness);
     if (s.shadowX !== undefined) g.shadow.x = s.shadowX;

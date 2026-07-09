@@ -78,7 +78,14 @@ export interface StyleSpec {
     weight?: number | PerCorner<number>;
     /** Outline override. `width` of `0` disables this run's outline. */
     outline?: {
+        /** Outline colour — also the run's `innerColor` unless that is set too. */
         color?: ColorValue;
+        /**
+         * Colour at the outline's inner edge, where it meets the glyph: the
+         * outline ramps to it from `color` across the band. Requires the object's
+         * `outlineLayered` (or its `outlineInnerColor`, which turns layering on).
+         */
+        innerColor?: ColorValue;
         alpha?: number;
         /** Outline width in distance-field units — a scalar or a per-corner ramp. */
         width?: number | PerCorner<number>;
@@ -87,7 +94,14 @@ export interface StyleSpec {
     };
     /** Shadow override. */
     shadow?: {
+        /** Shadow colour — also the run's `innerColor` unless that is set too. */
         color?: ColorValue;
+        /**
+         * Colour at the shadow's inner edge, where it meets the glyph: the blur
+         * ramps to it from `color`. A hot inner colour on a soft, zero-offset
+         * shadow is a two-tone glow.
+         */
+        innerColor?: ColorValue;
         alpha?: number;
         x?: number;
         y?: number;
@@ -290,6 +304,17 @@ export interface MSDFTextInstance extends
     outlineWidth: number;
     /** Outline color, packed `0xRRGGBB`. */
     outlineColor: number;
+    /**
+     * Colour at the outline's inner edge, packed `0xRRGGBB`, or `-1` (the
+     * default) to inherit `outlineColor` and draw a single-colour outline.
+     *
+     * A real colour makes the outline ramp from `outlineColor` at its outer edge
+     * to this where it meets the glyph, and **forces `outlineLayered`** — the
+     * inner colour rides the quad's fill-colour attribute, which a combined
+     * fill+outline quad has already spent. Works on plain MSDF atlases.
+     * {@link setOutlineInnerColor} is the colour-parsing wrapper.
+     */
+    outlineInnerColor: number;
     /** Outline alpha, 0-1. */
     outlineAlpha: number;
     /** Round the outline's outer corners using the true SDF (MTSDF atlas only). */
@@ -313,6 +338,17 @@ export interface MSDFTextInstance extends
     shadowY: number;
     /** Shadow color, packed `0xRRGGBB`. */
     shadowColor: number;
+    /**
+     * Colour at the shadow's inner edge, packed `0xRRGGBB`, or `-1` (the default)
+     * to inherit `shadowColor` and draw a single-colour shadow.
+     *
+     * A real colour makes the blur ramp from `shadowColor` at its outer edge to
+     * this where it meets the glyph — a white-hot core inside a coloured halo.
+     * Needs no layering (a shadow quad never has a fill), but it needs
+     * `shadowSoftness` above `0` to have a band to ramp across.
+     * {@link setShadowInnerColor} is the colour-parsing wrapper.
+     */
+    shadowInnerColor: number;
     /** Shadow alpha, 0-1. */
     shadowAlpha: number;
     /**
@@ -456,9 +492,13 @@ export interface MSDFTextInstance extends
     /** Re-seed the manual glyph array to the text's current defaults. No-op unless in manual mode. */
     resetGlyphs(): this;
     setOutline(width: number, color?: ColorValue, alpha?: number, rounded?: boolean, layered?: boolean): this;
+    /** Ramp the outline to a second colour at its inner edge. See {@link outlineInnerColor}. */
+    setOutlineInnerColor(color: ColorValue | null): this;
     clearOutline(): this;
     hasOutline(): boolean;
     setShadow(x?: number, y?: number, color?: ColorValue, alpha?: number, softness?: number): this;
+    /** Ramp the shadow to a second colour at its inner edge. See {@link shadowInnerColor}. */
+    setShadowInnerColor(color: ColorValue | null): this;
     clearShadow(): this;
     hasShadow(): boolean;
     /**

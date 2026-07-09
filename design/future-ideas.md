@@ -32,29 +32,80 @@ distance field's own clamp and letters overlap.
 `rounded` from `shadow.softness` corner for corner instead of one per-glyph flag
 from `maxCorner(softness)`.
 
-### Two-tone shadows / glows
+### ~~Two-tone shadows / glows~~ and ~~two-tone outlines~~ — **built**
 
-**What:** since the shadow-colour migration (a shadow quad is an outline-only
-quad — fill alpha 0, shadow colour in `inOutline`), a shadow quad's **fill**
-attribute (`inColor`) rides along unused. Feed it a second colour and blend
-`mix(outerColor, innerColor, coverage)` in the shadow/outline branch — a glow
-that shifts hue outward (white-hot core → orange halo), per-corner on both
-colours, batched, free (no new attribute, no new draw call).
+Both landed together, since they are one shader change. A quad with **no fill**
+— every shadow quad, and every layered-outline silhouette — leaves `inColor`
+idle, so it carries the inner end of a colour ramp there instead. The shader
+mixes `outOutline.rgb` → `outColor.rgb` over `tone`, gated on the fill alpha byte
+being exactly zero (which is both "no fill" and "this rgb is an inner colour").
+No new attribute, no new draw call, per-corner on both colours.
 
-**Where it'd land:** the outline/shadow branch in `MSDFBatchHandler.ts`'s
-fragment shader; `GlyphShadow` would need a second colour field (or reuse
-`fill.color` on the shadow quad — needs a design decision, since today
-`fill.color`/`fill.alpha` on a `GlyphState` mean "the glyph's own face").
-`examples/scenes/glow.ts` is the natural demo to extend.
+The design questions the sketch left open were settled thus:
 
-### Two-tone outlines
+- **A second colour field, not a reuse of `fill.color`.** `GlyphShadow` and
+  `GlyphOutline` each gained an `innerColor: Corners`, seeded from the new
+  object-level `shadowInnerColor` / `outlineInnerColor` (sentinel `-1` = "inherit
+  the outer colour", i.e. no ramp — so an untouched glyph packs an identity mix).
+  `fill.color` keeps meaning "the glyph's own face" everywhere.
+- **`tone` is not `coverage`.** Coverage is a 1-pixel step on a hard outline, so
+  it would have collapsed the outline ramp. `tone` is instead depth into the
+  layer's own *visible* body, normalized: `widthNorm` for an outline (the band
+  spans `[outlineEdge, fillEdge]` exactly), and **half** of `softNorm` for a
+  shadow, because the blur is centred on the glyph edge and only its outer half
+  shows. Normalizing by the full blur would strand the ramp at `tone = 0.5`.
+- **The outline's ramp is linear; the shadow's is squared.** An outline's alpha is
+  a flat `1` across its band, so a linear ramp gives both colours equal screen
+  area. A shadow's alpha falls off across the *same* interval that `tone` spans,
+  so a linear ramp puts the outer hue exactly where the shadow has already faded
+  to nothing — the effect reads as a faint wash. Squaring holds the outer hue
+  through the opaque middle of the halo and keeps the inner colour to the hot core
+  against the glyph, which is the "white-hot core, coloured halo" this doc asked
+  for. `softStep` (which `fade` already computes) blends the two curves.
+- **A two-tone outline forces `outlineLayered`.** A combined fill+outline quad
+  has already spent `inColor` on the fill, so there is nowhere to put a second
+  colour; the renderer's `layered` gate now also opens on
+  `outlineInnerColor >= 0`. Shadows need no such thing.
+- **The one leak, plugged.** A *combined* quad with a zero fill alpha trips the
+  shader's gate, and would have tinted the outline it leaves behind with the
+  (invisible) face colour. `packFillAspect` substitutes the outline's own colour
+  into those corners at pack time, making the mix an identity — the same trick as
+  `packOutlineAspect` zeroing alpha at zero width.
+- **Per-run `outline.color` seeds the run's `innerColor`.** Otherwise a run that
+  only recoloured the outline would ramp into whatever inner colour the *object*
+  had. `applyStyleToGlyph` mirrors the object-level "inner defaults to color".
 
-**Same trick, on the layered-outline silhouette pass.** When `outlineLayered`
-is set, the silhouette-submission pass zeroes the fill attribute
-(`zeroOutline`-style) — that attribute is unused for the same reason as the
-shadow case above. Ramping outline colour from inner edge to outer edge (a
-"chalk outline" / neon-tube look) is the same `mix(outerColor, innerColor,
-coverage)` idea, reusing the same unused slot.
+#### The `shadowToneBias` byte — considered, rejected
+
+A knob controlling where the shadow's colour ramp crosses over, instead of the
+fixed square. It looked free: a shadow quad never has an outline width, so
+`params.b` is idle on exactly the quads that could use it, and the shader could
+mask it out of `widthNorm` with `isShadow = step(0.5/255, softNorm)`.
+
+**It is not sound.** `softness` is per-corner, so `isShadow` is a per-corner
+interpolated value, and a soft-on-one-side shadow (a supported effect) crosses its
+threshold *inside the quad*. `widthNorm` would then fade the bias byte in as a
+phantom outline width and the shadow would grow a spurious band across the middle
+of the glyph. This is the garbage-bitfield failure the whole `params` design
+avoids: GLSL ES 1.00 has no `flat` qualifier.
+
+The general rule this settles, worth stating once: **an interpolated channel may
+weight a blend between two behaviours that agree at its endpoints, but it may
+never select how another channel is decoded.** `tone = mix(tone, tone*tone,
+softStep)` is safe — both curves are monotonic and agree at `0` and `1`, so any
+intermediate `softStep` yields a valid ramp. `widthNorm *= 1.0 - isShadow` is not.
+The one selector in the format (`solid`) is safe only because it is uniform across
+its quad by construction and carries a byte of guard band on each side.
+
+Rescuing it would mean zeroing the bias whenever *any* corner's softness is zero —
+a per-quad scan that also kills per-corner bias, which was the only reason to put
+it in a vertex attribute. And the effect it buys is narrow: `tone` is a monotonic
+remap of a two-colour lerp, so almost everything an animated bias expresses is
+already reachable by animating `innerColor` / `color`, which take any hue path
+rather than sliding one boundary. Its inward end is degenerate (it pushes the hot
+core under the opaque fill), and it cannot make a ring — that needs a
+non-monotonic function, not a remap. Revisit only with a concrete effect that the
+colour endpoints demonstrably cannot express.
 
 ### Highlight pills
 

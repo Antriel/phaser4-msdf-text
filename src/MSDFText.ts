@@ -252,6 +252,10 @@ export const MSDFText: MSDFTextStatic = new Class({
         this._outlineAlpha = 1;
         this._outlineRounded = false;
         this.outlineLayered = false;
+        // Inner end of the outline's colour ramp. `-1` means "inherit
+        // `outlineColor`", i.e. no ramp — a real colour here is what turns the
+        // two-tone outline on (and forces `outlineLayered` in the renderer).
+        this._outlineInnerColor = -1;
 
         // Drop shadow — backing fields for the same reason as `weight`.
         this._shadowX = 0;
@@ -259,6 +263,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         this._shadowColor = 0x000000;
         this._shadowAlpha = 0.5;
         this._shadowSoftness = 0;
+        this._shadowInnerColor = -1;
 
         // Force the shadow pass in per-glyph modes (callback / manual) even when
         // the object has no shadow, so shadows set on individual glyphs render.
@@ -1251,6 +1256,11 @@ export const MSDFText: MSDFTextStatic = new Class({
         st.topLeft = st.topRight = st.bottomLeft = st.bottomRight = sc;
         sa.topLeft = sAlpha * this._alphaTL; sa.topRight = sAlpha * this._alphaTR;
         sa.bottomLeft = sAlpha * this._alphaBL; sa.bottomRight = sAlpha * this._alphaBR;
+        // `-1` means "no ramp": seed the outer colour, so the shader's mix is an
+        // identity and a glyph state never carries the sentinel.
+        const sin = g.shadow.innerColor;
+        const sInner = this._shadowInnerColor >= 0 ? this._shadowInnerColor : sc;
+        sin.topLeft = sin.topRight = sin.bottomLeft = sin.bottomRight = sInner;
         g.shadow.x = this.shadowX;
         g.shadow.y = this.shadowY;
         const ss = g.shadow.softness, sSoft = this.shadowSoftness;
@@ -1261,6 +1271,9 @@ export const MSDFText: MSDFTextStatic = new Class({
         ot.topLeft = ot.topRight = ot.bottomLeft = ot.bottomRight = oc;
         oa.topLeft = oAlpha * this._alphaTL; oa.topRight = oAlpha * this._alphaTR;
         oa.bottomLeft = oAlpha * this._alphaBL; oa.bottomRight = oAlpha * this._alphaBR;
+        const oin = g.outline.innerColor;
+        const oInner = this._outlineInnerColor >= 0 ? this._outlineInnerColor : oc;
+        oin.topLeft = oin.topRight = oin.bottomLeft = oin.bottomRight = oInner;
         // A width of 0 is what "no outline" means to the shader, so seeding the
         // object's width is all the gating the renderer needs.
         const owd = g.outline.width, oWidth = this.outlineWidth;
@@ -1303,6 +1316,26 @@ export const MSDFText: MSDFTextStatic = new Class({
         if (this.outlineRounded && width > 0) {
             warnNeedsMtsdf(this, 'rounded outline');
         }
+        return this;
+    },
+
+    /**
+     * Give the outline a second colour at its inner edge (chainable) — it then
+     * ramps from `outlineColor` at the outer edge to `color` where it meets the
+     * glyph, across the outline band. A neon tube, a chalk outline, a bevel.
+     *
+     * Turning this on **forces `outlineLayered`**: the inner colour rides the
+     * quad's fill-colour attribute, which a combined fill+outline quad has
+     * already spent. See {@link MSDFTextInstance.outlineLayered} for what
+     * layering costs.
+     *
+     * Pass `null` to go back to a single-colour outline. Works on plain MSDF
+     * atlases — the ramp is measured across the outline width, not the true SDF.
+     *
+     * @param color Inner-edge colour, or `null` to inherit `outlineColor`.
+     */
+    setOutlineInnerColor: function (color: ColorValue | null) {
+        this.outlineInnerColor = color === null ? -1 : toColorInt(color);
         return this;
     },
 
@@ -1355,6 +1388,13 @@ export const MSDFText: MSDFTextStatic = new Class({
             this._markAppearanceDirty();
         }
     },
+    outlineInnerColor: {
+        get: function (this: any): number { return this._outlineInnerColor; },
+        set: function (this: any, value: number) {
+            this._outlineInnerColor = value;
+            this._markAppearanceDirty();
+        }
+    },
 
     /**
      * Set the drop shadow for the text (chainable convenience wrapper).
@@ -1385,6 +1425,24 @@ export const MSDFText: MSDFTextStatic = new Class({
         if (this.shadowSoftness > 0) {
             warnNeedsMtsdf(this, 'soft shadow');
         }
+        return this;
+    },
+
+    /**
+     * Give the shadow a second colour at its inner edge (chainable) — it then
+     * ramps from `shadowColor` at the outer edge of the blur to `color` where it
+     * meets the glyph. A soft, zero-offset shadow with a hot inner colour is the
+     * classic two-tone glow: a white core inside a coloured halo.
+     *
+     * Unlike the outline's, this needs no layering — a shadow quad never has a
+     * fill, so its colour attribute is always free. The ramp spans the blur, so
+     * with `shadowSoftness` at `0` there is nothing to ramp across and the inner
+     * colour simply wins.
+     *
+     * @param color Inner-edge colour, or `null` to inherit `shadowColor`.
+     */
+    setShadowInnerColor: function (color: ColorValue | null) {
+        this.shadowInnerColor = color === null ? -1 : toColorInt(color);
         return this;
     },
 
@@ -1440,6 +1498,13 @@ export const MSDFText: MSDFTextStatic = new Class({
         get: function (this: any): number { return this._shadowSoftness; },
         set: function (this: any, value: number) {
             this._shadowSoftness = value;
+            this._markAppearanceDirty();
+        }
+    },
+    shadowInnerColor: {
+        get: function (this: any): number { return this._shadowInnerColor; },
+        set: function (this: any, value: number) {
+            this._shadowInnerColor = value;
             this._markAppearanceDirty();
         }
     },

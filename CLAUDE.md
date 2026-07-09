@@ -71,6 +71,40 @@ not — batch together. A width of `0` *is* what "no outline" means; since at ze
 outline edge coincides with the fill edge, `packOutlineAspect` zeroes the outline
 alpha wherever the width is zero rather than branching in the shader.
 
+**Two-tone** — a quad with **no fill** (every shadow quad; every layered-outline
+silhouette) leaves `inColor` idle, so it carries the inner end of a colour ramp
+there. The outline/shadow layer mixes `inOutline.rgb` → `inColor.rgb` over `tone`,
+gated on the fill alpha byte being exactly `0` — which is simultaneously the "no
+fill" signal and the "this rgb is an inner colour" signal. No new attribute, no
+new draw call, per-corner on both colours: a glow with a white-hot core inside a
+coloured halo, a neon-tube outline.
+- `tone` is depth into the layer's own **visible** body, not `coverage` (which is
+  a 1-pixel step on a hard outline and would collapse the ramp). It normalizes by
+  `widthNorm` for an outline — the band is exactly `[outlineEdge, fillEdge]` — and
+  by **half** of `softNorm` for a shadow, because the blur is centred on the glyph
+  edge and only its outer half shows past the fill. The full blur would strand the
+  ramp at `tone = 0.5`.
+- An outline keeps that ramp **linear** (its alpha is a flat `1` across the band).
+  A shadow **squares** it, because its alpha falls off over the same interval, and
+  a linear ramp would strand the outer hue where the shadow has already faded out.
+  `softStep` — which `fade` computes anyway — blends the two. It may only ever
+  *weight a blend between behaviours that agree at both ends*, never *select how
+  another channel decodes*: it is a per-corner interpolated value like everything
+  else here, and a soft-on-one-side shadow crosses it mid-quad. That rule is why
+  the deferred `shadowToneBias` byte was rejected — see `design/future-ideas.md`.
+- A two-tone **outline forces `outlineLayered`**: a combined fill+outline quad has
+  already spent `inColor` on the fill. Shadows need no such thing. Neither needs
+  an MTSDF atlas.
+- The gate's one leak — a *combined* quad whose fill alpha is `0` — is plugged at
+  pack time, not in the shader: `packFillAspect` writes the **outline's** colour
+  into those corners, so the mix is an identity. Same spirit as
+  `packOutlineAspect` zeroing alpha at zero width.
+- Object level: `outlineInnerColor` / `shadowInnerColor`, sentinel `-1` = "inherit
+  the outer colour". `GlyphState` never sees the sentinel — `seedGlyph` resolves
+  it, so an untouched glyph packs an identity mix. A style run's `outline.color`
+  re-seeds that run's `innerColor` (mirroring the object-level default), or a run
+  that merely recoloured an outline would ramp into the *object's* inner colour.
+
 **MTSDF effects** — atlases generated with `-type mtsdf` carry a true SDF in
 the alpha channel alongside the MSDF in RGB. The fill layer always uses
 `median(rgb)` for crisp text (corners preserved) — it has to, or a rounded
@@ -81,7 +115,8 @@ the alpha channel alongside the MSDF in RGB. The fill layer always uses
   object-level flag seeds `0` or `1`, but `GlyphState.outline.rounded` is a
   per-corner `0..1` `Corners`: intermediates `mix()` sharp into round.
 - Soft shadow / glow (`setShadow(..., softness)`) — a shadow quad is an
-  **outline-only quad**: fill alpha 0, shadow colour in the `inOutline`
+  **outline-only quad**: fill alpha 0 (its colour slot freed for the two-tone
+  inner colour), shadow colour in the `inOutline`
   attribute, width 0, softness in `params` — with `rounded` tracking softness
   corner for corner, so a shadow's hard side stays crisp against the fill it
   sits behind (uniform softness reproduces the old per-glyph flag). Softness
@@ -96,16 +131,17 @@ the alpha channel alongside the MSDF in RGB. The fill layer always uses
 **Shaders** — one über-shader, one branch, inline string arrays in
 `src/MSDFBatchHandler.ts`:
 - Vertex: uniform `uProjectionMatrix`; attributes `inPosition`, `inTexCoord`,
-  `inColor` (fill colour), `inOutline` (outline / shadow colour), `inParams`.
-  Each vertex is 28 bytes: 4 floats (pos + texcoord) + three `UNSIGNED_BYTE`
-  vec4s.
+  `inColor` (fill colour — or, at zero alpha, the two-tone inner colour),
+  `inOutline` (outline / shadow colour), `inParams`. Each vertex is 28 bytes: 4
+  floats (pos + texcoord) + three `UNSIGNED_BYTE` vec4s.
 - Fragment: uniforms `uMainSampler` and `uUnitRange` — that is all. Coverage is
   one expression for fill, outline and shadow (`softNorm = 0` reproduces the
-  plain AA ramp exactly), then an honest fill-over-outline composite. Its
-  degenerate cases are exact: zero outline alpha is a plain fill, zero fill alpha
-  is a bare silhouette. The `solid` sentinel short-circuits coverage to 1 for
-  underline/strike rects; those rects carry real `0..1` UVs so `fwidth()` stays
-  nonzero and no Inf leaks through the `mix`.
+  plain AA ramp exactly), then an honest fill-over-outline composite where the
+  outline's colour is itself the two-tone `mix`. Its degenerate cases are exact:
+  zero outline alpha is a plain fill, zero fill alpha is a bare silhouette. The
+  `solid` sentinel short-circuits coverage to 1 for underline/strike rects; those
+  rects carry real `0..1` UVs so `fwidth()` stays nonzero and no Inf leaks through
+  the `mix`.
 - Output is premultiplied alpha (`vec4(rgb * a, a)`) — required by Phaser 4's
   batched pipeline.
 - Uses `#extension GL_OES_standard_derivatives : enable` for `fwidth`.
@@ -141,7 +177,8 @@ carries a transform, a per-corner `weight`, and three independent aspects —
 `fill`, `shadow` (+ `x`/`y`/`softness`), `outline` (+ `width`/`rounded`) — with
 per-corner `0xRRGGBB` colour and a separate `0-1` alpha (kept split so V8 holds a
 stable hidden class and SMI/double field reps across the per-glyph loop; packing
-lives in `src/MSDFColor.ts`). `MSDFText._glyphMode` picks the source:
+lives in `src/MSDFColor.ts`). `shadow` and `outline` also carry a per-corner
+`innerColor` for the two-tone ramp. `MSDFText._glyphMode` picks the source:
 - `static` (0) — no array; the renderer fills every quad from the object-level
   colour/alpha/outline/shadow (the cheap default; nothing per-glyph allocated).
 - `callback` (1) — `MSDFText.prepareGlyphStates` re-seeds the array from the

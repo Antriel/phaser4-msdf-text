@@ -36,6 +36,13 @@ export interface GlyphAspect {
 }
 
 export interface GlyphShadow extends GlyphAspect {
+    /**
+     * Per-corner colour of the shadow's inner edge, where it meets the glyph
+     * (seeded from `shadowInnerColor`, which defaults to the shadow colour).
+     * The shadow ramps from `color` at its outer edge to this — a white-hot glow
+     * core inside a coloured halo. Equal colours are a no-op.
+     */
+    innerColor: Corners;
     /** Per-glyph shadow X offset in pixels (seeded from `shadowX`). */
     x: number;
     /** Per-glyph shadow Y offset in pixels (seeded from `shadowY`). */
@@ -49,6 +56,16 @@ export interface GlyphShadow extends GlyphAspect {
 }
 
 export interface GlyphOutline extends GlyphAspect {
+    /**
+     * Per-corner colour of the outline's inner edge, where it meets the glyph
+     * (seeded from `outlineInnerColor`, which defaults to the outline colour).
+     * The outline ramps from `color` at its outer edge to this across the band.
+     * Equal colours are a no-op. **Requires `outlineLayered`** — a combined
+     * fill+outline quad needs its colour attribute for the fill, so there is
+     * nowhere to put a second colour. Setting the object-level
+     * `outlineInnerColor` turns layering on for you.
+     */
+    innerColor: Corners;
     /**
      * Per-corner outline width in distance-field units (seeded from
      * `outlineWidth`). `0` disables this glyph's outline entirely — the colour
@@ -124,12 +141,16 @@ export interface GlyphState {
     setFillAlpha(alpha: number): void;
     /** Set the shadow colour (`0xRRGGBB`) on all four corners. */
     setShadowColor(rgb: number): void;
+    /** Set the shadow's inner-edge colour (`0xRRGGBB`) on all four corners. */
+    setShadowInnerColor(rgb: number): void;
     /** Set the shadow alpha (`0-1`) on all four corners. */
     setShadowAlpha(alpha: number): void;
     /** Set the shadow softness (distance-field units) on all four corners. */
     setShadowSoftness(softness: number): void;
     /** Set the outline colour (`0xRRGGBB`) on all four corners. */
     setOutlineColor(rgb: number): void;
+    /** Set the outline's inner-edge colour (`0xRRGGBB`) on all four corners. */
+    setOutlineInnerColor(rgb: number): void;
     /** Set the outline alpha (`0-1`) on all four corners. */
     setOutlineAlpha(alpha: number): void;
     /** Set the outline width (distance-field units) on all four corners. `0` disables it. */
@@ -164,6 +185,10 @@ function setShadowColor(this: GlyphState, rgb: number): void {
     const t = this.shadow.color;
     t.topLeft = t.topRight = t.bottomLeft = t.bottomRight = rgb;
 }
+function setShadowInnerColor(this: GlyphState, rgb: number): void {
+    const t = this.shadow.innerColor;
+    t.topLeft = t.topRight = t.bottomLeft = t.bottomRight = rgb;
+}
 function setShadowAlpha(this: GlyphState, alpha: number): void {
     const a = this.shadow.alpha;
     a.topLeft = a.topRight = a.bottomLeft = a.bottomRight = alpha;
@@ -174,6 +199,10 @@ function setShadowSoftness(this: GlyphState, softness: number): void {
 }
 function setOutlineColor(this: GlyphState, rgb: number): void {
     const t = this.outline.color;
+    t.topLeft = t.topRight = t.bottomLeft = t.bottomRight = rgb;
+}
+function setOutlineInnerColor(this: GlyphState, rgb: number): void {
+    const t = this.outline.innerColor;
     t.topLeft = t.topRight = t.bottomLeft = t.bottomRight = rgb;
 }
 function setOutlineAlpha(this: GlyphState, alpha: number): void {
@@ -205,16 +234,18 @@ export function createGlyphState(): GlyphState {
         skew: 0,
         weight: corners(0),
         fill: { color: corners(0xffffff), alpha: corners(1) },
-        shadow: { color: corners(0), alpha: corners(1), x: 0, y: 0, softness: corners(0) },
-        outline: { color: corners(0), alpha: corners(1), width: corners(0), rounded: corners(0) },
+        shadow: { color: corners(0), innerColor: corners(0), alpha: corners(1), x: 0, y: 0, softness: corners(0) },
+        outline: { color: corners(0), innerColor: corners(0), alpha: corners(1), width: corners(0), rounded: corners(0) },
         setScale,
         setWeight,
         setFillColor,
         setFillAlpha,
         setShadowColor,
+        setShadowInnerColor,
         setShadowAlpha,
         setShadowSoftness,
         setOutlineColor,
+        setOutlineInnerColor,
         setOutlineAlpha,
         setOutlineWidth,
         setOutlineRounded

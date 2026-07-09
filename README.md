@@ -218,6 +218,11 @@ text.outlineColor = 0x000000;                 // packed 0xRRGGBB
 text.outlineAlpha = 1;
 text.outlineRounded = true;                   // MTSDF atlas only
 text.outlineLayered = true;                   // separate silhouette pass under the fill
+
+// Two-tone: ramp the outline from outlineColor (outer edge) to a second colour
+// where it meets the glyph. Neon tube, chalk outline, bevel.
+text.setOutlineInnerColor(0xff5ea8);
+text.setOutlineInnerColor(null);              // back to a single-colour outline
 ```
 
 Practical outline widths are roughly 0.5–3.0. The shader can only represent
@@ -244,6 +249,16 @@ text shows the outline faintly through the fill. Leave it off (the default)
 unless the outline is actually thick enough to overlap. Works on plain MSDF and
 MTSDF alike, and combines with `rounded` and the drop shadow.
 
+`setOutlineInnerColor` gives the outline a second colour at its inner edge; it
+ramps from `outlineColor` at the outer edge to that colour across the outline
+band, so the effect only shows on outlines wide enough to see a gradient in.
+It costs nothing — the inner colour rides the silhouette quad's otherwise-idle
+fill-colour attribute — but for exactly that reason it **forces `outlineLayered`**
+(a combined fill+outline quad has already spent that attribute on the fill). It
+needs no MTSDF atlas. The per-corner `outline.innerColor` on a `GlyphState`, and
+`outline.innerColor` in a rich-text run, address it per glyph and per run; a run
+that sets `outline.color` alone gets a solid outline in that colour.
+
 ### Shadow (extra pass, still batched)
 
 ```ts
@@ -259,6 +274,10 @@ text.shadowY = 4;
 text.shadowColor = 0x000000;                      // packed 0xRRGGBB
 text.shadowAlpha = 0.5;
 text.shadowSoftness = 6;                          // distance-field units, MTSDF atlas only
+
+// Two-tone: ramp the blur from shadowColor (outer) to a hot core at the glyph.
+text.setShadowInnerColor(0xffffff);
+text.setShadowInnerColor(null);                   // back to a single-colour shadow
 ```
 
 `softness` is the shadow blur in **distance-field units** (`0` = hard edge,
@@ -267,6 +286,17 @@ text at any size. Any value above `0` produces a soft shadow and requires an
 **MTSDF** atlas; on a plain MSDF font it is ignored with a one-time console
 warning. The maximum usable blur is the atlas `distanceRange` — for softer
 shadows than that, regenerate with a larger `-pxrange`.
+
+`setShadowInnerColor` makes the blur a two-tone gradient: `shadowColor` at its
+outer edge, the inner colour where it meets the glyph. A soft, zero-offset shadow
+with a white inner colour is the classic glow — a white-hot core inside a
+coloured halo. Unlike the outline's, it needs no layering (a shadow quad never
+has a fill), but it does need `shadowSoftness` above `0` to have a band to ramp
+across. The shadow's ramp is weighted toward the outer colour (the outline's is
+linear), because a shadow's alpha fades across the same interval and an even ramp
+would leave the outer hue only in the parts that have already faded out. Per-glyph
+via `shadow.innerColor` on a `GlyphState`, per-run via `shadow.innerColor` in a
+style spec.
 
 Shadow colour, alpha, offset and softness are per-glyph state, so a
 `displayCallback` or `editGlyphs` can give individual glyphs their own drop
@@ -388,11 +418,12 @@ hit.remove();
 `clearStyles()` removes all rules **and** ranges (segments are content, kept).
 
 A `StyleSpec` accepts: `color`/`alpha` (a scalar, or a per-corner object for a
-gradient), `weight`, `outline` (`{ color?, alpha?, width?, rounded? }`), `shadow`
-(`{ color?, alpha?, x?, y?, softness? }`), `scale`/`scaleX`/`scaleY`, `rotation`,
-`skew`, `underline` and `strikethrough`. Only the keys you set override the
-glyph's seeded base. `weight`, `outline.width` and `shadow.softness` are
-continuous, so they also take a per-corner object.
+gradient), `weight`, `outline` (`{ color?, innerColor?, alpha?, width?, rounded? }`),
+`shadow` (`{ color?, innerColor?, alpha?, x?, y?, softness? }`),
+`scale`/`scaleX`/`scaleY`, `rotation`, `skew`, `underline` and `strikethrough`.
+Only the keys you set override the glyph's seeded base. `weight`,
+`outline.width` and `shadow.softness` are continuous, so they also take a
+per-corner object.
 
 - A per-run **shadow renders on its own** — setting `shadow` on any run turns
   the shadow pass on, so the object needs no shadow of its own.
@@ -401,6 +432,10 @@ continuous, so they also take a per-corner object.
   outlined text. Differing widths batch together.
 - `rounded` and `softness` need an **MTSDF** atlas; on a plain MSDF font they are
   clamped away silently (per-run styles skip the object-level warning).
+- Setting `outline.color` on a run makes that run's outline **solid** in that
+  colour — `innerColor` follows `color` unless the run sets it too, exactly as it
+  does at the object level. A run's `outline.innerColor` still needs the object's
+  `outlineLayered` (or `outlineInnerColor`) to have a silhouette pass to ride.
 
 Styles paint in order of increasing dynamism — **segments → rules → ranges →
 `displayCallback`** — applied key-by-key, so a later layer that sets only
@@ -585,11 +620,12 @@ g.fill.color.topLeft = g.fill.color.topRight = 0xff5da8;
 g.fill.color.bottomLeft = g.fill.color.bottomRight = 0x5db8ff;
 ```
 
-`weight`, `outline.width`, `outline.rounded` and `shadow.softness` are per-corner
-too, so a faux-bold gradient, a directional outline, a soft-on-one-side shadow or
-an outline melting from sharp to round all cost nothing extra. The interpolation
-is linear across the quad's bounding box, not along the letter contour — a
-directional ramp, not a contour-following pulse.
+`weight`, `outline.width`, `outline.rounded`, `outline.innerColor`,
+`shadow.softness` and `shadow.innerColor` are per-corner too, so a faux-bold
+gradient, a directional outline, a soft-on-one-side shadow, an outline melting
+from sharp to round, or a glow whose core shifts hue across the glyph all cost
+nothing extra. The interpolation is linear across the quad's bounding box, not
+along the letter contour — a directional ramp, not a contour-following pulse.
 
 #### Persistent per-glyph state (manual mode)
 

@@ -12,6 +12,11 @@ import type { MSDFTextInstance } from "../../src";
  * outline never spills over the neighbouring glyph. The bottom line uses tight
  * letter spacing to make that overlap obvious — toggle `layered` to see it
  * appear and vanish.
+ *
+ * `innerColor` ramps the outline from `color` at its outer edge to a second
+ * colour where it meets the glyph — a neon tube, a bevel. The inner colour rides
+ * the silhouette quad's otherwise-idle fill attribute, so it only exists in the
+ * layered pass; setting it turns `layered` on whether or not you asked.
  */
 export class OutlineScene extends ExampleScene {
   private headline!: MSDFTextInstance;
@@ -23,6 +28,8 @@ export class OutlineScene extends ExampleScene {
     alpha: 1,
     rounded: true,
     layered: true,
+    twoTone: false,
+    innerColor: "#ff5ea8",
   };
 
   constructor() {
@@ -60,7 +67,8 @@ export class OutlineScene extends ExampleScene {
     this.applyOutline();
     this.caption(
       "Outline width is in distance-field units; the usable maximum is about half the atlas distanceRange. " +
-        "Toggle 'layered' to stop a thick outline overlapping the neighbouring glyph (bottom line).",
+        "Toggle 'layered' to stop a thick outline overlapping the neighbouring glyph (bottom line). " +
+        "'two-tone' ramps the outline across its own band — widen it to see the gradient.",
     );
 
     // The shared Text folder drives the headline.
@@ -69,10 +77,12 @@ export class OutlineScene extends ExampleScene {
 
   /** Push the current outline params onto every text. */
   private applyOutline(): void {
-    const { width, color, alpha, rounded, layered } = this.params;
-    this.headline.setOutline(width, color, alpha, rounded, layered);
-    this.small.setOutline(width, color, alpha, rounded, layered);
-    this.tight.setOutline(width, color, alpha, rounded, layered);
+    const { width, color, alpha, rounded, layered, twoTone, innerColor } = this.params;
+    const inner = twoTone ? innerColor : null;
+    for (const text of [this.headline, this.small, this.tight]) {
+      text.setOutline(width, color, alpha, rounded, layered);
+      text.setOutlineInnerColor(inner);
+    }
   }
 
   protected addControls(pane: Pane): void {
@@ -96,5 +106,12 @@ export class OutlineScene extends ExampleScene {
       "change",
       () => this.applyOutline(),
     );
+    f.addBinding(this.params, "twoTone", { label: "two-tone" }).on("change", () =>
+      this.applyOutline(),
+    );
+    f.addBinding(this.params, "innerColor", {
+      label: "inner color",
+      view: "color",
+    }).on("change", () => this.applyOutline());
   }
 }

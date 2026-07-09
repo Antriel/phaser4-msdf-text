@@ -18,6 +18,12 @@
  *   - An outline with **width 0 contributes nothing**. The outline layer's edge
  *     is `fillEdge - width`, so a zero width makes it the glyph silhouette; we
  *     zero its alpha at pack time instead of branching in the shader.
+ *   - Those two quad kinds therefore leave the **fill colour attribute idle**,
+ *     which is where the **two-tone inner colour** rides. A zero fill alpha is
+ *     both the "no fill" signal and the "this rgb is an inner colour" signal, so
+ *     a glow can shift hue outward and a layered outline can ramp across its
+ *     band — no new attribute, no new draw call. A combined fill+outline quad
+ *     has no spare slot, which is why a two-tone outline forces layering.
  *
  * The only flush gate is `configureFont`, on the per-texture `uUnitRange` (the
  * texture itself is the batch handler's own gate, inside `batch()`). Uniforms are
@@ -72,9 +78,15 @@ const shadowBuf: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, botto
 // and softens instead of outlining).
 const glyphParams: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 const shadowParams: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
-// Colour attribute for layers a pass doesn't use (a plain fill's outline, a
-// shadow's or a silhouette's fill): all-zero, so that layer contributes nothing.
+// Colour attribute for layers a pass doesn't use (a plain fill's outline):
+// all-zero, so that layer contributes nothing.
 const zeroColor: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
+// The two-tone inner colours, riding the fill attribute of the two quad kinds
+// that have no fill: the shadow and the layered outline silhouette. Their alpha
+// is zero, which is both what disables the fill layer and what tells the shader
+// the rgb is an inner colour rather than a face colour.
+const outlineToneBuf: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
+const shadowToneBuf: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 const zeroCorners: Corners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 // A shadow rounds itself off the true SDF exactly where it is blurred, so this
 // tracks `shadow.softness` corner for corner. Uniform softness reproduces the
@@ -172,12 +184,46 @@ function packStaticParams(src: any, count: number): void {
     }
 }
 
+/** The smallest alpha that survives `packColor`'s truncation to a byte. */
+const MIN_ALPHA = 1 / 255;
+
 /** Pack a per-corner colour + alpha pair into a batch buffer. */
 function packAspect(buf: PackedCorners, color: Corners, alpha: Corners): void {
     buf.topLeft = packColor(color.topLeft, alpha.topLeft);
     buf.topRight = packColor(color.topRight, alpha.topRight);
     buf.bottomLeft = packColor(color.bottomLeft, alpha.bottomLeft);
     buf.bottomRight = packColor(color.bottomRight, alpha.bottomRight);
+}
+
+/**
+ * Pack a two-tone inner colour: the colour attribute of a quad that has no fill.
+ * A zero alpha is the signal — it disables the fill layer *and* tells the shader
+ * to read `.rgb` as the inner end of the outline / shadow colour ramp. Passing
+ * the outer colour here makes the ramp an identity, which is what an untouched
+ * `innerColor` seeds to.
+ */
+function packToneAspect(buf: PackedCorners, color: Corners): void {
+    buf.topLeft = packColor(color.topLeft, 0);
+    buf.topRight = packColor(color.topRight, 0);
+    buf.bottomLeft = packColor(color.bottomLeft, 0);
+    buf.bottomRight = packColor(color.bottomRight, 0);
+}
+
+/**
+ * Pack the fill colour of a *combined* fill+outline quad, substituting `fallback`
+ * (the outline colour) wherever the fill alpha rounds to a zero byte. Such a
+ * corner has no face to paint, so the shader reads its `.rgb` as a two-tone inner
+ * colour — and a fully transparent fill must not silently tint the outline it
+ * leaves behind. Feeding it the outline's own colour makes the ramp an identity.
+ *
+ * Only the combined pass needs this: a layered fill quad carries no outline, and
+ * a shadow or silhouette quad has no fill colour to confuse in the first place.
+ */
+function packFillAspect(buf: PackedCorners, color: Corners, alpha: Corners, fallback: Corners): void {
+    buf.topLeft = packColor(alpha.topLeft >= MIN_ALPHA ? color.topLeft : fallback.topLeft, alpha.topLeft);
+    buf.topRight = packColor(alpha.topRight >= MIN_ALPHA ? color.topRight : fallback.topRight, alpha.topRight);
+    buf.bottomLeft = packColor(alpha.bottomLeft >= MIN_ALPHA ? color.bottomLeft : fallback.bottomLeft, alpha.bottomLeft);
+    buf.bottomRight = packColor(alpha.bottomRight >= MIN_ALPHA ? color.bottomRight : fallback.bottomRight, alpha.bottomRight);
 }
 
 /**
@@ -454,23 +500,32 @@ function MSDFTextWebGLRenderer(
         const cA = c.a;
         const aTL = cA * src._alphaTL, aTR = cA * src._alphaTR, aBL = cA * src._alphaBL, aBR = cA * src._alphaBR;
 
-        const fc = src.color;
-        fillBuf.topLeft = packColor(fc, aTL);
-        fillBuf.topRight = packColor(fc, aTR);
-        fillBuf.bottomLeft = packColor(fc, aBL);
-        fillBuf.bottomRight = packColor(fc, aBR);
-
         const oc = src.outlineColor, oA = hasOutline ? src.outlineAlpha : 0;
         outlineBuf.topLeft = packColor(oc, oA * src._alphaTL);
         outlineBuf.topRight = packColor(oc, oA * src._alphaTR);
         outlineBuf.bottomLeft = packColor(oc, oA * src._alphaBL);
         outlineBuf.bottomRight = packColor(oc, oA * src._alphaBR);
 
+        // A fully transparent fill frees its colour attribute for the two-tone
+        // ramp, so it must carry the outline's colour rather than the (now
+        // invisible) face colour — see `packFillAspect`.
+        const fc = src.color;
+        fillBuf.topLeft = packColor(aTL >= MIN_ALPHA ? fc : oc, aTL);
+        fillBuf.topRight = packColor(aTR >= MIN_ALPHA ? fc : oc, aTR);
+        fillBuf.bottomLeft = packColor(aBL >= MIN_ALPHA ? fc : oc, aBL);
+        fillBuf.bottomRight = packColor(aBR >= MIN_ALPHA ? fc : oc, aBR);
+
         const sc = src.shadowColor, sA = src.shadowAlpha;
         shadowBuf.topLeft = packColor(sc, sA * src._alphaTL);
         shadowBuf.topRight = packColor(sc, sA * src._alphaTR);
         shadowBuf.bottomLeft = packColor(sc, sA * src._alphaBL);
         shadowBuf.bottomRight = packColor(sc, sA * src._alphaBR);
+
+        // Inner ends of the two colour ramps. `-1` means "inherit the outer
+        // colour", which makes the shader's mix an identity.
+        const oInner = src.outlineInnerColor, sInner = src.shadowInnerColor;
+        fillCorners(outlineToneBuf, packColor(oInner >= 0 ? oInner : oc, 0));
+        fillCorners(shadowToneBuf, packColor(sInner >= 0 ? sInner : sc, 0));
 
         // Colours are font-independent, but the params are normalized by each
         // font's `distanceRange`, so they are packed once per binding and copied
@@ -495,7 +550,10 @@ function MSDFTextWebGLRenderer(
     // A layered outline needs its own silhouette loop. Per-glyph widths mean a
     // glyph can have an outline even when the object has none, so the gate opens
     // for any per-glyph text that asked for layering.
-    const layered = src.outlineLayered && (hasOutline || perGlyph);
+    //
+    // A two-tone outline forces layering: the inner colour rides the fill
+    // attribute, which a combined fill+outline quad has already spoken for.
+    const layered = (src.outlineLayered || src.outlineInnerColor >= 0) && (hasOutline || perGlyph);
 
     // ── Shadow pass — render shadow behind the text. ────────────────────────
     // Object-level shadow always draws it. In per-glyph mode the pass also runs
@@ -522,15 +580,16 @@ function MSDFTextWebGLRenderer(
                 const softness = b.isMtsdf ? g.shadow.softness : zeroCorners;
                 roundedFromSoftness(shadowRounded, softness);
                 packAspect(shadowBuf, g.shadow.color, g.shadow.alpha);
+                packToneAspect(shadowToneBuf, g.shadow.innerColor);
                 packParamsAspect(shadowParams, g.weight, shadowRounded, zeroCorners, softness, b.invRange);
                 submitOneGlyph(drawingContext, batchHandler, b.texture, char,
                     g.x + g.shadow.x, g.y + g.shadow.y, g.scaleX, g.scaleY, g.rotation, g.skew,
-                    calcMatrix, originOffsetX, originOffsetY, zeroColor, shadowBuf, shadowParams);
+                    calcMatrix, originOffsetX, originOffsetY, shadowToneBuf, shadowBuf, shadowParams);
             } else {
                 if (multiFont) fillCorners(shadowParams, b.staticShadowParams);
                 submitOneGlyph(drawingContext, batchHandler, b.texture, char,
                     char.x + dsx, char.y + dsy, 1, 1, 0, 0,
-                    calcMatrix, originOffsetX, originOffsetY, zeroColor, shadowBuf, shadowParams);
+                    calcMatrix, originOffsetX, originOffsetY, shadowToneBuf, shadowBuf, shadowParams);
             }
         }
     }
@@ -549,15 +608,16 @@ function MSDFTextWebGLRenderer(
                 const g = glyphs![i];
                 const rounded = b.isMtsdf ? g.outline.rounded : zeroCorners;
                 packOutlineAspect(outlineBuf, g.outline.color, g.outline.alpha, g.outline.width);
+                packToneAspect(outlineToneBuf, g.outline.innerColor);
                 packParamsAspect(glyphParams, g.weight, rounded, g.outline.width, zeroCorners, b.invRange);
                 submitOneGlyph(drawingContext, batchHandler, b.texture, char,
                     g.x, g.y, g.scaleX, g.scaleY, g.rotation, g.skew,
-                    calcMatrix, originOffsetX, originOffsetY, zeroColor, outlineBuf, glyphParams);
+                    calcMatrix, originOffsetX, originOffsetY, outlineToneBuf, outlineBuf, glyphParams);
             } else {
                 if (multiFont) fillCorners(glyphParams, b.staticParams);
                 submitOneGlyph(drawingContext, batchHandler, b.texture, char,
                     char.x, char.y, 1, 1, 0, 0,
-                    calcMatrix, originOffsetX, originOffsetY, zeroColor, outlineBuf, glyphParams);
+                    calcMatrix, originOffsetX, originOffsetY, outlineToneBuf, outlineBuf, glyphParams);
             }
         }
     }
@@ -580,11 +640,13 @@ function MSDFTextWebGLRenderer(
 
         if (perGlyph) {
             const g = glyphs![i];
-            packAspect(fillBuf, g.fill.color, g.fill.alpha);
             let outlineData = zeroColor;
             if (combined) {
                 packOutlineAspect(outlineBuf, g.outline.color, g.outline.alpha, g.outline.width);
+                packFillAspect(fillBuf, g.fill.color, g.fill.alpha, g.outline.color);
                 outlineData = outlineBuf;
+            } else {
+                packAspect(fillBuf, g.fill.color, g.fill.alpha);
             }
             const rounded = b.isMtsdf ? g.outline.rounded : zeroCorners;
             packParamsAspect(glyphParams, g.weight, rounded, g.outline.width, zeroCorners, b.invRange);
