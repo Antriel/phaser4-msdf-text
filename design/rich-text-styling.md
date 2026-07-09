@@ -483,12 +483,20 @@ mixed-font runs in one object, and is the natural home for a real italic atlas
   sharing a texture always share that ratio, since a merged atlas carries one
   `distanceRange` by construction. **Per-run font is a texture-binding problem
   and nothing else.**
-- **After `vertex-params.md`, the texture is the renderer's *only* flush gate.**
-  `configurePass` will have nothing left to flush on, so 2b adds a single
-  `configureFont(texture, unitRange)` in its place. **Gotcha:** it must set the
-  new binding *after* the flush, never before — `MSDFBatchHandler.run()` reads
-  the uniforms at draw time, so setting them early would render the previous
-  font's queued glyphs with the new font's range.
+- **After `vertex-params.md`, the texture is the renderer's *only* flush gate —
+  and the gate already exists.** Vertex-params step A builds
+  `configureFont(texture, unitRange)` in `configurePass`'s place, because
+  setting `uUnitRange` per object without a check-and-flush would perpetuate a
+  live multi-font uniform-ordering bug the renderer has today (see finding 3
+  there). 2b's renderer work is extending that gate to switch textures.
+  **Gotcha:** it must set the new binding *after* the flush, never before —
+  `MSDFBatchHandler.run()` reads the uniforms at draw time, so setting them
+  early would render the previous font's queued glyphs with the new font's
+  range.
+- **No cross-font glyph fallback.** A character missing from its run's font is
+  skipped (no advance), exactly as a missing character is today — do not fall
+  back to the object's base font or any other run's font. Consistency over
+  cleverness; revisit only with real demand.
 - **2b single-texture batching is an optimisation, not a prerequisite.** First
   draft: a run whose font uses a different texture just flushes the batch — fine
   at text scale. The native single-batch path comes later: msdf-atlas-gen packs

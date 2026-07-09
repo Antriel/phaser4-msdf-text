@@ -80,14 +80,17 @@ Per-run font is purely additive. And it corrects a claim this file used to make:
 per-run fonts do **not** make `uPxRange`/`uAtlasSize` per-glyph. Once outline
 width and shadow softness are normalised as fractions of `distanceRange`,
 `uPxRange` cancels out of every shader branch and survives only as a per-texture
-ratio. **Per-run font is a texture-binding problem and nothing else** — so after
-(1), 2b's renderer work is a single `configureFont` gate where `configurePass`
-used to be.
+ratio. **Per-run font is a texture-binding problem and nothing else** — and (1)
+even ships the gate: its step A replaces `configurePass` with
+`configureFont(texture, unitRange)`, which also fixes a live multi-font
+uniform-ordering bug the renderer has today. 2b's renderer work is just
+extending that gate to switch textures.
 
 Remaining frozen calls for 2b: kerning only between glyphs sharing a font *and*
-size; one über-shader throughout (variant programs can't share a batch); the
-first draft may simply flush on texture change — the merged-atlas (`-and`)
-single-batch path is a later optimisation.
+size; one über-shader throughout (variant programs can't share a batch); no
+cross-font glyph fallback (a char missing from its run's font is skipped, same
+as today); the first draft may simply flush on texture change — the
+merged-atlas (`-and`) single-batch path is a later optimisation.
 
 ## Locked design decisions (rationale lives in the docs)
 
