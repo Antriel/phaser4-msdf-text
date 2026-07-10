@@ -1,6 +1,6 @@
 import type { Pane } from "tweakpane";
 import { ExampleScene } from "../harness/ExampleScene";
-import type { MSDFTextInstance, GlyphState, Segment, StyleHandle } from "../../src";
+import type { MSDFTextInstance, GlyphState, Segment, StyleHandle, StyleSpec } from "../../src";
 
 // Gold → ember gradient (a per-corner fill).
 const NAME_GRADIENT = {
@@ -14,13 +14,14 @@ const NAME_GRADIENT = {
 // appearance overrides. Note "dragonflame" is a *bare* string here — its
 // gradient and skew come from a content-anchored overlay, so the skew slider
 // can own it and it survives a text change.
-const CONTENT: Segment[] = [
+const CONTENT = (weapon: string): Segment[] => [
   "You found the ",
   // Per-run drop shadow — renders even though the object itself has no shadow
   // (the run sets a shadow, so the shadow pass runs and only these glyphs draw).
+  // `id` names the run so an overlay can address it by name — see `rarityRule`.
   {
-    text: "Blade of Embers",
-    color: NAME_GRADIENT,
+    text: weapon,
+    id: "weapon",
     shadow: { color: 0x000000, alpha: 0.7, x: 3, y: 3 },
   },
   "!\nIt deals ",
@@ -30,6 +31,20 @@ const CONTENT: Segment[] = [
   { text: "Burn", color: 0xff5252 },
   " for 3 turns. Forged in dragonflame long ago.",
 ];
+
+// The weapon names `reforge` cycles through. Each `setRichText` replaces the
+// content, but the segment keeps its `id`, so the rarity overlay follows it to
+// the new span without being re-declared.
+const WEAPONS = ["Blade of Embers", "Cinderfang", "Ashmourne, the Last Kindling"];
+
+// What the `{ segment: 'weapon' }` overlay paints. The segment itself carries no
+// colour — its look is entirely the overlay's, which is the point: one named
+// piece, restyled through a handle, with no `setRichText` call in sight.
+const RARITY: Record<string, StyleSpec> = {
+  legendary: { color: NAME_GRADIENT },
+  cursed: { color: 0xb388ff, weight: 1.5 },
+  common: { color: 0xd8d4e8 },
+};
 
 // An alternate body used by "change text" to prove that content anchors
 // survive (the 'fire', 'dragonflame' and /\d+/ overlays re-derive) while
@@ -49,6 +64,12 @@ const ALT_TEXT =
  * in the text the caller indexed, so any text change drops it and kills its
  * handle.
  *
+ * A third anchor addresses a *named segment*: `{ segment: 'weapon' }` finds the
+ * run by its `id`, wherever the last `setRichText` put it. Content-anchored, so
+ * `reforge` can swap the weapon's name and the rarity overlay follows it; while
+ * `change text` has replaced the segments entirely it holds no spans, drawing
+ * nothing, and revives when they come back.
+ *
  * The interactions prove that: type in `find` and position-anchored overlays
  * light up every match (and bump its size — a structural key, legal on any
  * layer now, so the text reflows); flip `change text` and the content anchors
@@ -57,11 +78,18 @@ const ALT_TEXT =
  */
 export class RichTextScene extends ExampleScene {
   private text!: MSDFTextInstance;
-  private params = { find: "", skew: 0.22, altText: false };
+  private params = { find: "", skew: 0.22, altText: false, rarity: "legendary" };
 
   // The content-anchored 'dragonflame' overlay, so the skew slider can re-style
   // it without touching any other layer (an appearance-only coalesced re-seed).
   private skewRule: StyleHandle | null = null;
+
+  // The `{ segment: 'weapon' }` overlay. Survives `reforge`'s setRichText, so the
+  // rarity dropdown never has to know what the weapon is currently called.
+  private rarityRule: StyleHandle | null = null;
+
+  // Which name `reforge` shows next.
+  private weapon = 0;
 
   // Source-index span of "Burn" in the current plain text (-1 when absent).
   // The pulse callback filters on GlyphState.srcIndex — the glyph's index into
@@ -108,11 +136,12 @@ export class RichTextScene extends ExampleScene {
   private applyAll(): void {
     this.text.clearStyles();
     this.skewRule = null;
+    this.rarityRule = null;
 
     if (this.params.altText) {
       this.text.setText(ALT_TEXT);
     } else {
-      this.text.setRichText(CONTENT);
+      this.text.setRichText(CONTENT(WEAPONS[this.weapon]));
     }
 
     // Content anchors (persistent): every "dragonflame" gets the gradient + the
@@ -129,6 +158,11 @@ export class RichTextScene extends ExampleScene {
     // after it and wins on `color`, while the segment's `scale`/`weight` survive
     // — later layers overwrite key by key, not wholesale.
     this.text.addStyle(/\d+/, { color: 0x9ae6b4, underline: true });
+
+    // A segment anchor: the weapon run is addressed by its `id`, not by its
+    // characters or its position. Under `change text` there are no segments at
+    // all, so this overlay resolves to nothing — alive, painting nothing.
+    this.rarityRule = this.text.addStyle({ segment: "weapon" }, RARITY[this.params.rarity]);
 
     this.seedBurn();
     this.applyFind();
@@ -190,9 +224,28 @@ export class RichTextScene extends ExampleScene {
       this.skewRule?.update({ color: NAME_GRADIENT, skew: e.value });
     });
 
+    // Restyles the named segment through its handle — no setRichText, so nothing
+    // else on the text is disturbed (the find overlays stay put). Under
+    // `change text` the overlay has no spans and this is a visible no-op.
+    f.addBinding(this.params, "rarity", {
+      options: { legendary: "legendary", cursed: "cursed", common: "common" },
+    }).on("change", (e) => this.rarityRule?.update(RARITY[e.value as string]));
+
+    // Replaces the content, keeping the segment's `id`. The rarity overlay is
+    // content-anchored, so it re-derives onto the new name and keeps its colour.
+    // Position anchors don't survive that, which is why `find` is re-applied.
+    f.addButton({ title: "reforge (setRichText)" }).on("click", () => {
+      if (this.params.altText) return;
+      this.weapon = (this.weapon + 1) % WEAPONS.length;
+      this.text.setRichText(CONTENT(WEAPONS[this.weapon]));
+      this.seedBurn();
+      this.applyFind();
+    });
+
     // Both lifetimes in one click: setText keeps the content anchors (they
     // re-derive 'fire', 'dragonflame' and /\d+/ in the new string), drops the
-    // segments, and kills any find overlays. Restoring re-applies everything.
+    // segments — so the segment anchor goes quiet — and kills any find overlays.
+    // Restoring re-applies everything.
     f.addBinding(this.params, "altText", { label: "change text (setText)" }).on("change", (e) => {
       if (e.value) {
         this.text.setText(ALT_TEXT);

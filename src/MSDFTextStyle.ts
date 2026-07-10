@@ -19,6 +19,7 @@ import type {
     HighlightSpec,
     MatchTarget,
     PerCorner,
+    SegmentTarget,
     SpanTarget,
     StyleMatcher,
     StyleSpec,
@@ -113,11 +114,18 @@ export interface ResolvedStyle {
     font?: string;         // structural — msdfFont cache key, resolved at layout
 }
 
-/** A styled source-index span. `start`/`length` index the plain `_text`. */
+/**
+ * A styled source-index span. `start`/`length` index the plain `_text`.
+ *
+ * `id` is set only on a segment run, and only when the segment was named. Such a
+ * run is kept even with an empty `style` — it carries no paint, it is a target
+ * for a `segment` anchor to find.
+ */
 export interface StyleRun {
     start: number;
     length: number;
     style: ResolvedStyle;
+    id?: string;
 }
 
 /** A cached match span (an overlay's runs all share the overlay's style). */
@@ -129,11 +137,12 @@ export interface RuleMatch {
 /**
  * A {@link StyleTarget} normalised once at creation. The `kind` is what decides
  * an overlay's lifetime: `span` is position-anchored (dropped on any text
- * change); the other three are content-anchored (re-derived, so they survive).
+ * change); the other four are content-anchored (re-derived, so they survive).
  */
 export type ResolvedTarget =
     | { kind: 'match'; needle: string; opts: Required<TextStyleOpts> }
     | { kind: 'regexp'; re: RegExp; opts: Required<TextStyleOpts> }
+    | { kind: 'segment'; id: string }
     | { kind: 'fn'; fn: StyleMatcher }
     | { kind: 'span'; start: number; length: number };
 
@@ -518,18 +527,31 @@ export function regexpRuns(text: string, re: RegExp, opts: Required<TextStyleOpt
     return runs;
 }
 
+/** The spans of every segment run carrying `id`, in segment order. */
+export function segmentRuns(segments: StyleRun[], id: string): RuleMatch[] {
+    const runs: RuleMatch[] = [];
+    for (let i = 0; i < segments.length; i++) {
+        if (segments[i].id === id) runs.push({ start: segments[i].start, length: segments[i].length });
+    }
+    return runs;
+}
+
 /**
- * The spans an anchor resolves to against `text`.
+ * The spans an anchor resolves to against the current content. Most anchors read
+ * the plain `text`; a `segment` anchor reads the segment runs instead, which is
+ * why both are passed. The caller must have installed both *before* calling —
+ * `setRichText` assigns `_segmentRuns` first, `setText` clears them first.
  *
  * A `fn` anchor is the caller's own code: its spans are taken as returned, and
  * anything it throws propagates to whoever changed the text. `onTextChanged`
  * keeps the overlay store structurally sound across that, but the overlays it
  * had not reached keep the spans they had.
  */
-export function deriveRuns(anchor: ResolvedTarget, text: string): RuleMatch[] {
+export function deriveRuns(anchor: ResolvedTarget, text: string, segments: StyleRun[]): RuleMatch[] {
     switch (anchor.kind) {
         case 'match': return matchRuns(text, anchor.needle, anchor.opts);
         case 'regexp': return regexpRuns(text, anchor.re, anchor.opts);
+        case 'segment': return segmentRuns(segments, anchor.id);
         case 'fn': return anchor.fn(text);
         case 'span': return [{ start: anchor.start, length: anchor.length }];
     }
@@ -560,7 +582,7 @@ function normalizeRegExp(re: RegExp): RegExp {
     return new RegExp(re.source, re.flags.replace(/[gy]/g, '') + 'g');
 }
 
-/** One-time dev warning for a target that is none of the four supported shapes. */
+/** One-time dev warning for a target that is none of the supported shapes. */
 let warnedTarget = false;
 
 /**
@@ -586,6 +608,10 @@ export function resolveTarget(target: StyleTarget): ResolvedTarget {
         if (m instanceof RegExp) {
             return { kind: 'regexp', re: normalizeRegExp(m), opts: resolveOpts(target as MatchTarget) };
         }
+        const id = (target as SegmentTarget).segment;
+        if (typeof id === 'string' && id.length > 0) {
+            return { kind: 'segment', id };
+        }
         const span = target as SpanTarget;
         if (typeof span.start === 'number' && typeof span.length === 'number') {
             return { kind: 'span', start: span.start, length: span.length };
@@ -595,8 +621,9 @@ export function resolveTarget(target: StyleTarget): ResolvedTarget {
         warnedTarget = true;
         console.warn(
             '[MSDFText] addStyle: the target must be a string, a RegExp, ' +
-            '`{ match, ... }`, `{ start, length }`, or a `(text) => spans` function; ' +
-            `got ${JSON.stringify(target)}. The overlay styles nothing.`
+            '`{ match, ... }`, `{ segment }`, `{ start, length }`, or a ' +
+            `\`(text) => spans\` function; got ${JSON.stringify(target)}. ` +
+            'The overlay styles nothing.'
         );
     }
     return { kind: 'fn', fn: () => [] };

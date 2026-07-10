@@ -474,6 +474,7 @@ of the content. Returns a `StyleHandle` (`update` / `remove`).
 const dmg = text.addStyle('DMG', { color: 0xff5252 });         // every "DMG" is red
 text.addStyle(/\d+/, { weight: 2, fontScale: 1.2 });           // every number
 text.addStyle({ match: 'the', nth: 0, wholeWord: true }, { color: 0x88ccff });
+text.addStyle({ segment: 'weapon' }, { color: 0xffd23f });     // a named segment
 text.addStyle({ start: 6, length: 4 }, { color: 0xffe066 });   // fixed indices
 text.addStyle(tokenize, { color: 0x9ae6b4 });                  // (text) => spans
 
@@ -483,9 +484,10 @@ dmg.remove();                      // drop the overlay
 
 The **anchor decides the lifetime**, and that is the whole rule:
 
-- **Content-anchored** — a string, a `RegExp`, a `{ match, … }` object, or a
-  `(text) => { start, length }[]` matcher. The spans are re-derived on every text
-  change, so the overlay **survives** `setText` and `setRichText`.
+- **Content-anchored** — a string, a `RegExp`, a `{ match, … }` object, a
+  `{ segment }` name, or a `(text) => { start, length }[]` matcher. The spans are
+  re-derived on every text change, so the overlay **survives** `setText` and
+  `setRichText`.
 - **Position-anchored** — a `{ start, length }` object. It indexes the text you
   passed it against, so **any** text change drops it and kills its handle (no
   clamping; a stale handle no-ops with a one-time warning). Use it for overlays on
@@ -499,6 +501,31 @@ extension point — a parser's token spans, "every emoji", "every third word" ar
 all one-liners, re-run on each text change.
 
 `clearStyles()` removes every overlay (segments are content, kept).
+
+**Named segments — `{ segment: id }`.** Give a segment an `id` and an overlay can
+address it by name, wherever it currently sits:
+
+```ts
+const render = (weapon: string) => text.setRichText([
+    'You found the ',
+    { text: weapon, id: 'weapon' },   // no style of its own — just a name
+    '!',
+]);
+
+render('Blade of Embers');
+const rarity = text.addStyle({ segment: 'weapon' }, { color: 0xffd23f });
+
+rarity.update({ color: 0xb388ff });   // restyle the piece; nothing else moves
+render('Cinderfang');                 // new content, same id — the overlay follows
+```
+
+This is the answer to the one wart of content styling: `setRichText` replaces the
+content, so it drops every position-anchored overlay as collateral. Driving a
+named piece through its own handle touches no other layer. A named segment needs
+no style keys of its own — it exists to be a target — and an overlay whose id is
+currently absent (after a plain `setText`, say) is **alive but empty**: it draws
+nothing and revives if a later `setRichText` brings the id back. Ids need not be
+unique; an overlay covers every segment carrying its id, in order.
 
 A `StyleSpec` accepts: `color`/`alpha` (a scalar, or a per-corner object for a
 gradient), `weight`, `outline` (`{ color?, innerColor?, alpha?, width?, rounded? }`),

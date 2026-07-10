@@ -9,11 +9,13 @@ stale doc lines, and three performance candidates relevant to the old-Android
 regression noted during development.
 
 > **Status (follow-up pass):** bugs 1–5 and the stale doc lines are **fixed**.
-> Performance **A is implemented** (the shader now branches). **B and C are not**,
-> deliberately: neither runs in the `performance.ts` stress scene — B is wrap
-> (spawn-time only, and that scene never wraps), C needs styled runs plus a
-> display callback (that scene has neither). They stay on the shelf until a
-> profile of a *wrapping* or *styled-callback* text asks for them.
+> Performance **A is implemented** (the shader now branches). **C is implemented**
+> (the `applyRun` window search) — not because `performance.ts` asked for it, but
+> because Tier 2's RegExp anchors made many-span overlays ordinary and it is the
+> prerequisite for `style-api-unification.md` Tier 3b. **B is not**, deliberately:
+> it is wrap, which is spawn-time only and never runs in that scene. It stays on
+> the shelf until a profile of a *wrapping* text (especially under `fitInside`)
+> asks for it.
 
 ## Bugs / sharp edges
 
@@ -159,16 +161,33 @@ Invisible to `performance.ts`: those texts are single short words with no
 `maxWidth`, and they are built once at spawn, not per frame. The scene that would
 show this is a long wrapped paragraph, especially under `fitInside`.
 
-### C. `applyRun` scans every glyph for every run — per frame in callback+styles mode — *not done*
+### C. `applyRun` scans every glyph for every run — per frame in callback+styles mode — *done*
 
-`MSDFText.ts:1218` is O(runs × glyphs) per re-seed, which the styling design
-accepted for typical counts — but in **callback** mode with styles it runs every
-frame. `_characters` (hence the glyph array) is monotone in `srcIndex`, so each
-run's span is a contiguous window: binary-search the start and break when
-`srcIndex >= end`. Only worth doing if a profiled text actually combines a
-display callback with many styled runs. `performance.ts` is not that text: it has
-no styles and no display callback, so it never leaves static mode and `applyRun`
-is never called.
+`applyRun` was O(runs × glyphs) per re-seed, which the styling design accepted
+for typical counts — but in **callback** mode with styles it runs every frame.
+`_characters` (hence the glyph array) is monotone in `srcIndex`, so each run's
+span is a contiguous window.
+
+**Implemented.** A lower-bound binary search for the first glyph with
+`srcIndex >= start`, then a walk that breaks at `srcIndex >= end`. O(runs × (log
+glyphs + span)) — output-sensitive, and the constant on the scan it replaced was
+already trivial, so this is a win only where it was ever a cost: many spans over
+a long text. What made it worth doing anyway is `style-api-unification.md` Tier
+2: a RegExp anchor like `/\d+/` routinely yields dozens of spans where a literal
+rule yielded one, and `applyStyleRuns` walked the entire glyph array once per
+span.
+
+The monotonicity is *strict*, and load-bearing: `rebuildText` walks the wrapped
+string in order and `continue`s — never pushing a quad — on a newline, a space,
+or a character missing from its run's font. So no two glyphs share a `srcIndex`
+and the window is contiguous. (The wrap's `-1` soft-break sentinel never reaches
+`_characters` for the same reason: newlines are skipped before the push.)
+
+Verified by randomized differential test against the old scan — 200k cases over
+strictly-increasing arrays with gaps, including empty arrays, zero-length spans,
+spans starting before the first glyph and spans running past the last: zero
+mismatches. `performance.ts` still never exercises it (no styles, no callback,
+so it never leaves static mode).
 
 ## Stale doc lines (design docs and code docs) — *all fixed*
 

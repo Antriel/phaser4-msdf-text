@@ -279,6 +279,22 @@ export interface StyleSpec {
 export interface SegmentSpec extends StyleSpec {
     /** The run's text. Concatenated (in order) into the object's plain text. */
     text: string;
+
+    /**
+     * A name for this run, so an overlay can address it later:
+     * `addStyle({ segment: id }, style)`. Ids need not be unique — an overlay
+     * anchored to one covers **every** segment carrying it, in order.
+     *
+     * The point is that the overlay outlives the segment: a `setRichText` that
+     * replaces the content but keeps the id moves the overlay to the new span,
+     * so a named piece can be recoloured or animated without re-declaring it,
+     * and without re-calling `setRichText` (which drops every position-anchored
+     * overlay as collateral).
+     *
+     * A named segment survives even with no style keys of its own — it exists to
+     * be a target.
+     */
+    id?: string;
 }
 
 /** One rich-text segment: a bare string (unstyled) or a styled {@link SegmentSpec}. */
@@ -314,6 +330,21 @@ export interface SpanTarget {
 }
 
 /**
+ * A {@link StyleTarget} anchored to the named {@link SegmentSpec}s of the last
+ * {@link MSDFTextInstance.setRichText} call.
+ *
+ * Content-anchored, and unusual in that its content is the *segments*, not the
+ * string: it re-derives whenever they do. While no segment carries the id the
+ * overlay is alive but empty — it draws nothing and revives if a later
+ * `setRichText` brings the id back. A plain `setText` clears the segments, so it
+ * empties the same way.
+ */
+export interface SegmentTarget {
+    /** The {@link SegmentSpec.id} to style. */
+    segment: string;
+}
+
+/**
  * A custom {@link StyleTarget}: given the current plain text, return the spans to
  * style. Re-run on every text change, like any other content anchor — a parser's
  * token spans, "every emoji", "every third word" are all one-liners here.
@@ -331,8 +362,8 @@ export type StyleMatcher = (text: string) => SpanTarget[];
  * kind — not the method — decides the overlay's lifetime:
  *
  * - **Content-anchored** (`string`, `RegExp`, {@link MatchTarget},
- *   {@link StyleMatcher}) — the spans are re-derived on every text change, so the
- *   overlay survives `setText` and `setRichText`.
+ *   {@link SegmentTarget}, {@link StyleMatcher}) — the spans are re-derived on
+ *   every text change, so the overlay survives `setText` and `setRichText`.
  * - **Position-anchored** ({@link SpanTarget}) — the spans index the text the
  *   caller passed them against, so **any** text change drops the overlay and kills
  *   its handle (no clamping).
@@ -341,8 +372,10 @@ export type StyleMatcher = (text: string) => SpanTarget[];
  * {@link MatchTarget} form for `nth` / `all` / `wholeWord` / `caseSensitive`. A
  * `RegExp` matches every occurrence of the pattern; its `g` and `y` flags are
  * ignored (all matches are found either way) and zero-length matches are skipped.
+ * {@link SegmentTarget} addresses a named `setRichText` segment rather than the
+ * string it contributed.
  */
-export type StyleTarget = string | RegExp | MatchTarget | SpanTarget | StyleMatcher;
+export type StyleTarget = string | RegExp | MatchTarget | SegmentTarget | SpanTarget | StyleMatcher;
 
 /**
  * A live handle to an overlay added with {@link MSDFTextInstance.addStyle}.
@@ -591,8 +624,11 @@ export interface MSDFTextInstance extends
      * content* — they are replaced together on the next `setText`/`setRichText`.
      *
      * The update path is simply calling `setRichText` again: if the concatenated
-     * text is unchanged, relayout is skipped and only the styles re-seed.
-     * Chainable.
+     * text is unchanged, relayout is skipped and only the styles re-seed. Note
+     * that either way it replaces the content, so **every position-anchored
+     * overlay drops**. To update one piece repeatedly without that, give the
+     * segment an {@link SegmentSpec.id} and drive it through
+     * `addStyle({ segment: id }, …)` instead. Chainable.
      */
     setRichText(segments: Segment[]): this;
     /**
@@ -605,12 +641,14 @@ export interface MSDFTextInstance extends
      * text.addStyle('DMG', { color: 0xff3333 });                     // every "DMG"
      * text.addStyle(/\d+/, { weight: 2, fontScale: 1.2 });           // every number
      * text.addStyle({ match: 'the', nth: 0, wholeWord: true }, { color: 0x88ccff });
+     * text.addStyle({ segment: 'dmg' }, { color: 0xffaa00 });        // a named segment
      * text.addStyle({ start: 5, length: 3 }, { color: 0xffff00 });   // fixed indices
      * ```
      *
      * The {@link StyleTarget} kind decides the lifetime: content anchors (string,
-     * `RegExp`, matcher function) are re-derived on every text change and survive
-     * it; a `{ start, length }` anchor dies with the text it indexed.
+     * `RegExp`, {@link SegmentTarget}, matcher function) are re-derived on every
+     * text change and survive it; a `{ start, length }` anchor dies with the text
+     * it indexed.
      *
      * `style` is a full {@link StyleSpec} — appearance, decoration *and* the
      * structural `fontScale`/`font` ("every `H1` is 1.5× in the display face").

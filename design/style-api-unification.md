@@ -1,9 +1,11 @@
 # Style API unification — one spec, one overlay primitive
 
-**Status: Tiers 1 and 2 implemented; Tier 3 still a proposal.** `StyleSpec` is
+**Status: Tiers 1, 2 and 3a implemented; Tier 3b deferred.** `StyleSpec` is
 the one spec, `addStyle(target, style)` the one overlay primitive;
 `setTextStyle`, `addStyleRange`, `RuleStyleSpec` and `StyleHandle`'s generic
-parameter are gone. RegExp and function anchors shipped with it. Decisions taken
+parameter are gone. RegExp and function anchors shipped with it; `SegmentSpec.id`
+and the `{ segment }` anchor followed (Tier 3a), together with
+`implementation-review.md` finding C, which was 3b's prerequisite. Decisions taken
 on the open questions are recorded inline at the bottom.
 
 Written as the answer to:
@@ -270,7 +272,7 @@ API budget on the weakest design in the space.
 
 The wart and the want are both answered by anchors, not handles:
 
-### 3a — segment identity: `id` + the `{ segment }` anchor
+### 3a — segment identity: `id` + the `{ segment }` anchor — **implemented**
 
 `SegmentSpec` gains an optional `id?: string`. `addStyle({ segment: 'dmg' },
 style)` anchors an overlay to whichever spans currently carry that id —
@@ -562,40 +564,43 @@ Tier 3:
    exception is `setDisplayCallback(undefined)` changing from "always static" to
    "fall back to the spec-implied mode" — small and containable.)
 
-   So each is judged on its own merits. **3a is in**: a dozen lines, and it
-   closes the one wart Tiers 1–2 knowingly left behind (updating a named piece
-   means re-calling `setRichText`, which drops every position-anchored overlay
-   as collateral). **3b is deferred**: per-span dispatch runs `applyRun`'s
-   span→glyph scan *once per span per frame*, which makes finding C
+   So each is judged on its own merits. **3a is in** — and shipped: a dozen lines,
+   and it closes the one wart Tiers 1–2 knowingly left behind (updating a named
+   piece means re-calling `setRichText`, which drops every position-anchored
+   overlay as collateral). **3b is deferred**: per-span dispatch runs `applyRun`'s
+   span→glyph scan *once per span per frame*, which made finding C
    (`implementation-review.md`) a prerequisite rather than a nicety — and the
    object-level `displayCallback` already covers the motivating use case by
    filtering on `g.srcIndex`, which is exactly what `examples/scenes/rich-text.ts`
    does today. 3b is ergonomics over an existing capability, not a new one.
+
+   *Since:* finding C has landed, so 3b's prerequisite is met and the deferral now
+   rests only on the second half of that argument — it buys ergonomics, not
+   capability. Additive whenever it is wanted.
 7. **Per-span vs per-overlay callback calls** — moot until 3b is real.
    **Deferred with it**; the per-span reasoning above stands as the starting
    position.
 
 ## Next steps (for a fresh session)
 
-In order. Both are self-contained, and the first is the second's prerequisite in
-spirit if not in letter:
+Both of the previous two — **finding C** and **Tier 3a** — are now done. What is
+left, in order:
 
-1. **`implementation-review.md` finding C** — binary-search the span→glyph window
-   in `MSDFText.applyRun`. The glyph array is monotone in `srcIndex`, so each run
-   is a window, not a scan. No API surface. It got materially more attractive
-   with Tier 2: a RegExp anchor like `/\d+/` can produce dozens of spans where a
-   literal rule produced one or two, and `applyStyleRuns` walks the whole glyph
-   array once per span on **every re-seed**. It is also 3b's prerequisite.
-2. **Tier 3a** — `SegmentSpec.id`, a `segment` kind in `ResolvedTarget`, and
-   `addStyle({ segment: 'dmg' }, style)`. Two implementation notes the sketch
-   above doesn't state: `deriveRuns` needs the segment runs passed alongside
-   `text` (a segment anchor resolves against `_segmentRuns`, not the string), and
-   `setRichText` must stop eliding runs for **unstyled-but-named** segments while
-   keeping the elision for anonymous unstyled strings. Ordering is already safe:
-   `setRichText` assigns `_segmentRuns` before calling `onTextChanged`, and
-   `setText` clears them before calling it. A segment anchor is content-anchored,
-   so it survives a `setRichText` that keeps the id, and holds empty `runs`
-   (alive, drawing nothing) while the id is absent.
+1. **Tier 3b** (`StyleSpec.displayCallback`) — now unblocked, since finding C
+   landed and per-span dispatch no longer means a whole-array scan per span per
+   frame. Still judged **ergonomics over an existing capability**: the object
+   `displayCallback` already scopes itself by `g.srcIndex`, which is what
+   `examples/scenes/rich-text.ts` does. Purely additive, so publishing first is
+   safe; the one behavioural change to contain is
+   `setDisplayCallback(undefined)` falling back to the spec-implied mode instead
+   of always returning to static. Open question 7 (per-span vs per-overlay calls)
+   becomes live with it.
+2. **`implementation-review.md` finding B** — the O(line²) wrap measure. The last
+   catalogued perf candidate, and unlike C it has no feature pulling it forward:
+   it wants a profile of a long wrapped paragraph, especially under `fitInside`.
+3. **Merge and publish.** Nothing above blocks it. The whole rich-text surface is
+   still unreleased (`main` is 0.3.0), which is what made Tiers 1–2's deletions
+   free; that budget is spent once this branch lands.
 
 ## Notes from the implementation
 
@@ -617,3 +622,21 @@ One behaviour kept deliberately, and it is the one wart Tier 3a exists to close:
 plain string is unchanged, so a `{ start, length }` span is arguably still valid
 — but the *content* under it was replaced, and "position anchors die when the
 content changes" is the rule worth being able to state without an exception.
+
+Tier 3a, as built, closes it exactly as sketched, with one detail the sketch left
+implicit: a **named-but-unstyled** segment run has an *empty* `ResolvedStyle`, and
+every consumer of `_segmentRuns` is already key-gated (`applyStyleRuns` checks
+`styleHasAppearanceKeys`, the two map builders check `fontScale`/`font`,
+`rebuildDecorations` paints only present keys). So keeping such a run costs one
+object and changes no behaviour anywhere — no new gates were needed. It does flip
+`_hasStyles` true, which is correct and load-bearing: that flag is what makes
+`setText` run `onTextChanged`, and a segment overlay must be told the segments
+are gone. `resolveTarget` requires a **non-empty** id, so `{ segment: '' }` falls
+through to the inert-matcher warning rather than silently matching unnamed runs.
+
+Finding C landed alongside it, ahead of its own schedule, for the reason recorded
+in `implementation-review.md`: Tier 2's RegExp anchors made many-span overlays
+ordinary. The invariant it rests on is worth stating once — the glyph array is
+*strictly* increasing in `srcIndex`, not merely monotone, because `rebuildText`
+`continue`s before pushing a quad for a newline, a space, or a character missing
+from its run's font.

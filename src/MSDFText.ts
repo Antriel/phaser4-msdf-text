@@ -71,6 +71,7 @@ export type {
     SegmentSpec,
     Segment,
     MatchTarget,
+    SegmentTarget,
     SpanTarget,
     StyleMatcher,
     StyleTarget,
@@ -487,7 +488,9 @@ export const MSDFText: MSDFTextStatic = new Class({
             this._text = str;
             this._dirty = true;
             // Plain setText replaces the content: segment styles go with it,
-            // ranges drop, rules re-match against the new text.
+            // position anchors drop, content anchors re-derive against the new
+            // text. The segment runs are cleared *first*, so a `{ segment }`
+            // overlay re-derives to nothing rather than to the old spans.
             if (this._hasStyles) {
                 this._segmentRuns.length = 0;
                 this.onTextChanged(str);
@@ -504,10 +507,16 @@ export const MSDFText: MSDFTextStatic = new Class({
      * derived style state and a flagged re-seed. Segments are handled by the
      * caller (they are content, replaced with it).
      *
-     * The anchor kind decides the fate: a content anchor re-derives its spans
-     * against the new text and lives on; a position anchor indexed the old text,
-     * so it is dropped and marked dead (which is what its handle checks). No
-     * clamping — a half-surviving range is worse than none.
+     * The anchor kind decides the fate: a content anchor re-derives its spans and
+     * lives on; a position anchor indexed the old text, so it is dropped and
+     * marked dead (which is what its handle checks). No clamping — a
+     * half-surviving range is worse than none.
+     *
+     * "Content" for a `{ segment }` anchor means `_segmentRuns`, not the string,
+     * so every caller must install its segments before calling here — `setRichText`
+     * assigns them, `setText` clears them. That anchor is also the one that can
+     * legitimately re-derive to *no* spans and stay alive: it is waiting for a
+     * later `setRichText` to bring its id back.
      *
      * Two phases, because a `fn` anchor is the caller's code and may throw. The
      * store is compacted first, with nothing user-supplied running; only then is
@@ -531,7 +540,7 @@ export const MSDFText: MSDFTextStatic = new Class({
 
         try {
             for (let i = 0; i < overlays.length; i++) {
-                overlays[i].runs = deriveRuns(overlays[i].anchor, text);
+                overlays[i].runs = deriveRuns(overlays[i].anchor, text, this._segmentRuns);
             }
         } finally {
             this.refreshStyleState();
@@ -1250,15 +1259,33 @@ export const MSDFText: MSDFTextStatic = new Class({
         this._stylesHaveShadow = shadow;
     },
 
-    /** Apply one resolved style to every glyph whose `srcIndex` is in the span. */
+    /**
+     * Apply one resolved style to every glyph whose `srcIndex` is in the span.
+     *
+     * The glyph array is strictly increasing in `srcIndex` — `rebuildText` walks
+     * the wrapped string in order and never emits a quad for a newline, a space
+     * or a character missing from its run's font — so a source span is a
+     * *contiguous window*, not a scattered subset. Binary-search its first glyph
+     * and stop at its last, rather than scanning the whole array per run: a
+     * RegExp anchor can hold dozens of spans, and every one of them is walked on
+     * every re-seed (per frame, in callback mode).
+     */
     applyRun: function (states: GlyphState[], start: number, length: number, style: ResolvedStyle): void {
         const end = start + length;
-        for (let i = 0; i < states.length; i++) {
+        const n = states.length;
+
+        // Lower bound: the first glyph with `srcIndex >= start`.
+        let lo = 0, hi = n;
+        while (lo < hi) {
+            const mid = (lo + hi) >>> 1;
+            if ((states[mid] as any).srcIndex < start) lo = mid + 1;
+            else hi = mid;
+        }
+
+        for (let i = lo; i < n; i++) {
             const g = states[i];
-            const si = (g as any).srcIndex;
-            if (si >= start && si < end) {
-                applyStyleToGlyph(g, style);
-            }
+            if ((g as any).srcIndex >= end) break;
+            applyStyleToGlyph(g, style);
         }
     },
 
@@ -1859,8 +1886,16 @@ export const MSDFText: MSDFTextStatic = new Class({
             const start = text.length;
             const t = seg.text != null ? String(seg.text) : '';
             text += t;
-            if (t.length > 0 && hasStyleKeys(seg)) {
-                runs.push({ start, length: t.length, style: resolveStyle(seg) });
+            // A run is kept when it paints something *or* when it is named: a
+            // named-but-unstyled segment exists purely so `{ segment: id }` can
+            // find it. Its style is empty, so every paint loop skips it anyway —
+            // the elision below is only about not allocating for anonymous,
+            // unstyled strings, which are the common case.
+            const named = typeof seg.id === 'string' && seg.id.length > 0;
+            if (t.length > 0 && (named || hasStyleKeys(seg))) {
+                const run: StyleRun = { start, length: t.length, style: resolveStyle(seg) };
+                if (named) run.id = seg.id;
+                runs.push(run);
             }
         }
 
@@ -1893,7 +1928,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         const overlay: StyleOverlay = {
             anchor,
             style: resolveStyle(style),
-            runs: deriveRuns(anchor, this._text),
+            runs: deriveRuns(anchor, this._text, this._segmentRuns),
             dead: false
         };
         this._overlays.push(overlay);

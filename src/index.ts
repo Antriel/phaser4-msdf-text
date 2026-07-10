@@ -56,6 +56,7 @@ export type {
     HighlightSpec,
     HighlightPadding,
     MatchTarget,
+    SegmentTarget,
     SpanTarget,
     StyleMatcher,
     StyleTarget,

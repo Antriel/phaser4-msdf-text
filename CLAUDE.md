@@ -270,15 +270,34 @@ out from under an otherwise unchanged map.
 **Overlay anchors** — `addStyle(target, style)` is the only overlay primitive.
 `resolveTarget` (`MSDFTextStyle.ts`) normalizes the public `StyleTarget` into a
 `ResolvedTarget` whose `kind` is the *only* thing that decides lifetime:
-`match` / `regexp` / `fn` are **content-anchored** (re-derived against the new
-string on every text change, so they survive it); `span` is **position-anchored**
+`match` / `regexp` / `segment` / `fn` are **content-anchored** (re-derived on
+every text change, so they survive it); `span` is **position-anchored**
 (spliced out and marked `dead`, which is what its handle checks). `onTextChanged`
 is that one loop. The `fn` anchor is the extension point that ends the
-matcher-feature treadmill; it is caught-and-warned rather than allowed to throw,
-because it runs inside `setText`'s bookkeeping and a throw would abandon the
-store half re-derived. Range spans index the **source** string, and a structural
-reflow never moves source indices — which is what makes a structural key safe on
-a position anchor.
+matcher-feature treadmill; a matcher that throws **propagates** — it is the
+caller's exception, not ours to swallow into a silent no-match. `onTextChanged`
+pays for that by compacting the store *before* running any user code and
+refreshing derived state in a `finally`, so the throw leaves the text object
+consistent. Range spans index the **source** string, and a structural reflow
+never moves source indices — which is what makes a structural key safe on a
+position anchor.
+
+- The **`segment` anchor** (`addStyle({ segment: id }, style)`) is the odd one:
+  its "content" is `_segmentRuns`, not the string, so `deriveRuns` takes both and
+  every caller must install its segments *first* (`setRichText` assigns them,
+  `setText` clears them). It is also the only anchor that can legitimately
+  resolve to **no spans and stay alive** — waiting for a later `setRichText` to
+  bring its `id` back. Its reason to exist: `setRichText` replaces content, so it
+  drops every position-anchored overlay; a named segment is how a caller restyles
+  one piece repeatedly without that collateral. `setRichText` therefore keeps a
+  run for a **named-but-unstyled** segment — its `ResolvedStyle` is empty, so
+  every key-gated paint loop skips it anyway — while still eliding anonymous
+  unstyled strings.
+- `applyRun` **binary-searches** its span's glyph window rather than scanning.
+  The glyph array is *strictly* increasing in `srcIndex` (newlines, spaces and
+  characters missing from their run's font never become quads), so a source span
+  is contiguous. A RegExp anchor makes dozens-of-spans overlays ordinary, and
+  every span is walked on every re-seed — per frame, in callback mode.
 
 **Variable line metrics** — measurement is **not** a method on one font. It lives
 in `src/MSDFMeasure.ts` as free functions over a `LayoutRuns` — `{ base, scales,
