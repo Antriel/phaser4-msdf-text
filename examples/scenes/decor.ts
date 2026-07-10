@@ -9,15 +9,18 @@ import type { MSDFTextInstance, Segment } from "../../src";
 // `params` bytes a solid quad has no other use for. No new attribute, no new
 // draw call: every pill below batches with the glyphs in front of it.
 
-// One pill spanning mixed sizes *and* mixed fonts: adjacent runs merge into a
-// single rect as long as they resolve to the same highlight spec and stay on
-// one line — the pill's vertical extent is the union of the runs' metrics.
+// One pill spanning mixed sizes *and* mixed fonts. Runs merge into a single
+// rect while they share a line and the *same* resolved highlight — identity, not
+// equality, so two segments each naming the same literal would still pill twice.
+// The size and the font stay on the segments (they are structural); the
+// highlight comes from one overlay across both, and the pill's vertical extent
+// is the union of the runs' metrics.
 const MARKER: Segment[] = [
   "Style layers reach the ",
   { text: "highlight", highlight: { color: 0xffe066, radius: 0.35, padding: { x: 0.2, y: 0.06 } }, color: 0x1a1030 },
   " lane, so a rule or a range pills exactly the run it matches — and a pill spans\nmixed ",
-  { text: "sizes", fontScale: 1.6, highlight: { color: 0x7fd4ff, alpha: 0.35, radius: 1, padding: 0.1 } },
-  { text: " and fonts", font: "Bangers", highlight: { color: 0x7fd4ff, alpha: 0.35, radius: 1, padding: 0.1 } },
+  { text: "sizes", fontScale: 1.6 },
+  { text: " and fonts", font: "Bangers" },
   " as one shape.",
 ];
 
@@ -148,13 +151,18 @@ export class DecorScene extends ExampleScene {
       });
 
     // Rich-text runs reaching the highlight lane.
-    this.add
+    const marker = this.add
       .msdfText(640, 330, "Inter", "", 30)
       .setColor("#f0ecff")
       .setOrigin(0.5, 0)
       .setCenterAlign()
       .setMaxWidth(1000)
       .setRichText(MARKER);
+    // One overlay across both runs, so both resolve to the *same* highlight and
+    // merge into one pill — two segments each naming this literal would not.
+    marker.addStyle("sizes and fonts", {
+      highlight: { color: 0x7fd4ff, alpha: 0.35, radius: 1, padding: 0.1 },
+    });
 
     // Underline / strikethrough splits, driven purely by the segments.
     this.add
