@@ -1,11 +1,13 @@
 /**
  * Rich-text style engine for {@link MSDFText} — the pure, `this`-free half of
  * the styling feature. Turns a public {@link StyleSpec} into a GPU-ready
- * {@link ResolvedStyle} (parsed once at creation), finds keyword/whole-word
- * match spans, and stamps a resolved style onto a seeded {@link GlyphState}.
+ * {@link ResolvedStyle} (parsed once at creation), turns a public
+ * {@link StyleTarget} into a {@link ResolvedTarget} that can re-derive its match
+ * spans against any text, and stamps a resolved style onto a seeded
+ * {@link GlyphState}.
  *
- * The Class in `MSDFText.ts` owns the three run stores (segments / rules /
- * ranges) and calls into here; nothing in this module reads instance state.
+ * The Class in `MSDFText.ts` owns the two run stores (segments / overlays) and
+ * calls into here; nothing in this module reads instance state.
  */
 
 import * as Phaser from "phaser";
@@ -15,10 +17,12 @@ import type {
     ColorValue,
     DecorationSpec,
     HighlightSpec,
+    MatchTarget,
     PerCorner,
+    SpanTarget,
+    StyleMatcher,
     StyleSpec,
-    RuleStyleSpec,
-    SegmentSpec,
+    StyleTarget,
     TextStyleOpts
 } from './MSDFTextTypes';
 
@@ -116,18 +120,34 @@ export interface StyleRun {
     style: ResolvedStyle;
 }
 
-/** A cached whole/substring match span (a rule's runs share the rule's style). */
+/** A cached match span (an overlay's runs all share the overlay's style). */
 export interface RuleMatch {
     start: number;
     length: number;
 }
 
-/** A persistent keyword rule: its `runs` are re-cached on every text change. */
-export interface StyleRule {
-    match: string;
-    opts: Required<TextStyleOpts>;
+/**
+ * A {@link StyleTarget} normalised once at creation. The `kind` is what decides
+ * an overlay's lifetime: `span` is position-anchored (dropped on any text
+ * change); the other three are content-anchored (re-derived, so they survive).
+ */
+export type ResolvedTarget =
+    | { kind: 'match'; needle: string; opts: Required<TextStyleOpts> }
+    | { kind: 'regexp'; re: RegExp; opts: Required<TextStyleOpts> }
+    | { kind: 'fn'; fn: StyleMatcher }
+    | { kind: 'span'; start: number; length: number };
+
+/**
+ * One `addStyle` overlay: an anchor, a style, and the spans the anchor currently
+ * resolves to. `runs` is re-derived on every text change for a content anchor;
+ * a position anchor is spliced out of the store and marked `dead`, which is what
+ * its handle checks.
+ */
+export interface StyleOverlay {
+    anchor: ResolvedTarget;
     style: ResolvedStyle;
     runs: RuleMatch[];
+    dead: boolean;
 }
 
 /** Whether `value` is a {@link PerCorner} (has the four corner keys). */
@@ -254,8 +274,8 @@ let warnedFontScale = false;
 /** One-time dev warning for a `font` that isn't a non-empty cache key. */
 let warnedFont = false;
 
-/** Normalise a {@link RuleStyleSpec} into a {@link ResolvedStyle} (present keys only). */
-export function resolveStyle(spec: RuleStyleSpec): ResolvedStyle {
+/** Normalise a {@link StyleSpec} into a {@link ResolvedStyle} (present keys only). */
+export function resolveStyle(spec: StyleSpec): ResolvedStyle {
     const r: ResolvedStyle = {};
     if (spec.color !== undefined) r.fillColor = resolveColorCorners(spec.color);
     if (spec.alpha !== undefined) r.fillAlpha = resolveNumberCorners(spec.alpha);
@@ -324,7 +344,7 @@ export function resolveStyle(spec: RuleStyleSpec): ResolvedStyle {
 }
 
 /** Whether a spec carries at least one override (appearance, decoration or structural). */
-export function hasStyleKeys(spec: SegmentSpec): boolean {
+export function hasStyleKeys(spec: StyleSpec): boolean {
     return spec.color !== undefined || spec.alpha !== undefined || spec.weight !== undefined ||
         spec.outline !== undefined || spec.shadow !== undefined ||
         spec.scale !== undefined || spec.scaleX !== undefined || spec.scaleY !== undefined ||
@@ -412,15 +432,44 @@ export function applyStyleToGlyph(g: GlyphState, s: ResolvedStyle): void {
     if (s.skew !== undefined) g.skew = s.skew;
 }
 
+// ============================================================================
+// Anchors — turning a public `StyleTarget` into spans over the current text
+// ============================================================================
+
 /** Whether `ch` is a word character (used for whole-word matching). */
 function isWordChar(ch: string): boolean {
     return ch !== '' && /[A-Za-z0-9_]/.test(ch);
 }
 
+/** Whether the span `[idx, idx+len)` of `text` has non-word neighbours. */
+function isWholeWord(text: string, idx: number, len: number): boolean {
+    const before = idx > 0 ? text[idx - 1] : '';
+    const after = idx + len < text.length ? text[idx + len] : '';
+    return !isWordChar(before) && !isWordChar(after);
+}
+
 /**
- * Find match spans of `needle` in `text` per `opts`. Whole-word matches require
- * non-word (or string-boundary) neighbours; `nth` targets a single occurrence
- * (counting only matches that pass the whole-word gate); otherwise all/first.
+ * Collect matches under the shared `all` / `nth` policy: `nth` targets a single
+ * occurrence (counting only spans that already passed the whole-word gate),
+ * otherwise every occurrence or just the first. `push` returns `true` when the
+ * caller should stop scanning.
+ */
+function makeCollector(runs: RuleMatch[], opts: Required<TextStyleOpts>) {
+    let count = 0;
+    return (start: number, length: number): boolean => {
+        if (opts.nth >= 0) {
+            if (count === opts.nth) { runs.push({ start, length }); return true; }
+            count++;
+            return false;
+        }
+        runs.push({ start, length });
+        return !opts.all;
+    };
+}
+
+/**
+ * Find substring spans of `needle` in `text` per `opts`. Whole-word matches
+ * require non-word (or string-boundary) neighbours.
  */
 export function matchRuns(text: string, needle: string, opts: Required<TextStyleOpts>): RuleMatch[] {
     const runs: RuleMatch[] = [];
@@ -429,25 +478,126 @@ export function matchRuns(text: string, needle: string, opts: Required<TextStyle
 
     const hay = opts.caseSensitive ? text : text.toLowerCase();
     const pat = opts.caseSensitive ? needle : needle.toLowerCase();
+    const take = makeCollector(runs, opts);
 
     let from = 0;
-    let count = 0;
     for (;;) {
         const idx = hay.indexOf(pat, from);
         if (idx < 0) break;
-        const before = idx > 0 ? text[idx - 1] : '';
-        const after = idx + len < text.length ? text[idx + len] : '';
-        const ok = !opts.wholeWord || (!isWordChar(before) && !isWordChar(after));
-        if (ok) {
-            if (opts.nth >= 0) {
-                if (count === opts.nth) { runs.push({ start: idx, length: len }); break; }
-                count++;
-            } else {
-                runs.push({ start: idx, length: len });
-                if (!opts.all) break;
-            }
+        if (!opts.wholeWord || isWholeWord(text, idx, len)) {
+            if (take(idx, len)) break;
         }
         from = idx + len;
     }
     return runs;
+}
+
+/**
+ * Find pattern spans of `re` in `text` per `opts`. `re` is the normalised copy
+ * built by {@link resolveTarget} — always global, so `exec` walks the string —
+ * and its `lastIndex` is reset here rather than trusted from the last derive.
+ *
+ * Zero-length matches are skipped (they would style nothing and, without the
+ * manual `lastIndex` bump, never terminate). `caseSensitive` has no meaning here:
+ * the pattern's own `i` flag governs.
+ */
+export function regexpRuns(text: string, re: RegExp, opts: Required<TextStyleOpts>): RuleMatch[] {
+    const runs: RuleMatch[] = [];
+    const take = makeCollector(runs, opts);
+
+    re.lastIndex = 0;
+    for (;;) {
+        const m = re.exec(text);
+        if (m === null) break;
+        const len = m[0].length;
+        if (len === 0) { re.lastIndex++; continue; }
+        if (!opts.wholeWord || isWholeWord(text, m.index, len)) {
+            if (take(m.index, len)) break;
+        }
+    }
+    return runs;
+}
+
+/**
+ * The spans an anchor resolves to against `text`.
+ *
+ * A `fn` anchor is the caller's own code: its spans are taken as returned, and
+ * anything it throws propagates to whoever changed the text. `onTextChanged`
+ * keeps the overlay store structurally sound across that, but the overlays it
+ * had not reached keep the spans they had.
+ */
+export function deriveRuns(anchor: ResolvedTarget, text: string): RuleMatch[] {
+    switch (anchor.kind) {
+        case 'match': return matchRuns(text, anchor.needle, anchor.opts);
+        case 'regexp': return regexpRuns(text, anchor.re, anchor.opts);
+        case 'fn': return anchor.fn(text);
+        case 'span': return [{ start: anchor.start, length: anchor.length }];
+    }
+}
+
+/** Whether an anchor re-derives its spans on a text change (rather than dying). */
+export function isContentAnchored(anchor: ResolvedTarget): boolean {
+    return anchor.kind !== 'span';
+}
+
+/** Fill in the match-option defaults. `nth: -1` means "not targeting one occurrence". */
+function resolveOpts(opts: TextStyleOpts): Required<TextStyleOpts> {
+    return {
+        all: opts.all !== undefined ? opts.all : true,
+        nth: opts.nth !== undefined ? opts.nth : -1,
+        wholeWord: !!opts.wholeWord,
+        caseSensitive: opts.caseSensitive !== undefined ? opts.caseSensitive : true
+    };
+}
+
+/**
+ * Normalise a `RegExp` into a global, non-sticky copy. `g` and `y` change where
+ * `exec` starts and whether it may skip ahead — both are ours to control, so the
+ * caller's are dropped rather than honoured, and the caller's own object is never
+ * mutated (its `lastIndex` is observable).
+ */
+function normalizeRegExp(re: RegExp): RegExp {
+    return new RegExp(re.source, re.flags.replace(/[gy]/g, '') + 'g');
+}
+
+/** One-time dev warning for a target that is none of the four supported shapes. */
+let warnedTarget = false;
+
+/**
+ * Normalise a public {@link StyleTarget} into a {@link ResolvedTarget}. An
+ * unrecognised target degenerates to an empty, content-anchored matcher — inert
+ * rather than throwing, since a live handle is still returned for it.
+ */
+export function resolveTarget(target: StyleTarget): ResolvedTarget {
+    if (typeof target === 'string') {
+        return { kind: 'match', needle: target, opts: resolveOpts({}) };
+    }
+    if (target instanceof RegExp) {
+        return { kind: 'regexp', re: normalizeRegExp(target), opts: resolveOpts({}) };
+    }
+    if (typeof target === 'function') {
+        return { kind: 'fn', fn: target as StyleMatcher };
+    }
+    if (target && typeof target === 'object') {
+        const m = (target as MatchTarget).match;
+        if (typeof m === 'string') {
+            return { kind: 'match', needle: m, opts: resolveOpts(target as MatchTarget) };
+        }
+        if (m instanceof RegExp) {
+            return { kind: 'regexp', re: normalizeRegExp(m), opts: resolveOpts(target as MatchTarget) };
+        }
+        const span = target as SpanTarget;
+        if (typeof span.start === 'number' && typeof span.length === 'number') {
+            return { kind: 'span', start: span.start, length: span.length };
+        }
+    }
+    if (!warnedTarget) {
+        warnedTarget = true;
+        console.warn(
+            '[MSDFText] addStyle: the target must be a string, a RegExp, ' +
+            '`{ match, ... }`, `{ start, length }`, or a `(text) => spans` function; ' +
+            `got ${JSON.stringify(target)}. The overlay styles nothing.`
+        );
+    }
+    return { kind: 'fn', fn: () => [] };
 }

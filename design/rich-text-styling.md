@@ -52,6 +52,15 @@ Do **not** put `fontScale` on `GlyphState`.
 
 ### Refinement — where structural keys may live (pre-layout vs post-layout)
 
+> **Superseded by `style-api-unification.md` (Tiers 1–2, implemented).** The
+> boundary drawn here — structural keys on segments and rules but not ranges —
+> was guarding a line that had already moved. All three declarative layers now
+> take one `StyleSpec` and may carry any key; the cost is per *key*, not per
+> method. The three layers themselves collapsed into two (segments + `addStyle`
+> overlays), and lifetime became a property of the anchor rather than the entry
+> point. The reasoning below is kept as the record of how the earlier rule was
+> arrived at.
+
 The original rule was blunt: *"structural keys on `SegmentSpec` only."* The
 sharper rule that supersedes it is about **pipeline position, not doc type**:
 

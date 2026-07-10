@@ -139,19 +139,30 @@ export interface HighlightSpec {
 }
 
 /**
- * A per-run appearance override for the rich-text API. Every field is optional;
- * only the keys present override the glyph's seeded base (which inherits the
- * text object's colour/alpha/weight/outline/shadow). Colours, alphas and the
+ * A per-run style override for the rich-text API — the one spec shared by every
+ * declarative layer ({@link MSDFTextInstance.setRichText} segments and
+ * {@link MSDFTextInstance.addStyle} overlays). Every field is optional; only the
+ * keys present override the glyph's seeded base (which inherits the text
+ * object's colour/alpha/weight/outline/shadow). Colours, alphas and the
  * continuous effect channels (`weight`, `outline.width`, `shadow.softness`)
  * accept a scalar (all four corners the same) or a {@link PerCorner} (a gradient
  * across the glyph quad).
  *
- * This is an *appearance* spec: it never changes layout, composes with
- * `displayCallback`, and is animatable. Structural keys (`fontScale`, `font`)
- * live on {@link RuleStyleSpec}, which segments and rules use, because only a
- * layer resolved before the layout pass may carry them. Everything here seeds
- * `GlyphState` except `underline`, `strikethrough` and `highlight`, which resolve
- * per source character into merged rects.
+ * **Specs are layout inputs; the glyph array is layout output.** Any spec layer
+ * may carry any key, and each key lane has its own cost:
+ *
+ * - *appearance* (colour, alpha, weight, outline, shadow, scale, rotation, skew)
+ *   → a coalesced per-glyph re-seed before the next render. These seed
+ *   `GlyphState`, compose with `displayCallback`, and are animatable.
+ * - *decoration* (`underline`, `strikethrough`, `highlight`) → a coalesced rect
+ *   rebuild. They resolve per source character and never reach `GlyphState`.
+ * - *structural* (`fontScale`, `font`) → a **relayout**, on any layer, including
+ *   through a {@link StyleHandle}'s `update`. They feed the layout pass and never
+ *   reach `GlyphState`.
+ *
+ * The imperative per-glyph surface (`displayCallback`, `editGlyphs`) operates on
+ * already-laid-out glyphs and is appearance-only by construction: `GlyphState`
+ * has no structural fields.
  */
 export interface StyleSpec {
     /** Fill colour — a scalar or a per-corner gradient. */
@@ -222,21 +233,7 @@ export interface StyleSpec {
     strikethrough?: boolean | DecorationSpec;
     /** Paint a pill behind this run. `true` is plain marker yellow; see {@link HighlightSpec}. */
     highlight?: boolean | HighlightSpec;
-}
 
-/**
- * A style that may also carry **structural** keys — ones that change layout and
- * therefore take effect on a rebuild rather than a per-glyph re-seed.
- *
- * Structural keys are only legal on style layers resolved *before* the layout
- * pass: content segments ({@link SegmentSpec}) and persistent rules
- * ({@link MSDFTextInstance.setTextStyle}, whose matches are re-cached on every
- * text change). They must never appear on {@link StyleSpec}, which is the
- * override layer applied *after* layout — a transient range or a
- * `displayCallback` that reflowed the text would silently break the "cheap
- * re-seed, never relayout" contract those paths promise.
- */
-export interface RuleStyleSpec extends StyleSpec {
     /**
      * Per-run font size as a **multiplier** on the object's `fontSize` (e.g.
      * `1.5` for a heading run, `0.75` for fine print). Must be `> 0`; other
@@ -279,7 +276,7 @@ export interface RuleStyleSpec extends StyleSpec {
 }
 
 /** A styled run of text for {@link MSDFTextInstance.setRichText}. */
-export interface SegmentSpec extends RuleStyleSpec {
+export interface SegmentSpec extends StyleSpec {
     /** The run's text. Concatenated (in order) into the object's plain text. */
     text: string;
 }
@@ -287,7 +284,7 @@ export interface SegmentSpec extends RuleStyleSpec {
 /** One rich-text segment: a bare string (unstyled) or a styled {@link SegmentSpec}. */
 export type Segment = string | SegmentSpec;
 
-/** Options for {@link MSDFTextInstance.setTextStyle}. */
+/** Match options for the object form of a {@link StyleTarget}. */
 export interface TextStyleOpts {
     /** Style every occurrence. Default `true`. Ignored when `nth` is given. */
     all?: boolean;
@@ -295,23 +292,72 @@ export interface TextStyleOpts {
     nth?: number;
     /** Require whole-word matches (word-char boundaries). Default `false`. */
     wholeWord?: boolean;
-    /** Case-sensitive matching. Default `true`. */
+    /**
+     * Case-sensitive matching. Default `true`. Ignored for a `RegExp` `match`,
+     * whose own `i` flag governs.
+     */
     caseSensitive?: boolean;
 }
 
+/** A {@link StyleTarget} that matches by content, with options. */
+export interface MatchTarget extends TextStyleOpts {
+    /** Substring or pattern to match against the current text. */
+    match: string | RegExp;
+}
+
+/** A {@link StyleTarget} anchored to fixed indices into the current text. */
+export interface SpanTarget {
+    /** Index into the plain `text` of the first styled character. */
+    start: number;
+    /** Number of source characters covered. */
+    length: number;
+}
+
 /**
- * A live handle to a persistent rule ({@link MSDFTextInstance.setTextStyle}) or
- * a transient range ({@link MSDFTextInstance.addStyleRange}). Changes coalesce
- * into a single re-seed before the next render. A range handle dies on any text
- * change — its methods then no-op with a one-time dev warning.
+ * A custom {@link StyleTarget}: given the current plain text, return the spans to
+ * style. Re-run on every text change, like any other content anchor — a parser's
+ * token spans, "every emoji", "every third word" are all one-liners here.
  *
- * A rule handle is a `StyleHandle<RuleStyleSpec>`: it accepts structural keys,
- * and an update that changes one costs a relayout rather than a re-seed.
+ * **Experimental.** The spans are taken as returned — overlapping or out-of-range
+ * ones are yours to avoid (they are clamped, never clipped back to you). Anything
+ * the matcher throws propagates out of whatever changed the text (`setText`,
+ * `setRichText`, `addStyle`); the overlay store stays consistent, but overlays
+ * the re-derive had not reached keep their previous spans.
  */
-export interface StyleHandle<S extends StyleSpec = StyleSpec> {
-    /** Replace the style. */
-    update(style: S): void;
-    /** Drop the rule/range. */
+export type StyleMatcher = (text: string) => SpanTarget[];
+
+/**
+ * What an {@link MSDFTextInstance.addStyle} overlay is anchored to. The anchor
+ * kind — not the method — decides the overlay's lifetime:
+ *
+ * - **Content-anchored** (`string`, `RegExp`, {@link MatchTarget},
+ *   {@link StyleMatcher}) — the spans are re-derived on every text change, so the
+ *   overlay survives `setText` and `setRichText`.
+ * - **Position-anchored** ({@link SpanTarget}) — the spans index the text the
+ *   caller passed them against, so **any** text change drops the overlay and kills
+ *   its handle (no clamping).
+ *
+ * A bare `string` matches every occurrence (substring, case-sensitive); use the
+ * {@link MatchTarget} form for `nth` / `all` / `wholeWord` / `caseSensitive`. A
+ * `RegExp` matches every occurrence of the pattern; its `g` and `y` flags are
+ * ignored (all matches are found either way) and zero-length matches are skipped.
+ */
+export type StyleTarget = string | RegExp | MatchTarget | SpanTarget | StyleMatcher;
+
+/**
+ * A live handle to an overlay added with {@link MSDFTextInstance.addStyle}.
+ * `update` **replaces** the style (it is not a merge); changes coalesce into a
+ * single re-seed before the next render, unless the style carries a structural
+ * key (`fontScale`/`font`), which costs a relayout instead.
+ *
+ * A position-anchored overlay's handle dies on any text change, as does any
+ * handle after `remove()` or `clearStyles()`; `update` on a dead handle no-ops
+ * with a one-time dev warning.
+ */
+export interface StyleHandle {
+    /** Replace the overlay's style. */
+    update(style: StyleSpec): void;
+    /** Drop the overlay. */
     remove(): void;
 }
 
@@ -463,9 +509,9 @@ export interface MSDFTextInstance extends
      * The shadow pass is normally skipped unless {@link hasShadow} is true. In
      * per-glyph modes (a `displayCallback` or `editGlyphs`) you can set a shadow
      * on individual {@link GlyphState}s; set this `true` so those shadows draw.
-     * Rich-text styles that set a shadow (via `setRichText`/`setTextStyle`/
-     * `addStyleRange`) enable the pass automatically, so this flag is only needed
-     * for callback/manual-driven shadows. Default `false`.
+     * Rich-text styles that set a shadow (via `setRichText`/`addStyle`) enable
+     * the pass automatically, so this flag is only needed for callback/
+     * manual-driven shadows. Default `false`.
      */
     perGlyphShadow: boolean;
 
@@ -550,32 +596,32 @@ export interface MSDFTextInstance extends
      */
     setRichText(segments: Segment[]): this;
     /**
-     * Add a persistent keyword **rule** (policy styling): every match of `match`
-     * in the current text is styled. Survives `setText`/`setRichText` and is
-     * re-matched against the new text each time. Returns a {@link StyleHandle}
-     * to update/remove the rule. Substring match by default; see
-     * {@link TextStyleOpts} for `wholeWord`/`nth`/`caseSensitive`/`all`.
+     * Add a style **overlay** on top of the current content: `target` says which
+     * spans it covers, `style` says how they look. Returns a {@link StyleHandle}
+     * to update or remove it. Overlays paint over `setRichText` segments, in the
+     * order they were added — the style added last wins where two overlap.
      *
-     * Rules take a {@link RuleStyleSpec}, so they may carry the structural
-     * `fontScale` and `font` ("every `H1` is 1.5× in the display face") — their
-     * matches are re-cached before the layout pass. The cost is that such a rule
-     * makes `setText` (and `handle.update`) a relayout rather than a re-seed.
-     */
-    setTextStyle(match: string, style: RuleStyleSpec, opts?: TextStyleOpts): StyleHandle<RuleStyleSpec>;
-    /**
-     * Style a **transient range** of the current text by index (override
-     * styling). Anchored to `this.text`, which the caller owns; **any** text
-     * change drops all ranges and kills their handles (no clamping). Returns a
-     * {@link StyleHandle}. Use for highlights over text known to be stable.
+     * ```ts
+     * text.addStyle('DMG', { color: 0xff3333 });                     // every "DMG"
+     * text.addStyle(/\d+/, { weight: 2, fontScale: 1.2 });           // every number
+     * text.addStyle({ match: 'the', nth: 0, wholeWord: true }, { color: 0x88ccff });
+     * text.addStyle({ start: 5, length: 3 }, { color: 0xffff00 });   // fixed indices
+     * ```
      *
-     * Appearance-only: this layer is applied *after* layout, so it takes a
-     * {@link StyleSpec} and never the structural `fontScale` / `font`.
+     * The {@link StyleTarget} kind decides the lifetime: content anchors (string,
+     * `RegExp`, matcher function) are re-derived on every text change and survive
+     * it; a `{ start, length }` anchor dies with the text it indexed.
+     *
+     * `style` is a full {@link StyleSpec} — appearance, decoration *and* the
+     * structural `fontScale`/`font` ("every `H1` is 1.5× in the display face").
+     * A structural key costs a relayout rather than a re-seed, here and on
+     * `handle.update`.
      */
-    addStyleRange(start: number, length: number, style: StyleSpec): StyleHandle;
+    addStyle(target: StyleTarget, style: StyleSpec): StyleHandle;
     /**
-     * Remove all rules **and** ranges (their handles die). Content segments are
-     * not policy, so they are left intact — replace them with `setText`/
-     * `setRichText`. Chainable.
+     * Remove every overlay added with {@link addStyle} (their handles die).
+     * Content segments are not overlays, so they are left intact — replace them
+     * with `setText`/`setRichText`. Chainable.
      */
     clearStyles(): this;
     setDisplayCallback(callback: DisplayCallback | undefined): this;
@@ -625,7 +671,7 @@ export interface MSDFTextInstance extends
      * plain marker default; pass a {@link HighlightSpec} for colour, corner
      * radius, softness, border and padding; `false` removes it.
      *
-     * Style layers override this per run, so `setTextStyle('CRIT', { highlight:
+     * Style layers override this per run, so `addStyle('CRIT', { highlight:
      * {...} })` pills one keyword. Pills batch with the glyphs and draw behind
      * everything else — a highlighted, shadowed, underlined text is still one
      * draw call.

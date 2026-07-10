@@ -1,6 +1,12 @@
 # Style API unification — one spec, one overlay primitive
 
-**Status: proposal** — nothing here is implemented. Written as the answer to:
+**Status: Tiers 1 and 2 implemented; Tier 3 still a proposal.** `StyleSpec` is
+the one spec, `addStyle(target, style)` the one overlay primitive;
+`setTextStyle`, `addStyleRange`, `RuleStyleSpec` and `StyleHandle`'s generic
+parameter are gone. RegExp and function anchors shipped with it. Decisions taken
+on the open questions are recorded inline at the bottom.
+
+Written as the answer to:
 do `addStyleRange` and the segments/rules API need different specs
 (`StyleSpec` vs `RuleStyleSpec`)? Can the four styling entry points be unified
 into a more cohesive API without losing the performance the appearance/
@@ -12,7 +18,10 @@ unify** — one spec across all three declarative layers (Tier 1), and optionall
 one `addStyle` primitive replacing `setTextStyle`/`addStyleRange` (Tier 2); the
 unification is **performance-neutral** for every existing path, with one small
 win available and the real perf candidates already catalogued in
-`implementation-review.md`.
+`implementation-review.md`. A follow-up question — should `setRichText` return
+segment handles for direct update/animation? — is answered in Tier 3: no
+handles (argued there), but segments gain an `id` anchor and every spec layer
+gains a scoped `displayCallback`.
 
 ## What the split actually is today
 
@@ -161,6 +170,7 @@ type StyleTarget =
         all?: boolean; nth?: number;
         wholeWord?: boolean; caseSensitive?: boolean }
     | { start: number; length: number }       // fixed indices (transient)
+    | { segment: string }                     // a named setRichText segment (Tier 3a)
     | ((text: string) => { start: number; length: number }[]);  // custom matcher
 
 addStyle(target: StyleTarget, style: StyleSpec): StyleHandle;
@@ -169,8 +179,9 @@ addStyle(target: StyleTarget, style: StyleSpec): StyleHandle;
 - **Lifetime falls out of the anchor kind**, which is the teachable rule the
   three-lifetimes table was always circling: *styles anchored to content
   survive text changes (re-derived); styles anchored to positions don't
-  (dropped, handle dies).* A string/RegExp/function anchor is content-anchored;
-  a `{start, length}` anchor is position-anchored. No third lifetime to learn.
+  (dropped, handle dies).* A string/RegExp/function/segment anchor is
+  content-anchored; a `{start, length}` anchor is position-anchored. No third
+  lifetime to learn.
 - **The function anchor is the extension point** that subsumes every "can I
   match X" feature request — regex was the obvious one (and is also offered
   directly), but a parser's token spans, "every emoji", "every nth word" all
@@ -234,18 +245,149 @@ but re-introduces the two-methods-one-mechanism surface this tier exists to
 remove, and `setTextStyle`'s verb problem would still need a rename. If sugar
 is kept, `addStyleRule` is the honest name.
 
+## Tier 3 — addressing pieces of content: segment ids and per-overlay callbacks
+
+Prompted by the question: should `setRichText` return handles, so a long text's
+segments can be updated/animated directly instead of re-calling `setRichText`?
+
+### Why `setRichText` stays handle-less — the honest accounting
+
+Segment handles look like a fast path but mostly aren't. The same-text
+`setRichText` path (`MSDFText.ts:1863`) already skips relayout; it and a
+hypothetical `segmentHandle.update()` converge on the identical
+`refreshStyleState()` + `_stylesDirty` → one coalesced **whole-array** re-seed.
+The dominant cost is the same through either door, and a structural change
+(`fontScale`/`font`) routes to the same rebuild through either door too. What a
+handle would actually save is the string re-concat and N× `resolveStyle` —
+noise next to the re-seed — plus one real wart: the same-text path **drops all
+ranges as collateral** (`_rangeRuns.length = 0`).
+
+And the lifetime story is bad on its own terms: segments are replaced
+wholesale, never diffed, so every handle from call k dies at call k+1. A handle
+that dies every time its owner's method is called is worse DX than no handle.
+`setRichText` also returns `this` (chainable); changing that return type spends
+API budget on the weakest design in the space.
+
+The wart and the want are both answered by anchors, not handles:
+
+### 3a — segment identity: `id` + the `{ segment }` anchor
+
+`SegmentSpec` gains an optional `id?: string`. `addStyle({ segment: 'dmg' },
+style)` anchors an overlay to whichever spans currently carry that id —
+**content-anchored** by the Tier 2 rule: on any text/segments change it
+re-derives (all segments with the id, in order, like a rule's multi-match); if
+the id is absent it holds an empty `runs` and revives when a later
+`setRichText` brings the id back. That is strictly stronger than a segment
+handle could be — it *survives* content replacement — and it composes with
+everything an overlay already does (decoration keys, structural keys, creation-
+order painting, `remove()`).
+
+The wart falls out too: updating one named piece is `handle.update(...)` on its
+overlay, which touches no other layer — no range collateral, no segment-array
+reconstruction at the call site. `setRichText`'s job shrinks to what it was
+always best at: *content*, with inline styling for the static parts.
+
+Internals: `ResolvedTarget` gains a `segment` kind; deriving its runs is a walk
+of `_segmentRuns` — which therefore need to retain their `id` (and, for
+unstyled-but-named segments, a run must be kept even when `hasStyleKeys` is
+false; today those are elided at `MSDFText.ts:1849`. Keep the elision for
+anonymous unstyled strings, keep a span for anything with an `id`).
+
+### 3b — the imperative lane joins the spec: `displayCallback` as a style key
+
+The animation half of the question — "animate a segment directly, not via the
+global `displayCallback`" — should *not* be answered with `handle.update()` per
+frame: that pays `resolveStyle` + `refreshStyleState` per call, and when any
+structural key exists anywhere, `refreshStyleState` rebuilds and compares both
+O(text) maps *every frame* (perf item 1 helps only the no-structural case).
+Callback mode re-seeds per frame anyway and pays none of that. The right
+primitive is a **scoped display callback**, and the right place for it is the
+spec, not the handle:
+
+```ts
+interface StyleSpec {
+    ...
+    /** Per-frame imperative hook over this spec's glyphs. Appearance-only. */
+    displayCallback?: DisplayCallback;
+}
+```
+
+Spec, not handle, because then it rides every layer for free — and the original
+use case needs no id, no handle, no overlay at all:
+
+```ts
+text.setRichText([
+    'Quest complete. ',
+    { text: '+250 XP', color: 0xff3333, displayCallback: wobble },
+]);
+text.addStyle(/\d+/, { weight: 2, displayCallback: pulse });  // every number pulses
+```
+
+Semantics — each point picked to fall out of an existing rule rather than add
+one:
+
+- **It is a fourth key lane: imperative.** The per-key cost model gains a row:
+  a `displayCallback` key forces per-frame glyph mode while present. Physically
+  appearance-only, exactly like the object callback — `GlyphState` has no
+  structural fields, so a scoped callback cannot reflow no matter what it does.
+  The Tier 1 boundary sentence extends without strain: specs are layout inputs,
+  the glyph array is layout output, and callbacks (object-level or spec-level)
+  operate on the output.
+- **Invocation order is paint order.** In the callback stage (after
+  `applyStyleRuns`): segments' callbacks, then overlays' in creation order,
+  then the object-level `displayCallback` last with the full array — most
+  dynamic last, and the object callback keeps its "sees the final composed
+  state" contract... for everything except later scoped callbacks, which is the
+  same overlap rule as every other key: later wins.
+- **One call per span, not per overlay.** A rule matching five `DMG`s gets five
+  calls, each with that occurrence's glyphs — the span is the natural animation
+  unit (each occurrence pulses from its own start; array position is the local
+  index). Segments and position anchors have one span, so they degenerate to
+  one call. Signature stays `DisplayCallback` (`(glyphs, text) => void`); the
+  slice array is a reused scratch buffer, valid only during the call —
+  documented like callback mode's transient states, because it *is* one.
+- **Mode derivation.** `refreshStyleState` computes `_hasGlyphCallbacks` in the
+  same O(runs) loops as the other `_has*` flags; the effective glyph mode is
+  callback when the object callback is set *or* any spec carries one.
+  `setDisplayCallback(undefined)` no longer unconditionally returns to static —
+  it falls back to whatever the specs imply. **Manual mode wins conflicts**:
+  `editGlyphs()` owns the array, so spec callbacks are suppressed under manual
+  mode with a one-time warn (same shape as the structural-range warn this
+  proposal deletes).
+- **Renderer seam.** The per-span dispatch lives next to the existing object
+  callback call (`MSDFTextWebGLRenderer.ts:568`), behind `_hasGlyphCallbacks` —
+  a text without spec callbacks executes not one new instruction. Span → glyph
+  window lookup is `applyRun`'s scan today and a binary search after
+  `implementation-review.md` C (the glyph array is `srcIndex`-monotone), which
+  this feature makes slightly more attractive but does not require.
+
+Honest cost, stated in docs: one animated segment puts the whole text in
+callback mode — whole-array re-seed per frame, same as the object callback
+always cost. Scoping bounds the *user's* per-frame work, not the seeding. A
+dirty-span-only re-seed is a conceivable optimization; not proposed (it breaks
+callback mode's one simplicity, "re-seed everything, then run callbacks").
+
+Considered and dropped: exposing `handle.spans` (readonly resolved runs) so
+callers could slice the global callback themselves. It's a cheap primitive but
+a leaky one — it hands out store internals and still leaves every caller
+re-implementing the span→glyph walk. 3b subsumes the use case; revisit only if
+a concrete need for *reading* spans (not styling them) shows up.
+
 ## What stays firm
 
 - **`displayCallback` / `editGlyphs` are appearance-only, forever** — enforced
-  by `GlyphState` having no structural fields. Decorations stay invisible to
-  the callback (separate `future-ideas.md` item, unchanged).
+  by `GlyphState` having no structural fields. Tier 3b's scoped callbacks
+  inherit the same physical enforcement. Decorations stay invisible to
+  the callback — object-level or scoped (separate `future-ideas.md` item,
+  unchanged).
 - **Range/position-anchored death on text change, no clamping.** Unchanged; it
   was never about reflow and reflow doesn't threaten it.
 - **Coalescing** — `_stylesDirty` for re-seeds, `_dirty` for rebuilds,
   `refreshStyleState` as the single place deciding which. Unchanged.
-- **The renderer, packers and shader are untouched.** Nothing in either tier
-  reaches past `MSDFText.ts` / `MSDFTextStyle.ts` / `MSDFTextTypes.ts` — no
-  batching, flush-gate or `params` implication at all.
+- **The batching, flush-gate, packers and shader are untouched.** Tiers 1–2
+  reach nothing past `MSDFText.ts` / `MSDFTextStyle.ts` / `MSDFTextTypes.ts`;
+  Tier 3b adds one dispatch call at the renderer's existing `displayCallback`
+  site and nothing below it — no `params` implication at all.
 - Structural keys still never appear on `GlyphState`, and `fontScale` stays a
   multiplier (all the `fit-inside` and `setFontSize` reasoning intact).
 
@@ -317,6 +459,30 @@ Tier 2 (on top):
 - `design/rich-text-styling.md` — it is a rationale record; add a superseded
   note at the "Refinement" section pointing here rather than rewriting it.
 
+Tier 3 (on top of Tier 2 — 3a needs `StyleTarget`; 3b is independent of it in
+principle but shares the store walk):
+
+- `src/MSDFTextTypes.ts` — `SegmentSpec.id`; `{ segment: string }` in
+  `StyleTarget`; `StyleSpec.displayCallback`; JSDoc for the imperative lane's
+  cost row.
+- `src/MSDFText.ts` — keep a run for any segment with an `id` even when
+  style-less (`setRichText`, today's `hasStyleKeys` elision);
+  `_hasGlyphCallbacks` in `refreshStyleState`; glyph-mode derivation reads it
+  (`setDisplayCallback(undefined)` falls back to spec-implied mode); manual-mode
+  suppression warn; per-span dispatch helper (reused scratch array).
+- `src/MSDFTextStyle.ts` — `resolveTarget` segment kind; `resolveStyle` carries
+  the callback through; `styleHasAppearanceKeys` must **not** count it (a
+  callback-only spec needs the glyph array via `_hasGlyphCallbacks`, but gains
+  nothing from an `applyStyleRuns` visit — decide whether `_hasAppearance`
+  should be true whenever `_hasGlyphCallbacks` is; simplest: yes, the array is
+  needed either way).
+- `src/MSDFTextWebGLRenderer.ts` — call the dispatch helper between
+  `applyStyleRuns` and the object callback (the one renderer-file exception to
+  "renderer untouched"; it is three lines at the existing callback site).
+- `examples/scenes/rich-text.ts` — a named segment with a scoped
+  `displayCallback` (the motivating "one animated line" case) and an
+  `addStyle({ segment })` recolour of the same span.
+
 ## Verification checklist
 
 - `addStyleRange(5, 3, { fontScale: 1.5 })` (or the `addStyle` span form)
@@ -339,25 +505,115 @@ Tier 2 (on top):
 - Single-font, no-style text: `refreshStyleState` fast path leaves
   `_sizeScales`/`_fontMap` `null` and allocates nothing per update.
 
+Tier 3:
+
+- `addStyle({ segment: 'x' }, …)` styles the named segment; after a
+  `setRichText` that keeps the id the overlay follows it to its new span; while
+  the id is absent it draws nothing and the handle stays alive; `setText`
+  (plain) empties it the same way.
+- A segment carrying only `displayCallback` (no style keys) still animates —
+  the id-less elision must not drop it.
+- Scoped callback on a five-match rule: five calls per frame, each slice local;
+  mutating a slice glyph does not leak into the next span's call (scratch
+  array refilled).
+- Order: a scoped callback's writes are visible to the object callback; the
+  object callback still wins where both touch the same glyph.
+- Manual mode (`editGlyphs`) with a spec callback present: one-time warn,
+  callbacks suppressed, edits intact.
+- Removing the last spec callback (handle `remove()`, `setText` dropping a
+  position-anchored overlay, `setRichText` replacing segments) with no object
+  callback returns the mode to static — and to manual if `editGlyphs` owns it.
+- No spec callbacks, no object callback: renderer hot path executes zero new
+  instructions (profile the static-text benchmark before/after).
+
 ## Open questions
 
-1. **Tier 2 scope** — take the single `addStyle` now, or land Tier 1 alone and
-   let `setTextStyle`/`addStyleRange` ship as-is? Recommendation: do both while
-   the surface is unpublished; Tier 2's cost is mostly renames in examples, and
-   the naming wart (`setTextStyle` adds) should not ship regardless.
-2. **Sugar** — keep `addStyleRule`/`addStyleRange` as wrappers over `addStyle`?
-   Recommendation: no; one primitive, two-line migration notes in the README.
-3. **RegExp + function anchors** — in scope for Tier 2, or a fast-follow?
-   They're each ~a dozen lines inside `matchRuns`/`resolveTarget`, and the
-   function anchor is the piece that ends the matcher feature-request treadmill.
-   Recommendation: RegExp in scope; function anchor in scope but flagged
-   experimental in docs.
-4. **`handle.update` semantics** — it *replaces* the style today. A
-   `patch()`-style merge is tempting DX but makes "what is this overlay's style
-   now" stateful and unreadable; recommendation: keep replace, document it,
-   revisit only on real friction.
+1. **Tier 2 scope** — ✅ **Decided: both, now.** Tiers 1 and 2 landed together.
+2. **Sugar** — ✅ **Decided: none.** `addStyle` is the only overlay method;
+   `setTextStyle` and `addStyleRange` were removed outright, not aliased.
+3. **RegExp + function anchors** — ✅ **Decided: both in scope**, and both
+   shipped with Tier 2. `wholeWord` / `all` / `nth` apply to a RegExp too (the
+   whole-word gate is the same neighbour predicate); `caseSensitive` does not —
+   the pattern's `i` flag governs, and the `g`/`y` flags are ignored rather than
+   honoured (a normalized global copy is built at `resolveTarget` time, so the
+   caller's `lastIndex` is never touched). Zero-length matches are skipped.
+   The function anchor is documented experimental. **A matcher that throws
+   propagates** — a runtime exception in the caller's code is the caller's to
+   handle, not ours to swallow into a silent no-match. `onTextChanged` pays for
+   that by compacting the overlay store *before* running any user code and
+   refreshing the derived state in a `finally`, so the exception leaves the text
+   object consistent: overlays the re-derive never reached keep their previous
+   spans, which the paint loops clamp like any other stale span.
+4. **`handle.update` semantics** — ✅ **Decided: keep replace.** Documented on
+   `StyleHandle`. Revisit only on real friction.
 5. **Object-level spec entry** (`setStyle(spec)` seeding the object defaults
-   from the same `StyleSpec` shape — "layer 0") — cohesive, but it overlaps
-   the whole existing setter surface and drags in keys specs don't have
-   (`outlineLayered`, …). Out of scope here; park in `future-ideas.md` if
-   wanted.
+   from the same `StyleSpec` shape — "layer 0") — ❌ **Decided: no**, with the
+   reasoning recorded in `future-ideas.md` under "explicitly rejected". The
+   defect is semantic, not ergonomic: on a run an absent key means *inherit*, at
+   the object level it means *the default*. Same shape, opposite meaning. It also
+   drags in keys no spec has (`outlineLayered`, `perGlyphShadow`, the `-1`
+   sentinel colours), and every object-level field is already plain and tweenable.
+6. **Tier 3 scope** — ✅ **Decided: 3a in, 3b deferred behind finding C.**
+
+   The proposal argued for both on "do it while the surface is unpublished."
+   That was load-bearing for Tier 2, which *removed* methods. It does not hold
+   here: `SegmentSpec.id`, the `{ segment }` anchor and `StyleSpec.displayCallback`
+   are all purely **additive** keys, safe to add after publishing. (The one
+   exception is `setDisplayCallback(undefined)` changing from "always static" to
+   "fall back to the spec-implied mode" — small and containable.)
+
+   So each is judged on its own merits. **3a is in**: a dozen lines, and it
+   closes the one wart Tiers 1–2 knowingly left behind (updating a named piece
+   means re-calling `setRichText`, which drops every position-anchored overlay
+   as collateral). **3b is deferred**: per-span dispatch runs `applyRun`'s
+   span→glyph scan *once per span per frame*, which makes finding C
+   (`implementation-review.md`) a prerequisite rather than a nicety — and the
+   object-level `displayCallback` already covers the motivating use case by
+   filtering on `g.srcIndex`, which is exactly what `examples/scenes/rich-text.ts`
+   does today. 3b is ergonomics over an existing capability, not a new one.
+7. **Per-span vs per-overlay callback calls** — moot until 3b is real.
+   **Deferred with it**; the per-span reasoning above stands as the starting
+   position.
+
+## Next steps (for a fresh session)
+
+In order. Both are self-contained, and the first is the second's prerequisite in
+spirit if not in letter:
+
+1. **`implementation-review.md` finding C** — binary-search the span→glyph window
+   in `MSDFText.applyRun`. The glyph array is monotone in `srcIndex`, so each run
+   is a window, not a scan. No API surface. It got materially more attractive
+   with Tier 2: a RegExp anchor like `/\d+/` can produce dozens of spans where a
+   literal rule produced one or two, and `applyStyleRuns` walks the whole glyph
+   array once per span on **every re-seed**. It is also 3b's prerequisite.
+2. **Tier 3a** — `SegmentSpec.id`, a `segment` kind in `ResolvedTarget`, and
+   `addStyle({ segment: 'dmg' }, style)`. Two implementation notes the sketch
+   above doesn't state: `deriveRuns` needs the segment runs passed alongside
+   `text` (a segment anchor resolves against `_segmentRuns`, not the string), and
+   `setRichText` must stop eliding runs for **unstyled-but-named** segments while
+   keeping the elision for anonymous unstyled strings. Ordering is already safe:
+   `setRichText` assigns `_segmentRuns` before calling `onTextChanged`, and
+   `setText` clears them before calling it. A segment anchor is content-anchored,
+   so it survives a `setRichText` that keeps the id, and holds empty `runs`
+   (alive, drawing nothing) while the id is absent.
+
+## Notes from the implementation
+
+Two things the proposal got slightly wrong, worth recording:
+
+- **Perf item 1 (skip the map rebuild when nothing structural is in play) was
+  dropped as worthless.** Its own premise contradicts its trigger: the guard it
+  proposes (`!hasStructural && both maps null`) only fires in the case where the
+  builders were *already* O(runs) with no allocation, and `computeMaxLineUnit`
+  already early-returns there. The case it claims to fix — an appearance-only
+  update while structural keys exist elsewhere — has non-null maps and so takes
+  the full path regardless. Not implemented; the two catalogued candidates in
+  `implementation-review.md` (B, C) remain the real targets.
+- **`implementation-review.md` finding 1 was already fixed** on this branch —
+  `consumePendingStyles` exists and both `editGlyphs` and `resetGlyphs` call it.
+
+One behaviour kept deliberately, and it is the one wart Tier 3a exists to close:
+`setRichText`'s **same-text path still drops position-anchored overlays.** The
+plain string is unchanged, so a `{ start, length }` span is arguably still valid
+— but the *content* under it was replaced, and "position anchors die when the
+content changes" is the rule worth being able to state without an exception.

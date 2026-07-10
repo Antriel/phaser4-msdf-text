@@ -1,6 +1,6 @@
 import type { Pane } from "tweakpane";
 import { ExampleScene } from "../harness/ExampleScene";
-import type { MSDFFont, MSDFTextInstance, Segment, StyleHandle, RuleStyleSpec } from "../../src";
+import type { MSDFFont, MSDFTextInstance, Segment, StyleHandle, StyleSpec } from "../../src";
 
 // Gold → ember gradient for the block B title (a per-corner fill).
 const TITLE_GRADIENT = {
@@ -79,9 +79,9 @@ export class FontsScene extends ExampleScene {
   private blockB!: MSDFTextInstance;
   private params = { accent: "Bangers", fontScale: 1.35, altText: false };
 
-  // The persistent 'fire' rule on block B. `font`/`fontScale` are structural,
+  // The persistent 'fire' overlay on block B. `font`/`fontScale` are structural,
   // so handle.update() reflows the text — which is exactly the demo.
-  private rule: StyleHandle<RuleStyleSpec> | null = null;
+  private rule: StyleHandle | null = null;
 
   constructor() {
     super({ key: "fonts" });
@@ -147,9 +147,9 @@ export class FontsScene extends ExampleScene {
     );
   }
 
-  /** (Re)apply the 'fire' rule — a structural update, so block B reflows. */
+  /** (Re)apply the 'fire' overlay — a structural update, so block B reflows. */
   private applyRule(): void {
-    const spec: RuleStyleSpec = {
+    const spec: StyleSpec = {
       font: this.params.accent,
       fontScale: this.params.fontScale,
       color: 0xff8c42,
@@ -157,7 +157,7 @@ export class FontsScene extends ExampleScene {
     if (this.rule) {
       this.rule.update(spec);
     } else {
-      this.rule = this.blockB.setTextStyle("fire", spec);
+      this.rule = this.blockB.addStyle("fire", spec);
     }
   }
 
@@ -172,9 +172,10 @@ export class FontsScene extends ExampleScene {
       this.applyRule(),
     );
 
-    // setText drops the segments but keeps the rules, which re-match against
-    // the new string — 'fire' is still in the accent face afterwards.
-    // Restoring re-applies the content; the rule never went away.
+    // setText drops the segments but keeps the overlay: 'fire' is anchored to
+    // content, so it re-derives against the new string and is still in the
+    // accent face afterwards. Restoring re-applies the content; the overlay
+    // never went away.
     f.addBinding(this.params, "altText", { label: "change text (setText)" }).on("change", (e) => {
       if (e.value) this.blockB.setText(ALT_TEXT);
       else this.blockB.setRichText(CONTENT);

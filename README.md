@@ -310,9 +310,9 @@ text.setDisplayCallback((glyphs) => {
 });
 ```
 
-Rich-text runs that set a shadow (`setRichText` / `setTextStyle` /
-`addStyleRange`) turn the pass on automatically, so `perGlyphShadow` is only
-needed for callback- or manual-driven shadows.
+Rich-text runs that set a shadow (`setRichText` / `addStyle`) turn the pass on
+automatically, so `perGlyphShadow` is only needed for callback- or manual-driven
+shadows.
 
 ### Faux bold — `weight`
 
@@ -347,8 +347,8 @@ shifts the rule by an em-relative amount (positive is down). Left alone, colour
 and alpha **inherit the resolved fill**, so each coloured word gets a matching
 rule; naming a colour paints the whole span one colour instead.
 
-They are also `StyleSpec` keys, so segments, rules and ranges can set them per
-run — including `underline: false` to punch a hole in an object-level underline.
+They are also `StyleSpec` keys, so segments and overlays can set them per run —
+including `underline: false` to punch a hole in an object-level underline.
 The rects use a `solid` flag in the vertex `params`, so they **batch with the
 glyphs**: a decorated text is still one draw call.
 
@@ -382,7 +382,7 @@ text.setHighlight({ color: 0xd6304a, radius: 1, borderWidth: 0.18,
                     borderColor: 0xffd23f, padding: 0.3 });
 
 // Per-word, via any style layer.
-text.setTextStyle('CRIT', { highlight: { color: 0xff5252, radius: 1 }, color: 0xffffff });
+text.addStyle('CRIT', { highlight: { color: 0xff5252, radius: 1 }, color: 0xffffff });
 
 text.setHighlight(false);   // off
 ```
@@ -445,9 +445,10 @@ Things worth knowing:
 ### Rich text — per-run styling
 
 Style specific words or ranges — colour, gradient, alpha, outline/shadow colour,
-scale, rotation, skew, size — **without markup in the string** and without
-hand-counting glyphs. Three entry points over one mechanism, distinguished by
-**lifetime**:
+scale, rotation, skew, size, typeface — **without markup in the string** and
+without hand-counting glyphs. Two entry points: *content* goes in through
+`setRichText`, *overlays* go on through `addStyle`. Both take the same
+`StyleSpec`.
 
 **Content — `setRichText(segments)`.** Structured styled input. Segment text is
 concatenated into the plain text (so `text` still returns the joined string and
@@ -466,37 +467,44 @@ text.setRichText([
 text.text; // → "Deal 50 fire damage to all enemies."  (plain string, wraps normally)
 ```
 
-**Policy — `setTextStyle(match, style, opts?)`.** A persistent keyword rule that
-**survives text changes** and is re-matched against the new text each time.
-Returns a handle. Substring match by default; `wholeWord`, `nth`,
-`caseSensitive` and `all` are options.
+**Overlays — `addStyle(target, style)`.** Style whatever `target` selects, on top
+of the content. Returns a `StyleHandle` (`update` / `remove`).
 
 ```ts
-const dmg = text.setTextStyle('DMG', { color: 0xff5252 });   // every "DMG" is red
-text.setTextStyle('the', { color: 0x88ccff }, { nth: 0, wholeWord: true }); // just the 1st word "the"
+const dmg = text.addStyle('DMG', { color: 0xff5252 });         // every "DMG" is red
+text.addStyle(/\d+/, { weight: 2, fontScale: 1.2 });           // every number
+text.addStyle({ match: 'the', nth: 0, wholeWord: true }, { color: 0x88ccff });
+text.addStyle({ start: 6, length: 4 }, { color: 0xffe066 });   // fixed indices
+text.addStyle(tokenize, { color: 0x9ae6b4 });                  // (text) => spans
 
-text.setText('Take 99 DMG');   // the new "DMG" is red too — the rule re-matched
-dmg.update({ color: 0xffa500 }); // recolour (coalesced re-seed, no relayout)
-dmg.remove();                    // drop the rule
+dmg.update({ color: 0xffa500 });   // replace the style (coalesced re-seed)
+dmg.remove();                      // drop the overlay
 ```
 
-**Override — `addStyleRange(start, length, style)`.** A transient range anchored
-to indices in the current text. **Any text change drops all ranges** and kills
-their handles (no clamping — a stale handle no-ops with a one-time warning). Use
-it for highlights over text you know is stable (search hits, your own parser).
+The **anchor decides the lifetime**, and that is the whole rule:
 
-```ts
-const hit = text.addStyleRange(6, 4, { color: 0xffe066, scale: 1.06 });
-hit.remove();
-```
+- **Content-anchored** — a string, a `RegExp`, a `{ match, … }` object, or a
+  `(text) => { start, length }[]` matcher. The spans are re-derived on every text
+  change, so the overlay **survives** `setText` and `setRichText`.
+- **Position-anchored** — a `{ start, length }` object. It indexes the text you
+  passed it against, so **any** text change drops it and kills its handle (no
+  clamping; a stale handle no-ops with a one-time warning). Use it for overlays on
+  text you know is stable — search hits, your own parser's output.
 
-`clearStyles()` removes all rules **and** ranges (segments are content, kept).
+A bare string matches every occurrence, case-sensitively; the `{ match, … }` form
+adds `all`, `nth`, `wholeWord` and `caseSensitive`. A `RegExp` matches every
+occurrence of the pattern (its `g`/`y` flags are ignored; zero-length matches are
+skipped; use the `i` flag for case-insensitivity). The **matcher function** is the
+extension point — a parser's token spans, "every emoji", "every third word" are
+all one-liners, re-run on each text change.
+
+`clearStyles()` removes every overlay (segments are content, kept).
 
 A `StyleSpec` accepts: `color`/`alpha` (a scalar, or a per-corner object for a
 gradient), `weight`, `outline` (`{ color?, innerColor?, alpha?, width?, rounded? }`),
 `shadow` (`{ color?, innerColor?, alpha?, x?, y?, softness? }`),
-`scale`/`scaleX`/`scaleY`, `rotation`, `skew`, `underline`, `strikethrough` and
-`highlight`.
+`scale`/`scaleX`/`scaleY`, `rotation`, `skew`, `underline`, `strikethrough`,
+`highlight`, `fontScale` and `font`.
 Only the keys you set override the glyph's seeded base. `weight`,
 `outline.width` and `shadow.softness` are continuous, so they also take a
 per-corner object.
@@ -518,24 +526,42 @@ per-corner object.
   does at the object level. A run's `outline.innerColor` still needs the object's
   `outlineLayered` (or `outlineInnerColor`) to have a silhouette pass to ride.
 
-Styles paint in order of increasing dynamism — **segments → rules → ranges →
-`displayCallback`** — applied key-by-key, so a later layer that sets only
-`outline` keeps an earlier layer's `color`. This is what lets a static keyword
-colour and an animated callback compose: the callback sees already-styled
-glyphs and layers on top. Handle updates coalesce into one re-seed before the
-next render (in manual mode a styles re-seed emits `'glyphsreset'`, once/tick).
+Styles paint in order of increasing dynamism — **segments → overlays →
+`displayCallback`** — with overlays in the order they were added, applied
+key-by-key. A later layer that sets only `outline` keeps an earlier layer's
+`color`; where two do set the same key, the one added last wins. This is what
+lets a static keyword colour and an animated callback compose: the callback sees
+already-styled glyphs and layers on top. Handle updates coalesce into one re-seed
+before the next render (in manual mode a styles re-seed emits `'glyphsreset'`,
+once/tick).
 
-| action | segments | rules | ranges |
+| action | segments | content-anchored overlays | position-anchored overlays |
 |---|---|---|---|
-| `setText` / `setRichText` | replaced with the text | kept; re-matched | dropped; handles die |
-| `handle.update` / `remove` | — | mutates the rule | mutates the range |
+| `setText` / `setRichText` | replaced with the text | kept; spans re-derived | dropped; handles die |
+| `handle.update` / `remove` | — | mutates the overlay | mutates the overlay |
 | `clearStyles()` | kept | removed | removed |
+
+**What a style change costs** depends on the *keys*, not on the layer — every
+spec layer may carry every key:
+
+| key lane | keys | cost |
+|---|---|---|
+| appearance | `color`, `alpha`, `weight`, `outline`, `shadow`, `scale`, `rotation`, `skew` | one coalesced per-glyph re-seed |
+| decoration | `underline`, `strikethrough`, `highlight` | one coalesced rect rebuild |
+| structural | `fontScale`, `font` | a **relayout** |
+
+The one hard line is between specs and glyphs: **specs are layout inputs, the
+glyph array is layout output.** `displayCallback` and `editGlyphs` operate on
+already-laid-out glyphs, so they are appearance-only by construction —
+`GlyphState` has no structural fields, and nothing you do there can reflow the
+text. To animate size, tween `fontScale` through a handle's `update` and pay a
+rebuild per change.
 
 #### Per-run size — `fontScale`
 
-Everything above is **appearance**: it seeds per-glyph state and never touches
-layout. `fontScale` and `font` are the **structural** keys — they change advance,
-wrap and line height, so they reflow the text instead of re-seeding it.
+The appearance keys above seed per-glyph state and never touch layout.
+`fontScale` and `font` are the **structural** keys — they change advance, wrap
+and line height, so they reflow the text instead of re-seeding it.
 
 ```ts
 text.setRichText([
@@ -546,8 +572,8 @@ text.setRichText([
     { text: 'Forged in dragonflame long ago.', fontScale: 0.65 },    // fine print
 ]);
 
-// Also legal as a persistent rule — every "Burn" is red and 1.4x:
-const burn = text.setTextStyle('Burn', { color: 0xff5252, fontScale: 1.4 });
+// Also legal as an overlay — every "Burn" is red and 1.4x:
+const burn = text.addStyle('Burn', { color: 0xff5252, fontScale: 1.4 });
 burn.update({ color: 0xff5252, fontScale: 2 });   // reflows (see below)
 ```
 
@@ -560,13 +586,11 @@ any object size, and `fitInside`'s binary search stays monotone. Must be `> 0`.
   not by top. A blank line keeps the object's own size.
 - **Kerning is skipped where the size changes.** A kern pair straddling a run
   boundary has no well-defined size to scale by.
-- **Segments and rules only.** `addStyleRange` and `displayCallback` are applied
-  *after* layout, so they stay appearance-only — a transient, index-anchored
-  overlay that reflowed the text would break the "cheap re-seed, never relayout"
-  promise those paths make. Passing `fontScale` to `addStyleRange` is ignored
-  with a one-time warning.
+- **Any spec layer may set it** — a segment or any `addStyle` overlay, whatever
+  its anchor. Only `displayCallback`/`editGlyphs` cannot, and that is physical:
+  `GlyphState` has no structural fields.
 - **Cost.** Setting `fontScale` (including through `handle.update`) triggers a
-  rebuild rather than the usual coalesced re-seed, and a structural rule makes
+  rebuild rather than the usual coalesced re-seed, and a structural overlay makes
   `setText` a relayout too. An appearance-only update is unaffected.
 - `letterSpacing`, `lineSpacing` and shadow offsets are constant pixels and do
   **not** scale with a run.
@@ -575,7 +599,7 @@ any object size, and `fitInside`'s binary search stays monotone. Must be `> 0`.
 
 Mix typefaces in one text object. `font` names a key already loaded with
 `this.load.msdfFont(key, ...)`; runs that don't set it use the object's own font.
-Structural, exactly like `fontScale`, and legal on the same two layers.
+Structural, exactly like `fontScale`, and legal on the same layers.
 
 ```ts
 text.setRichText([
@@ -586,8 +610,8 @@ text.setRichText([
     { text: 'readySec()', font: 'JetBrainsMono', underline: true },
 ]);
 
-// Also a persistent rule — every "fire" in the accent face:
-text.setTextStyle('fire', { font: 'Bangers', color: 0xff8c42 });
+// Also an overlay — every "fire" in the accent face:
+text.addStyle('fire', { font: 'Bangers', color: 0xff8c42 });
 ```
 
 Everything a run measures with — advance, kerning, ascender, line height, and the

@@ -240,3 +240,15 @@ revisit them without new evidence:
   `currentSize · boxW / measuredWidth` instead of the free `boxH /
   lineHeight` bound) — `fitInside` is a one-shot call, ~15 iterations to
   sub-pixel is already cheap. Only worth it if a profile says otherwise.
+- **An object-level `setStyle(spec)` — "layer 0"** (`style-api-unification.md`
+  question 5). Superficially cohesive: the same `StyleSpec` that segments and
+  `addStyle` overlays take, seeding the object's own defaults. It doesn't work,
+  for a reason that survives any amount of polish: **on a run, an absent key
+  means "inherit"; at the object level, an absent key means "the default."**
+  Same shape, opposite semantics — `setStyle({ color })` would have to leave the
+  outline alone (matching every other spec layer) while looking exactly like a
+  call that resets the object to one colour. It also drags in keys no spec has
+  (`outlineLayered`, `perGlyphShadow`, the `-1` sentinel on `outlineInnerColor` /
+  `shadowInnerColor`), and every object-level field is already a plain,
+  directly-tweenable field with a chainable `set*` wrapper. Revisit only if the
+  object level stops being the seed for the spec layers.

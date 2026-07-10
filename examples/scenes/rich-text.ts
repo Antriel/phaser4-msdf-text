@@ -1,6 +1,6 @@
 import type { Pane } from "tweakpane";
 import { ExampleScene } from "../harness/ExampleScene";
-import type { MSDFTextInstance, GlyphState, Segment, StyleHandle, RuleStyleSpec } from "../../src";
+import type { MSDFTextInstance, GlyphState, Segment, StyleHandle } from "../../src";
 
 // Gold → ember gradient (a per-corner fill).
 const NAME_GRADIENT = {
@@ -12,8 +12,8 @@ const NAME_GRADIENT = {
 
 // The content layer. Bare strings are unstyled; objects carry per-run
 // appearance overrides. Note "dragonflame" is a *bare* string here — its
-// gradient and skew come from a persistent rule, so the skew slider can own it
-// and it survives a text change.
+// gradient and skew come from a content-anchored overlay, so the skew slider
+// can own it and it survives a text change.
 const CONTENT: Segment[] = [
   "You found the ",
   // Per-run drop shadow — renders even though the object itself has no shadow
@@ -31,30 +31,37 @@ const CONTENT: Segment[] = [
   " for 3 turns. Forged in dragonflame long ago.",
 ];
 
-// An alternate body used by "change text" to prove rule persistence (the
-// 'fire' and 'dragonflame' rules re-match) and range transience (any find
-// highlights are dropped).
+// An alternate body used by "change text" to prove that content anchors
+// survive (the 'fire', 'dragonflame' and /\d+/ overlays re-derive) while
+// position anchors die (any find highlights are dropped).
 const ALT_TEXT =
-  "The blade grows cold.\nIts fire fades, and the dragonflame dies to embers.";
+  "The blade grows cold.\nIts fire fades, and 3 dragonflame embers die out.";
 
 /**
- * Rich text — all four style layers live at once, painted in order:
- *   • setRichText  — content styling that travels with the text
- *   • setTextStyle — persistent keyword rules, re-matched on every text change
- *   • addStyleRange— transient index ranges, dropped by any text change
+ * Rich text — every style layer live at once, painted in order:
+ *   • setRichText — content styling that travels with the text
+ *   • addStyle    — overlays, in the order added; the last one wins on overlap
  *   • displayCallback — per-frame composition on top of the resolved styles
  *
- * The interactions prove the lifetimes: type in `find` and ranges light up
- * every match; flip `change text` and the rules re-match while the ranges
- * vanish; the skew slider drives a rule's handle.update in either text state.
+ * One method, and the *anchor* decides the lifetime. A string, a RegExp or a
+ * matcher function anchors to content, so the overlay re-derives its spans on
+ * every text change and survives it. A `{ start, length }` anchors to positions
+ * in the text the caller indexed, so any text change drops it and kills its
+ * handle.
+ *
+ * The interactions prove that: type in `find` and position-anchored overlays
+ * light up every match (and bump its size — a structural key, legal on any
+ * layer now, so the text reflows); flip `change text` and the content anchors
+ * re-derive while the find highlights vanish; the skew slider drives one
+ * overlay's handle.update in either text state.
  */
 export class RichTextScene extends ExampleScene {
   private text!: MSDFTextInstance;
   private params = { find: "", skew: 0.22, altText: false };
 
-  // The persistent 'dragonflame' rule, so the skew slider can re-style it
-  // without touching any other layer (an appearance-only coalesced re-seed).
-  private skewRule: StyleHandle<RuleStyleSpec> | null = null;
+  // The content-anchored 'dragonflame' overlay, so the skew slider can re-style
+  // it without touching any other layer (an appearance-only coalesced re-seed).
+  private skewRule: StyleHandle | null = null;
 
   // Source-index span of "Burn" in the current plain text (-1 when absent).
   // The pulse callback filters on GlyphState.srcIndex — the glyph's index into
@@ -71,7 +78,7 @@ export class RichTextScene extends ExampleScene {
     this.cameras.main.setBackgroundColor(0x161320);
     this.heading(
       "Rich Text",
-      "Segments, rules, ranges and a display callback - four layers, one text.",
+      "Segments, overlays and a display callback - one spec, one text.",
     );
 
     this.text = this.add
@@ -84,19 +91,19 @@ export class RichTextScene extends ExampleScene {
     this.applyAll();
 
     this.caption(
-      "Paint order: segments → rules → ranges → callback. The text getter still returns the " +
-        "plain string. Rules survive a text change and re-match; ranges are dropped by one. " +
-        "The callback layers alpha over the rule's colour, keyed on each glyph's srcIndex.",
+      "Paint order: segments → overlays (in the order added) → callback; the style added last " +
+        "wins where two overlap. The text getter still returns the plain string. Content-anchored " +
+        "overlays survive a text change and re-derive; position-anchored ones are dropped by it. " +
+        "The callback layers alpha over the overlay's colour, keyed on each glyph's srcIndex.",
     );
 
     this.commonTargets.push(this.text);
   }
 
   /**
-   * Deterministic reset: content + rules from scratch for the current text
-   * state, then the find ranges on top. Ranges have no individual teardown —
-   * clearStyles drops rules *and* ranges, so everything re-applies in paint
-   * order.
+   * Deterministic reset: content + content-anchored overlays from scratch for
+   * the current text state, then the find highlights on top. `clearStyles` drops
+   * every overlay at once, so all of them re-apply in creation order.
    */
   private applyAll(): void {
     this.text.clearStyles();
@@ -108,16 +115,20 @@ export class RichTextScene extends ExampleScene {
       this.text.setRichText(CONTENT);
     }
 
-    // Rules (persistent): every "dragonflame" gets the gradient + the
+    // Content anchors (persistent): every "dragonflame" gets the gradient + the
     // slider's skew; every "fire" turns orange.
-    this.skewRule = this.text.setTextStyle("dragonflame", {
+    this.skewRule = this.text.addStyle("dragonflame", {
       color: NAME_GRADIENT,
       skew: this.params.skew,
     });
-    this.text.setTextStyle("fire", { color: 0xff8c42 });
+    this.text.addStyle("fire", { color: 0xff8c42 });
     // nth + wholeWord targeting: only the first standalone "the" turns blue
-    // (in either text state — rules re-match, options included).
-    this.text.setTextStyle("the", { color: 0x7fd4ff }, { nth: 0, wholeWord: true });
+    // (in either text state — content anchors re-derive, options included).
+    this.text.addStyle({ match: "the", nth: 0, wholeWord: true }, { color: 0x7fd4ff });
+    // A RegExp anchor. "50" already carries a segment's gold; the overlay paints
+    // after it and wins on `color`, while the segment's `scale`/`weight` survive
+    // — later layers overwrite key by key, not wholesale.
+    this.text.addStyle(/\d+/, { color: 0x9ae6b4, underline: true });
 
     this.seedBurn();
     this.applyFind();
@@ -131,19 +142,28 @@ export class RichTextScene extends ExampleScene {
     this.text.setDisplayCallback(this.burnPulse);
   }
 
-  /** Transient ranges: a yellow recolour over every match of the find string. */
+  /**
+   * Position-anchored overlays: a yellow recolour over every match of the find
+   * string, one `{ start, length }` overlay each. Written the long way on
+   * purpose — `addStyle(needle, ...)` would do it in one call, but as a *content*
+   * anchor that survives the text change this scene is here to demonstrate.
+   *
+   * `fontScale` rides along: a structural key is legal on any spec layer now, so
+   * a fixed-index overlay reflows the text. Removing it (a text change, or
+   * `clearStyles`) reflows back.
+   */
   private applyFind(): void {
     const needle = this.params.find;
     if (!needle) return;
     const plain = this.text.text;
     for (let at = plain.indexOf(needle); at >= 0; at = plain.indexOf(needle, at + needle.length)) {
-      this.text.addStyleRange(at, needle.length, { color: 0xffe066, scale: 1.06 });
+      this.text.addStyle({ start: at, length: needle.length }, { color: 0xffe066, fontScale: 1.12 });
     }
   }
 
   /**
    * Composition: the callback sees the already-styled glyphs and layers alpha
-   * on top, so the rule's red holds while the word pulses.
+   * on top, so the segment's red holds while the word pulses.
    */
   private burnPulse = (glyphs: GlyphState[]): void => {
     if (this.burnAt < 0) return;
@@ -159,19 +179,20 @@ export class RichTextScene extends ExampleScene {
   protected addControls(pane: Pane): void {
     const f = pane.addFolder({ title: "Rich text" });
 
-    // Re-applies content + rules from scratch, then ranges over every match —
-    // try "fire" or "Embers".
+    // Re-applies content + content anchors from scratch, then a position-anchored
+    // overlay over every match — try "fire" or "Embers".
     f.addBinding(this.params, "find").on("change", () => this.applyAll());
 
-    // Drives the 'dragonflame' rule's handle.update — an appearance-only
-    // change, so it re-seeds without reflowing, in either text state.
+    // Drives the 'dragonflame' overlay's handle.update — an appearance-only
+    // change, so it re-seeds without reflowing, in either text state. (Note
+    // `update` replaces the style, so the gradient has to be restated.)
     f.addBinding(this.params, "skew", { min: -0.5, max: 0.5, step: 0.01 }).on("change", (e) => {
       this.skewRule?.update({ color: NAME_GRADIENT, skew: e.value });
     });
 
-    // The three lifetimes in one click: setText keeps the rules (they re-match
-    // 'fire' and 'dragonflame' in the new string), drops the segments, and
-    // kills any find ranges. Restoring re-applies everything.
+    // Both lifetimes in one click: setText keeps the content anchors (they
+    // re-derive 'fire', 'dragonflame' and /\d+/ in the new string), drops the
+    // segments, and kills any find overlays. Restoring re-applies everything.
     f.addBinding(this.params, "altText", { label: "change text (setText)" }).on("change", (e) => {
       if (e.value) {
         this.text.setText(ALT_TEXT);

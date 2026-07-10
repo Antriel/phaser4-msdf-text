@@ -26,9 +26,11 @@ import { measureLines, uniformRuns, type LayoutRuns } from './MSDFMeasure';
 import {
     toColorInt,
     resolveStyle,
+    resolveTarget,
     resolveDecoration,
     resolveHighlight,
-    matchRuns,
+    deriveRuns,
+    isContentAnchored,
     hasStyleKeys,
     styleHasShadowKeys,
     styleHasAppearanceKeys,
@@ -38,7 +40,7 @@ import {
     type ResolvedHighlight,
     type ResolvedStyle,
     type StyleRun,
-    type StyleRule
+    type StyleOverlay
 } from './MSDFTextStyle';
 import { packColor, packSolidParams, type Corners, type PackedCorners } from './MSDFColor';
 import type {
@@ -50,8 +52,7 @@ import type {
     FitOptions,
     Segment,
     StyleSpec,
-    RuleStyleSpec,
-    TextStyleOpts,
+    StyleTarget,
     StyleHandle,
     DisplayCallback,
     MSDFTextStatic
@@ -67,9 +68,12 @@ export type {
     MSDFAlign,
     PerCorner,
     StyleSpec,
-    RuleStyleSpec,
     SegmentSpec,
     Segment,
+    MatchTarget,
+    SpanTarget,
+    StyleMatcher,
+    StyleTarget,
     TextStyleOpts,
     StyleHandle,
     RectLike,
@@ -318,17 +322,15 @@ export const MSDFText: MSDFTextStatic = new Class({
         this._glyphStates = [];
 
         // ── Rich-text styling ───────────────────────────────────────────────
-        // Three layers, painted segments → rules → ranges (then displayCallback).
+        // Two layers, painted segments → overlays (then displayCallback). Within
+        // the overlays, plain creation order: the style added last wins.
         this._segmentRuns = [];   // content — rebuilt with the text (setRichText)
-        this._styleRules = [];    // policy — runs re-cached on each text change
-        this._rangeRuns = [];     // override — dropped on any text change
+        this._overlays = [];      // addStyle — content- or position-anchored
         this._hasStyles = false;  // any layer non-empty ⇒ lifecycle bookkeeping runs
         this._hasAppearance = false; // any run seeds a glyph ⇒ force the per-glyph array
         this._stylesHaveShadow = false; // any run sets a shadow ⇒ run the shadow pass
         this._stylesDirty = false;// a handle/segment changed ⇒ coalesced re-seed
-        this._rangeGen = 0;       // bumped on text change to invalidate range handles
         this._deadHandleWarned = false;
-        this._structuralRangeWarned = false;
 
         // ── Decorations (highlight / underline / strikethrough) ─────────────
         // Appearance lane, but glyph-independent: they resolve per *source*
@@ -498,31 +500,52 @@ export const MSDFText: MSDFTextStatic = new Class({
     },
 
     /**
-     * Shared text-change bookkeeping for the style layers: drop transient ranges
-     * (killing their handles via `_rangeGen`), re-cache every rule's matches
-     * against the new text, then refresh the derived style state and flag a re-seed.
-     * Segments are handled by the caller (they are content, not policy).
+     * Shared text-change bookkeeping for the overlay store, then a refresh of the
+     * derived style state and a flagged re-seed. Segments are handled by the
+     * caller (they are content, replaced with it).
+     *
+     * The anchor kind decides the fate: a content anchor re-derives its spans
+     * against the new text and lives on; a position anchor indexed the old text,
+     * so it is dropped and marked dead (which is what its handle checks). No
+     * clamping — a half-surviving range is worse than none.
+     *
+     * Two phases, because a `fn` anchor is the caller's code and may throw. The
+     * store is compacted first, with nothing user-supplied running; only then is
+     * anything re-derived, and the `finally` refreshes the derived state whatever
+     * happens. So an exception reaches the caller unswallowed and still leaves the
+     * text object consistent — the overlays it never reached simply keep the spans
+     * they had, which the paint loops clamp like any other stale span.
      */
     onTextChanged: function (text: string): void {
-        if (this._rangeRuns.length > 0) {
-            this._rangeRuns.length = 0;
-            this._rangeGen++;
+        const overlays: StyleOverlay[] = this._overlays;
+        let kept = 0;
+        for (let i = 0; i < overlays.length; i++) {
+            const o = overlays[i];
+            if (!isContentAnchored(o.anchor)) {
+                o.dead = true;
+                continue;
+            }
+            overlays[kept++] = o;
         }
-        for (let i = 0; i < this._styleRules.length; i++) {
-            const rule = this._styleRules[i];
-            rule.runs = matchRuns(text, rule.match, rule.opts);
+        overlays.length = kept;
+
+        try {
+            for (let i = 0; i < overlays.length; i++) {
+                overlays[i].runs = deriveRuns(overlays[i].anchor, text);
+            }
+        } finally {
+            this.refreshStyleState();
+            this._stylesDirty = true;
         }
-        this.refreshStyleState();
-        this._stylesDirty = true;
     },
 
     /**
-     * Recompute the derived state of the three style layers. Called whenever a
-     * layer changes (new/updated/removed rule or range, new segments, text
-     * change). Three outputs:
+     * Recompute the derived state of the two style layers. Called whenever a
+     * layer changes (new/updated/removed overlay, new segments, text change).
+     * Four outputs:
      *
      * - `_hasStyles` — any layer non-empty. Gates the lifecycle bookkeeping in
-     *   `onTextChanged` (rule re-matching, range dropping).
+     *   `onTextChanged` (re-deriving anchors, dropping position-anchored overlays).
      * - `_hasAppearance` — any run seeds a `GlyphState`. Gates the per-glyph
      *   array and `applyStyleRuns`; a `fontScale`-only or decoration-only run
      *   doesn't need either.
@@ -531,26 +554,23 @@ export const MSDFText: MSDFTextStatic = new Class({
      * - `_sizeScales` / `_fontMap` — the structural maps. Because they are
      *   *layout* inputs, a change here sets `_dirty` (a rebuild), not
      *   `_stylesDirty` (a re-seed). That is the documented cost of a structural
-     *   rule. The font list is rebuilt unconditionally, since `setFont` can swap
-     *   the base font out from under an otherwise unchanged map.
+     *   key, on any layer. The font list is rebuilt unconditionally, since
+     *   `setFont` can swap the base font out from under an otherwise unchanged map.
      */
     refreshStyleState: function (): void {
         const segs: StyleRun[] = this._segmentRuns;
-        const rules: StyleRule[] = this._styleRules;
-        const ranges: StyleRun[] = this._rangeRuns;
+        const overlays: StyleOverlay[] = this._overlays;
 
-        this._hasStyles = segs.length > 0 || rules.length > 0 || ranges.length > 0;
+        this._hasStyles = segs.length > 0 || overlays.length > 0;
 
         let appearance = false;
         for (let i = 0; i < segs.length && !appearance; i++) appearance = styleHasAppearanceKeys(segs[i].style);
-        for (let i = 0; i < rules.length && !appearance; i++) appearance = styleHasAppearanceKeys(rules[i].style);
-        for (let i = 0; i < ranges.length && !appearance; i++) appearance = styleHasAppearanceKeys(ranges[i].style);
+        for (let i = 0; i < overlays.length && !appearance; i++) appearance = styleHasAppearanceKeys(overlays[i].style);
         this._hasAppearance = appearance;
 
         let decorated = this._underline !== null || this._strikethrough !== null || this._highlight !== null;
         for (let i = 0; i < segs.length && !decorated; i++) decorated = styleHasDecorationKeys(segs[i].style);
-        for (let i = 0; i < rules.length && !decorated; i++) decorated = styleHasDecorationKeys(rules[i].style);
-        for (let i = 0; i < ranges.length && !decorated; i++) decorated = styleHasDecorationKeys(ranges[i].style);
+        for (let i = 0; i < overlays.length && !decorated; i++) decorated = styleHasDecorationKeys(overlays[i].style);
         this._hasDecorations = decorated;
 
         // `_stylesHaveShadow` is recomputed in `applyStyleRuns` (which only runs
@@ -576,11 +596,10 @@ export const MSDFText: MSDFTextStatic = new Class({
     },
 
     /**
-     * Resolve the structural `font` of every segment run, then every rule match,
-     * into an index per source character — the same layer order as the size and
-     * appearance passes, so a rule's font beats an overlapping segment's. Ranges
-     * are excluded by construction: they are applied after layout and their
-     * `StyleSpec` has no structural keys.
+     * Resolve the structural `font` of every segment run, then every overlay
+     * match, into an index per source character — the same layer order as the
+     * size, appearance and decoration passes, so a later overlay's font beats an
+     * earlier one's and both beat an overlapping segment's.
      *
      * Index `0` is the object's own font, so a `null` map means "one font
      * everywhere" — the fast path that skips the lookup in every measurement.
@@ -643,11 +662,12 @@ export const MSDFText: MSDFTextStatic = new Class({
             const run: StyleRun = this._segmentRuns[i];
             if (run.style.font !== undefined) paint(run.start, run.length, run.style.font);
         }
-        for (let i = 0; i < this._styleRules.length; i++) {
-            const rule: StyleRule = this._styleRules[i];
-            const key = rule.style.font;
+        for (let i = 0; i < this._overlays.length; i++) {
+            const overlay: StyleOverlay = this._overlays[i];
+            const key = overlay.style.font;
             if (key === undefined) continue;
-            for (let r = 0; r < rule.runs.length; r++) paint(rule.runs[r].start, rule.runs[r].length, key);
+            const runs = overlay.runs;
+            for (let r = 0; r < runs.length; r++) paint(runs[r].start, runs[r].length, key);
         }
         return { map, fonts, frames };
     },
@@ -696,11 +716,10 @@ export const MSDFText: MSDFTextStatic = new Class({
     },
 
     /**
-     * Paint the structural `fontScale` of every segment run, then every rule
+     * Paint the structural `fontScale` of every segment run, then every overlay
      * match, into a multiplier per source character — the same layer order as
-     * the appearance pass, so a rule's size beats an overlapping segment's.
-     * Ranges are excluded by construction: they are applied after layout and
-     * their `StyleSpec` has no structural keys.
+     * the appearance pass, so a later overlay's size beats an earlier one's and
+     * both beat an overlapping segment's.
      *
      * Returns `null` when no layer sets `fontScale`, which keeps the uniform-size
      * fast path allocation-free and lets every measurement skip the lookup.
@@ -722,11 +741,12 @@ export const MSDFText: MSDFTextStatic = new Class({
             const run: StyleRun = this._segmentRuns[i];
             if (run.style.fontScale !== undefined) paint(run.start, run.length, run.style.fontScale);
         }
-        for (let i = 0; i < this._styleRules.length; i++) {
-            const rule: StyleRule = this._styleRules[i];
-            const value = rule.style.fontScale;
+        for (let i = 0; i < this._overlays.length; i++) {
+            const overlay: StyleOverlay = this._overlays[i];
+            const value = overlay.style.fontScale;
             if (value === undefined) continue;
-            for (let r = 0; r < rule.runs.length; r++) paint(rule.runs[r].start, rule.runs[r].length, value);
+            const runs = overlay.runs;
+            for (let r = 0; r < runs.length; r++) paint(runs[r].start, runs[r].length, value);
         }
         return scales;
     },
@@ -1196,39 +1216,34 @@ export const MSDFText: MSDFTextStatic = new Class({
     },
 
     /**
-     * Layer the three style stores onto already-seeded glyph states, in paint
-     * order — **segments → rules → ranges** — and creation order within each
-     * layer. Applied key-by-key, so a later layer that sets only `outline`
-     * leaves an earlier layer's `color` intact. Glyphs are matched to runs by
-     * `srcIndex` (source position, wrap-independent).
+     * Layer the two style stores onto already-seeded glyph states, in paint
+     * order — **segments → overlays**, overlays in creation order. Applied
+     * key-by-key, so a later layer that sets only `outline` leaves an earlier
+     * layer's `color` intact. Glyphs are matched to runs by `srcIndex` (source
+     * position, wrap-independent).
      *
-     * A run that carries only the structural `fontScale` is skipped: it is
+     * A run that carries only the structural `fontScale`/`font` is skipped: it is
      * already baked into the character quads by the layout pass, and scanning the
      * glyph array for it would cost a pass per frame to seed nothing.
      */
     applyStyleRuns: function (states: GlyphState[]): void {
         let shadow = false;
-        const seg = this._segmentRuns;
+        const seg: StyleRun[] = this._segmentRuns;
         for (let r = 0; r < seg.length; r++) {
             const style = seg[r].style;
             if (!styleHasAppearanceKeys(style)) continue;
             shadow = shadow || styleHasShadowKeys(style);
             this.applyRun(states, seg[r].start, seg[r].length, style);
         }
-        const rules = this._styleRules;
-        for (let k = 0; k < rules.length; k++) {
-            const rule = rules[k];
-            const runs = rule.runs;
-            if (runs.length === 0 || !styleHasAppearanceKeys(rule.style)) continue;
-            shadow = shadow || styleHasShadowKeys(rule.style);
+        const overlays: StyleOverlay[] = this._overlays;
+        for (let k = 0; k < overlays.length; k++) {
+            const overlay = overlays[k];
+            const runs = overlay.runs;
+            if (runs.length === 0 || !styleHasAppearanceKeys(overlay.style)) continue;
+            shadow = shadow || styleHasShadowKeys(overlay.style);
             for (let r = 0; r < runs.length; r++) {
-                this.applyRun(states, runs[r].start, runs[r].length, rule.style);
+                this.applyRun(states, runs[r].start, runs[r].length, overlay.style);
             }
-        }
-        const range = this._rangeRuns;
-        for (let r = 0; r < range.length; r++) {
-            shadow = shadow || styleHasShadowKeys(range[r].style);
-            this.applyRun(states, range[r].start, range[r].length, range[r].style);
         }
         // Cached for the renderer's shadow-pass gate: in per-glyph mode the pass
         // runs if any run sets a shadow, even without an object-level shadow.
@@ -1604,8 +1619,8 @@ export const MSDFText: MSDFTextStatic = new Class({
 
     /**
      * Resolve every source character's decoration (and the colour it would
-     * inherit) through the normal paint order — object level, then segments,
-     * rules, ranges — then merge consecutive decorated characters into rects.
+     * inherit) through the normal paint order — object level, then segments, then
+     * overlays — then merge consecutive decorated characters into rects.
      *
      * Reads `_characters`, so it must run *after* layout; it is called from the
      * same coalesced pass that seeds styles, and needs no dirty flag of its own.
@@ -1642,13 +1657,11 @@ export const MSDFText: MSDFTextStatic = new Class({
 
         const segs: StyleRun[] = this._segmentRuns;
         for (let i = 0; i < segs.length; i++) paint(segs[i].start, segs[i].length, segs[i].style);
-        const rules: StyleRule[] = this._styleRules;
-        for (let k = 0; k < rules.length; k++) {
-            const rule = rules[k];
-            for (let r = 0; r < rule.runs.length; r++) paint(rule.runs[r].start, rule.runs[r].length, rule.style);
+        const overlays: StyleOverlay[] = this._overlays;
+        for (let k = 0; k < overlays.length; k++) {
+            const runs = overlays[k].runs;
+            for (let r = 0; r < runs.length; r++) paint(runs[r].start, runs[r].length, overlays[k].style);
         }
-        const ranges: StyleRun[] = this._rangeRuns;
-        for (let r = 0; r < ranges.length; r++) paint(ranges[r].start, ranges[r].length, ranges[r].style);
 
         this.buildHighlightRects(high);
         this.buildDecorRects(under, colorSrc, alphaSrc, PASS_UNDERLINE);
@@ -1851,151 +1864,81 @@ export const MSDFText: MSDFTextStatic = new Class({
             }
         }
 
-        // Segments replace the content layer wholesale; ranges drop (content
-        // replacement). Rules re-match only when the text actually changed.
+        // Segments replace the content layer wholesale. Position-anchored overlays
+        // drop with it — even when the concatenated string happens to be identical,
+        // the content they were indexed against is not the content they now cover.
         const changed = text !== this._text;
         this._segmentRuns = runs;
         if (changed) {
             this._text = text;
             this._dirty = true;
-            this.onTextChanged(text);      // drop ranges, re-match rules, dirty flags
+            this.onTextChanged(text);      // re-derive/drop overlays, dirty flags
             this.updateDisplayOrigin();
         } else {
-            // Same concatenated text ⇒ skip relayout; still drop ranges and
-            // refresh the styled seed (that is the update path). `refreshStyleState`
-            // sets `_dirty` by itself if a segment's `fontScale` moved, since that
-            // reflows even though the string did not change.
-            if (this._rangeRuns.length > 0) {
-                this._rangeRuns.length = 0;
-                this._rangeGen++;
-            }
-            this.refreshStyleState();
-            this._stylesDirty = true;
+            // Same concatenated text ⇒ skip relayout; the content anchors would
+            // re-derive to exactly what they hold, so `onTextChanged`'s loop is
+            // spent only on dropping the position-anchored overlays.
+            this.onTextChanged(text);
             if (this._dirty) this.updateDisplayOrigin();
         }
         return this;
     },
 
     /**
-     * Add a persistent keyword rule. See {@link MSDFTextInstance.setTextStyle}.
+     * Add a style overlay over the current content. See
+     * {@link MSDFTextInstance.addStyle}.
      */
-    setTextStyle: function (match: string, style: RuleStyleSpec, opts: TextStyleOpts = {}) {
-        const resolvedOpts: Required<TextStyleOpts> = {
-            all: opts.all !== undefined ? opts.all : true,
-            nth: opts.nth !== undefined ? opts.nth : -1, // -1 = not targeting a single occurrence
-            wholeWord: !!opts.wholeWord,
-            caseSensitive: opts.caseSensitive !== undefined ? opts.caseSensitive : true
-        };
-        const rule: StyleRule = {
-            match: String(match),
-            opts: resolvedOpts,
+    addStyle: function (target: StyleTarget, style: StyleSpec) {
+        const anchor = resolveTarget(target);
+        const overlay: StyleOverlay = {
+            anchor,
             style: resolveStyle(style),
-            runs: matchRuns(this._text, String(match), resolvedOpts)
+            runs: deriveRuns(anchor, this._text),
+            dead: false
         };
-        this._styleRules.push(rule);
+        this._overlays.push(overlay);
         this.refreshStyleState();
         this._stylesDirty = true;
-        return this.makeRuleHandle(rule);
+        return this.makeStyleHandle(overlay);
     },
 
     /**
-     * Style a transient index range. See {@link MSDFTextInstance.addStyleRange}.
-     */
-    addStyleRange: function (start: number, length: number, style: StyleSpec) {
-        const run: StyleRun = { start, length, style: this.resolveRangeStyle(style) };
-        this._rangeRuns.push(run);
-        this.refreshStyleState();
-        this._stylesDirty = true;
-        return this.makeRangeHandle(run, this._rangeGen);
-    },
-
-    /**
-     * Resolve a range/override style, stripping any structural key. Ranges are
-     * applied *after* layout, so honouring `fontScale` or `font` here would mean
-     * a transient, index-anchored overlay could reflow the text — exactly the
-     * coupling the appearance/structural split exists to prevent. TypeScript
-     * already forbids it; this guards the JS caller.
-     */
-    resolveRangeStyle: function (style: StyleSpec): ResolvedStyle {
-        const resolved = resolveStyle(style);
-        const structural = resolved.fontScale !== undefined || resolved.font !== undefined;
-        if (structural) {
-            const key = resolved.fontScale !== undefined ? 'fontScale' : 'font';
-            resolved.fontScale = undefined;
-            resolved.font = undefined;
-            if (!this._structuralRangeWarned) {
-                this._structuralRangeWarned = true;
-                console.warn(
-                    `[MSDFText] "${key}" is ignored on addStyleRange: ranges are ` +
-                    'applied after layout and cannot reflow the text. Put it on a ' +
-                    'setRichText segment or a setTextStyle rule instead.'
-                );
-            }
-        }
-        return resolved;
-    },
-
-    /**
-     * Remove all rules and ranges. See {@link MSDFTextInstance.clearStyles}.
+     * Remove every overlay. See {@link MSDFTextInstance.clearStyles}.
      */
     clearStyles: function () {
-        this._styleRules.length = 0;
-        if (this._rangeRuns.length > 0) {
-            this._rangeRuns.length = 0;
-            this._rangeGen++;
-        }
-        // Segments are content, not policy — left intact.
+        const overlays: StyleOverlay[] = this._overlays;
+        for (let i = 0; i < overlays.length; i++) overlays[i].dead = true;
+        overlays.length = 0;
+        // Segments are content, not overlays — left intact.
         this.refreshStyleState();
         this._stylesDirty = true;
         return this;
     },
 
     /**
-     * Build the {@link StyleHandle} for a persistent rule (survives text changes).
-     * Unlike a range handle, `update` may carry the structural `fontScale`; when
-     * it changes, `refreshStyleState` routes the update to a rebuild instead of a
-     * re-seed. That is the honest cost of a structural rule — the same call is
-     * cheap for an appearance-only style.
+     * Build the {@link StyleHandle} for one overlay. `dead` is set by `remove`,
+     * by `clearStyles`, and by a text change that dropped a position-anchored
+     * overlay — one flag for all three, since to a caller they are the same event.
+     *
+     * `update` replaces the style. When it changes a structural key,
+     * `refreshStyleState` sees the map move and routes the update to a rebuild
+     * instead of a re-seed; that is the honest cost of a structural overlay, and
+     * the same call stays cheap for an appearance-only style.
      */
-    makeRuleHandle: function (rule: StyleRule): StyleHandle<RuleStyleSpec> {
-        const self = this;
-        let removed = false;
-        return {
-            update(style: RuleStyleSpec): void {
-                if (removed) { self.warnDeadHandle(); return; }
-                rule.style = resolveStyle(style);
-                self.refreshStyleState();
-                self._stylesDirty = true;
-            },
-            remove(): void {
-                if (removed) return;
-                removed = true;
-                const i = self._styleRules.indexOf(rule);
-                if (i >= 0) self._styleRules.splice(i, 1);
-                self.refreshStyleState();
-                self._stylesDirty = true;
-            }
-        };
-    },
-
-    /**
-     * Build the {@link StyleHandle} for a transient range. `gen` snapshots
-     * `_rangeGen` at creation; a mismatch means a text change dropped the range,
-     * so the handle is dead (methods no-op with a one-time warning).
-     */
-    makeRangeHandle: function (run: StyleRun, gen: number): StyleHandle {
+    makeStyleHandle: function (overlay: StyleOverlay): StyleHandle {
         const self = this;
         return {
             update(style: StyleSpec): void {
-                if (gen !== self._rangeGen) { self.warnDeadHandle(); return; }
-                run.style = self.resolveRangeStyle(style);
+                if (overlay.dead) { self.warnDeadHandle(); return; }
+                overlay.style = resolveStyle(style);
                 self.refreshStyleState();
                 self._stylesDirty = true;
             },
             remove(): void {
-                if (gen !== self._rangeGen) return;
-                const i = self._rangeRuns.indexOf(run);
-                if (i >= 0) self._rangeRuns.splice(i, 1);
+                if (overlay.dead) return;
+                overlay.dead = true;
+                const i = self._overlays.indexOf(overlay);
+                if (i >= 0) self._overlays.splice(i, 1);
                 self.refreshStyleState();
                 self._stylesDirty = true;
             }
@@ -2007,9 +1950,11 @@ export const MSDFText: MSDFTextStatic = new Class({
         if (!this._deadHandleWarned) {
             this._deadHandleWarned = true;
             console.warn(
-                '[MSDFText] A style handle was used after it was removed or after ' +
-                'a text change dropped its range; the call is ignored. Re-create ' +
-                'the range/rule against the current text.'
+                '[MSDFText] A style handle was used after it was removed, after ' +
+                'clearStyles, or after a text change dropped its position-anchored ' +
+                'overlay; the call is ignored. Re-add the style against the current ' +
+                'text, or anchor it to content (a string, RegExp or matcher) so it ' +
+                'survives text changes.'
             );
         }
     },

@@ -50,12 +50,15 @@ export type {
     MSDFTextStatic,
     PerCorner,
     StyleSpec,
-    RuleStyleSpec,
     SegmentSpec,
     Segment,
     DecorationSpec,
     HighlightSpec,
     HighlightPadding,
+    MatchTarget,
+    SpanTarget,
+    StyleMatcher,
+    StyleTarget,
     TextStyleOpts,
     StyleHandle
 } from './MSDFText';

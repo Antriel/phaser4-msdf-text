@@ -40,25 +40,36 @@ is built exactly once, with nothing to coordinate.
   corrupt source-position counting. Independently valuable; the styling API
   builds on it.
 - **`fit-inside.md`** — standalone apart from the `computeWrap` seam above.
-- **`rich-text-styling.md`** — the `setRichText` / `setTextStyle` /
+- **`rich-text-styling.md`** — the original `setRichText` / `setTextStyle` /
   `addStyleRange` surface (three entry points by style lifetime). Depends on
   provenance for source→glyph mapping. Also contains the **skew** feature,
-  which has no dependency on the rest and can land at any time.
+  which has no dependency on the rest and can land at any time. **Its style
+  surface is superseded by `style-api-unification.md`** (below); it is kept as
+  the rationale record.
 
 All three of the above are **implemented**, as is:
 
 - **`vertex-params.md`** — the `params` vertex attribute (steps A–C): per-glyph
   outline width / rounded / shadow softness, faux weight, underline and
   strikethrough. See Phase 2 below.
+- **`style-api-unification.md`** (Tiers 1–2) — one `StyleSpec` across every
+  declarative layer, and one `addStyle(target, style)` overlay primitive
+  replacing `setTextStyle`/`addStyleRange`. Lifetime became a property of the
+  **anchor** (content vs position), not of the entry point; structural keys
+  became legal on every spec layer, with the cost stated per key. RegExp and
+  matcher-function anchors shipped with it. Tier 3 (segment `id`s, spec-level
+  `displayCallback`) remains a proposal.
 
 ## Phase 2 — status
 
 **Everything in Phase 2 is implemented, including step E** (the merged atlas).
 
 **2a (per-run size, `fontScale`) is implemented.** Structural keys live on
-`SegmentSpec` *and* `setTextStyle`'s new `RuleStyleSpec` (the refinement in
-`rich-text-styling.md` superseded the original "segments only" call); ranges and
-`displayCallback` stay appearance-only. Per-run size is a **multiplier** on the
+`StyleSpec`, i.e. on every declarative layer — segments and `addStyle` overlays
+alike (`style-api-unification.md` superseded the earlier "segments and rules
+only" call, which had itself superseded "segments only"); only
+`displayCallback`/`editGlyphs` stay appearance-only, and that is physical rather
+than conventional. Per-run size is a **multiplier** on the
 object `fontSize`, which is what keeps `setFontSize` and `fitInside`'s monotone
 binary search coherent. The metrics refactor landed as `_sizeScales` (a
 source-indexed `Float32Array`, `null` on the uniform fast path) threaded through
@@ -92,7 +103,7 @@ Two implementation notes not in the design doc, both forced by per-glyph width:
   underline along with it.
 
 **2b (per-run font) is implemented.** `font` (an `msdfFont` cache key) joined
-`fontScale` on `SegmentSpec` and `RuleStyleSpec`. It landed exactly as the split
+`fontScale` as a structural key. It landed exactly as the split
 predicted: `_characters` grew a `fontIdx`, the style layer resolves font keys
 against the scene cache (in `MSDFText.buildFontMap`, not in the `this`-free
 `resolveStyle`), and the renderer gained its first per-glyph flush gate. The
@@ -166,19 +177,20 @@ single-batch path is a later optimisation (step E).
 - The per-glyph model is split into two lanes: **appearance** (seeded into
   `GlyphState`, per-frame safe, animatable — colour/alpha/outline/shadow/scale/
   rotation/skew) vs **structural** (changes layout, rebuild-only — `fontScale`
-  and `font`). `displayCallback` stays appearance-only.
+  and `font`). `displayCallback` stays appearance-only, enforced physically:
+  `GlyphState` has no structural fields.
 - The shader stays a single über-shader, and `params` channels are per-corner
   where continuous but per-glyph where packed (GLSL ES 1.00 has no `flat`).
   Rationale in `vertex-params.md`.
-- Rich-text styles have **three lifetimes**: content segments (`setRichText`,
-  replaced with the text), persistent rules (`setTextStyle` — renamed from
-  `setWordStyle`; re-matched on every text change), and transient ranges
-  (`addStyleRange` — dropped on any text change, handles die; **no clamping**
-  of stale ranges). Paint order = increasing dynamism: segments → rules →
-  ranges → `displayCallback`, key-by-key.
+- Rich-text styles have **two lifetimes, decided by the anchor**: content
+  segments (`setRichText`, replaced with the text) and `addStyle` overlays, whose
+  spans either re-derive on a text change (string / RegExp / matcher anchors,
+  which survive it) or die with it (`{ start, length }` anchors; **no clamping**).
+  Paint order = increasing dynamism: segments → overlays (creation order) →
+  `displayCallback`, key-by-key.
 - Handle updates coalesce through a `_stylesDirty` flag (one re-seed per tick);
   a styles re-seed in manual mode emits `'glyphsreset'` once per tick.
-  `clearStyles()` removes rules + ranges (segments are content, not policy).
+  `clearStyles()` removes every overlay (segments are content, not overlays).
 - Segments are resolved at `setRichText` call time (no reference kept); the
   update path is calling `setRichText` again — unchanged concatenated text
   skips relayout.

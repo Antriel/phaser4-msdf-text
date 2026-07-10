@@ -180,7 +180,7 @@ merge atlases.
 
 **Decorations** — highlight / underline / strikethrough are appearance-lane but
 glyph-independent. They resolve per *source* character through the normal paint
-order (object level → segments → rules → ranges), then merge into `_decorRects`.
+order (object level → segments → overlays), then merge into `_decorRects`.
 Rects deliberately live outside `_characters`: the `GlyphState` array,
 `editGlyphs()` and every per-glyph loop assume one quad per renderable char and
 must never see a rect. Consequently `displayCallback` cannot see or animate them,
@@ -236,9 +236,10 @@ The callback runs **once per frame** with the whole glyph array, not once per
 glyph and not once per pass, so the passes read already-resolved state and a
 glyph's shadow/outline are independent of its fill.
 
-**Rich-text lanes** — the three style layers (`_segmentRuns` content,
-`_styleRules` policy, `_rangeRuns` override; painted in that order, then
-`displayCallback`) split into three lanes:
+**Rich-text lanes** — the two style layers (`_segmentRuns` content, `_overlays`
+from `addStyle`; painted in that order — and within the overlays, plain creation
+order, so the style added last wins — then `displayCallback`) split into three
+key lanes:
 - **Appearance** — colour/alpha/weight/outline/shadow/scale/rotation/skew. Seeds
   `GlyphState`. `_hasAppearance` gates the per-glyph array and `applyStyleRuns`.
   A change sets `_stylesDirty` (one coalesced re-seed before the next render).
@@ -255,14 +256,29 @@ glyph's shadow/outline are independent of its fill.
   fast path, both feeding wrap, measurement and layout. A change sets `_dirty` —
   a rebuild, not a re-seed.
 
-Only layers resolved *before* the layout pass may carry structural keys, so
-`SegmentSpec` and `setTextStyle`'s `RuleStyleSpec` have `fontScale` / `font` and
-`StyleSpec` (ranges, callback — applied *after* layout) never will;
-`resolveRangeStyle` strips them for JS callers. `MSDFText.refreshStyleState()`
-recomputes all of `_hasStyles` / `_hasAppearance` / `_hasDecorations` /
-`_sizeScales` / `_fontMap` / `_maxLineUnit` and is the single place that decides
-re-seed vs rebuild. It rebuilds `_runFonts` unconditionally, because `setFont`
-swaps slot 0 out from under an otherwise unchanged map.
+**Specs are layout inputs; the glyph array is layout output.** That is the one
+hard boundary, and it is enforced physically rather than by convention: every
+spec layer takes the same `StyleSpec` and may carry any key (the cost is per
+*key*, per the lanes above, never per method), while `displayCallback` /
+`editGlyphs` operate on already-laid-out glyphs and are appearance-only because
+`GlyphState` has no structural fields. `MSDFText.refreshStyleState()` recomputes
+all of `_hasStyles` / `_hasAppearance` / `_hasDecorations` / `_sizeScales` /
+`_fontMap` / `_maxLineUnit` and is the single place that decides re-seed vs
+rebuild. It rebuilds `_runFonts` unconditionally, because `setFont` swaps slot 0
+out from under an otherwise unchanged map.
+
+**Overlay anchors** — `addStyle(target, style)` is the only overlay primitive.
+`resolveTarget` (`MSDFTextStyle.ts`) normalizes the public `StyleTarget` into a
+`ResolvedTarget` whose `kind` is the *only* thing that decides lifetime:
+`match` / `regexp` / `fn` are **content-anchored** (re-derived against the new
+string on every text change, so they survive it); `span` is **position-anchored**
+(spliced out and marked `dead`, which is what its handle checks). `onTextChanged`
+is that one loop. The `fn` anchor is the extension point that ends the
+matcher-feature treadmill; it is caught-and-warned rather than allowed to throw,
+because it runs inside `setText`'s bookkeeping and a throw would abandon the
+store half re-derived. Range spans index the **source** string, and a structural
+reflow never moves source indices — which is what makes a structural key safe on
+a position anchor.
 
 **Variable line metrics** — measurement is **not** a method on one font. It lives
 in `src/MSDFMeasure.ts` as free functions over a `LayoutRuns` — `{ base, scales,
@@ -321,7 +337,7 @@ src/
   MSDFFont.ts              # Parsed font: glyph metrics, kerning, single-font measurement
   MSDFMeasure.ts           # Run-aware measurement (LayoutRuns, measureSpan, measureLines)
   MSDFText.ts              # Text GameObject (layout, wrap, outline, shadow, decorations, per-glyph state)
-  MSDFTextTypes.ts         # Public type surface (StyleSpec / RuleStyleSpec / MSDFTextInstance)
+  MSDFTextTypes.ts         # Public type surface (StyleSpec / StyleTarget / MSDFTextInstance)
   MSDFTextStyle.ts         # Rich-text style engine (resolve, match, apply) — no instance state
   MSDFTextWrap.ts          # Pure word-wrap + source-index map
   MSDFGlyphState.ts        # Per-glyph state type + factory (callback / editGlyphs)
