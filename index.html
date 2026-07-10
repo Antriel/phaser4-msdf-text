@@ -131,8 +131,12 @@
       box-shadow: none !important;
     }
 
-    /* ── Mobile: pane becomes a collapsible overlay drawer ───── */
-    @media (max-width: 760px) {
+    /* ── Mobile / narrow: pane becomes a collapsible overlay drawer ─────
+       The Controls button (#btn-pane) and the drawer styles it toggles must
+       stay inside the SAME media query — the button must never be visible
+       while the .open styles are inert. 900px (not 760px) so half-snapped
+       desktop windows get the drawer instead of a crushed canvas. */
+    @media (max-width: 900px) {
       #btn-pane { display: flex; }
       #nav-counter { display: none; }
 
@@ -158,7 +162,7 @@
     <button id="btn-next" title="Next (→)">&#8594;</button>
     <select id="nav-select" title="Jump to example"></select>
     <span id="nav-counter"></span>
-    <button id="btn-capture" title="Capture a WebGL frame with Spector.js">Spector.js Capture</button>
+    <button id="btn-capture" title="Capture a WebGL frame with Spector.js">GL Capture</button>
     <button id="btn-pane" title="Toggle controls">Controls</button>
     <a id="link-github" href="https://github.com/Antriel/phaser4-msdf-text"
        target="_blank" rel="noopener" title="View source on GitHub" aria-label="View source on GitHub">

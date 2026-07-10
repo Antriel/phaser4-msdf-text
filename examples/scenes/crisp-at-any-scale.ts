@@ -18,7 +18,7 @@ export class CrispScene extends ExampleScene {
   private bitmap!: Phaser.GameObjects.BitmapText;
   private canvasText!: Phaser.GameObjects.Text;
 
-  private params = { word: "Sharp", font: "Anton", fontSize: 100, rotation: 0 };
+  private params = { word: "Sharp", font: "Anton", fontSize: 100, rotation: 0, animate: false };
 
   constructor() {
     super({ key: "crisp" });
@@ -86,5 +86,23 @@ export class CrispScene extends ExampleScene {
     pane
       .addBinding(this.params, "rotation", { min: -10, max: 10, step: 0.1 })
       .on("change", () => this.applyRotation());
+    // Restore the slider's size when the sweep stops.
+    pane
+      .addBinding(this.params, "animate", { label: "animate size" })
+      .on("change", (e) => {
+        if (!e.value) this.applyFontSize();
+      });
+  }
+
+  update(): void {
+    // The honest, visceral comparison: MSDF doesn't care what size it renders
+    // at, while canvas Text re-rasterises every single frame of the sweep.
+    if (this.params.animate) {
+      const t = (Math.sin(this.time.now * 0.0012) + 1) / 2; // 0..1
+      const size = Math.round(16 + (170 - 16) * t);
+      this.msdf.setFontSize(size);
+      this.bitmap.setFontSize(size);
+      this.canvasText.setFontSize(`${size}px`);
+    }
   }
 }

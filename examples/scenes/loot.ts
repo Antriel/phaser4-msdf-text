@@ -299,10 +299,18 @@ class LootCard {
     // It is item content, so it always shows; `effects` only gates the fire.
     let flavorY = top + 332;
     if (item.power) {
+      // A subtle rarity-tinted pill behind the marquee line — a highlight, so
+      // it batches with the glyphs instead of adding a Graphics shape.
       const power = this.text(0, flavorY, "RobotoCondensed", item.power, 14, color)
         .setOrigin(0.5, 0)
         .setMaxWidth(CARD_W - 44)
-        .setCenterAlign();
+        .setCenterAlign()
+        .setHighlight({
+          color: item.rarity.color,
+          alpha: 0.12,
+          radius: 0.4,
+          padding: { x: 0.25, y: 0.05 },
+        });
       this.powerText = power;
       if (effects) {
         // White base so the per-corner fire tint reads at full strength.
@@ -424,6 +432,7 @@ class LootCard {
   private applyNameEffect(effects: boolean): void {
     const name = this.nameText;
     name.clearOutline().clearShadow().clearDisplayCallback();
+    name.setOutlineInnerColor(null); // re-keyed cards must not keep a mythic rim
     if (!effects) return;
 
     const tier = RARITIES.indexOf(this.item.rarity);
@@ -441,9 +450,12 @@ class LootCard {
       name.setShadow(0, 0, this.item.rarity.color, 0.8, 8);
     }
     if (tier === 5) {
-      // Mythic: a gold shimmer sweeps the glyphs — see MYTHIC_TINT note above.
+      // Mythic: a gold shimmer sweeps the glyphs — see MYTHIC_TINT note above —
+      // and the dark outline ramps into the rarity colour where it meets the
+      // letterform (a two-tone rim; setting it implies the layered pass).
       name.color = 0xffffff;
       name.setDisplayCallback(this.shimmer);
+      name.setOutlineInnerColor(this.item.rarity.color);
     }
   }
 

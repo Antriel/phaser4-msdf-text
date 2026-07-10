@@ -48,7 +48,7 @@ export const FONT_OPTIONS: Record<string, string> = Object.fromEntries(
  * The MSDF atlas is a single **merged** atlas (msdf-atlas-gen `-and`, see
  * `public/assets/merged/`), generated with `-fontname` matching each
  * `FONTS[].key` exactly — one `load.msdfFont` call registers all five keys
- * against one shared texture, so mixed-font rich text (`per-run-font.ts`)
+ * against one shared texture, so mixed-font rich text (`scenes/fonts.ts`)
  * batches into a single draw call instead of flushing per font. BitmapText
  * and TTF stay per-font; only the MSDF path benefits from merging.
  */

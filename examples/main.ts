@@ -6,19 +6,15 @@ import { PreloadScene, PRELOAD_DONE } from "./harness/PreloadScene";
 import type { ExampleScene } from "./harness/ExampleScene";
 
 import { CrispScene } from "./scenes/crisp-at-any-scale";
-import { OutlineScene } from "./scenes/outline";
-import { GlowScene } from "./scenes/glow";
+import { StyleLabScene } from "./scenes/stylelab";
 import { EffectsScene } from "./scenes/effects";
-import { LayoutScene } from "./scenes/layout";
 import { FitInsideScene } from "./scenes/fit-inside";
 import { PerformanceScene } from "./scenes/performance";
 import { GameUIScene } from "./scenes/gameui";
 import { LootScene } from "./scenes/loot";
-import { ProvenanceScene } from "./scenes/provenance";
 import { RichTextScene } from "./scenes/rich-text";
-import { VertexParamsScene } from "./scenes/vertex-params";
-import { PerRunFontScene } from "./scenes/per-run-font";
-import { HighlightScene } from "./scenes/highlight";
+import { FontsScene } from "./scenes/fonts";
+import { DecorScene } from "./scenes/decor";
 
 interface Example {
   key: string;
@@ -29,19 +25,15 @@ interface Example {
 // The example registry. The scene `key` is also the URL hash for deep links.
 const examples: Example[] = [
   { key: "crisp", title: "Crisp at Any Scale", scene: CrispScene },
-  { key: "outline", title: "Outline", scene: OutlineScene },
-  { key: "glow", title: "Glow & Drop Shadow", scene: GlowScene },
+  { key: "stylelab", title: "Style Lab", scene: StyleLabScene },
   { key: "effects", title: "Animated Effects", scene: EffectsScene },
-  { key: "layout", title: "Text Layout", scene: LayoutScene },
-  { key: "fitinside", title: "Fit Inside", scene: FitInsideScene },
-  { key: "provenance", title: "Glyph Provenance", scene: ProvenanceScene },
   { key: "richtext", title: "Rich Text", scene: RichTextScene },
-  { key: "perrunfont", title: "Per-Run Font", scene: PerRunFontScene },
-  { key: "params", title: "Weight, Outline & Decorations", scene: VertexParamsScene },
-  { key: "highlight", title: "Highlight Pills", scene: HighlightScene },
-  { key: "performance", title: "Performance", scene: PerformanceScene },
+  { key: "fonts", title: "Mixed Fonts & Sizes", scene: FontsScene },
+  { key: "decor", title: "Highlights & Decorations", scene: DecorScene },
+  { key: "fitinside", title: "Fit Inside", scene: FitInsideScene },
   { key: "gameui", title: "Game UI Showcase", scene: GameUIScene },
   { key: "loot", title: "RPG Loot Cards", scene: LootScene },
+  { key: "performance", title: "Performance", scene: PerformanceScene },
 ];
 
 // ── DOM refs ──────────────────────────────────────────────────
@@ -93,8 +85,21 @@ game.events.once(PRELOAD_DONE, () => {
 });
 
 // ── Navigation ────────────────────────────────────────────────
+// Deep links from before the examples redesign — old scene keys land on the
+// scene that absorbed their content instead of defaulting to index 0.
+const HASH_ALIASES: Record<string, string> = {
+  outline: "stylelab",
+  glow: "stylelab",
+  params: "stylelab",
+  highlight: "decor",
+  perrunfont: "fonts",
+  provenance: "richtext",
+  layout: "fitinside",
+};
+
 function indexFromHash(): number {
-  const key = location.hash.replace(/^#/, "");
+  let key = location.hash.replace(/^#/, "");
+  key = HASH_ALIASES[key] ?? key;
   const i = examples.findIndex((e) => e.key === key);
   return i >= 0 ? i : 0;
 }
@@ -144,6 +149,9 @@ btnPrev.addEventListener("click", () => showExample(currentIndex - 1));
 btnNext.addEventListener("click", () => showExample(currentIndex + 1));
 navSelect.addEventListener("change", () => showExample(navSelect.selectedIndex));
 btnPane.addEventListener("click", () => paneContainer.classList.toggle("open"));
+// Tapping the canvas dismisses the mobile drawer (a no-op on desktop, where
+// the .open class has no styles).
+canvasContainer.addEventListener("pointerdown", () => paneContainer.classList.remove("open"));
 
 // Capture the next rendered frame with Spector.js. `captureFrame()` self-guards,
 // so it is a harmless no-op if Phaser was not built with the debug hooks.

@@ -29,6 +29,8 @@ export class FitInsideScene extends ExampleScene {
   private text!: MSDFTextInstance;
   private guide!: Phaser.GameObjects.Graphics;
   private readout!: MSDFTextInstance;
+  private handle!: Phaser.GameObjects.Rectangle;
+  private pane: Pane | null = null;
 
   private params = {
     font: "Inter",
@@ -59,10 +61,24 @@ export class FitInsideScene extends ExampleScene {
       .setColor("#8ea2c6")
       .setOrigin(0, 1);
 
+    // Direct manipulation: drag the box's bottom-right corner and watch the
+    // binary search re-run live. Drag coordinates arrive in world (design)
+    // space, so the camera fit needs no special handling.
+    this.handle = this.add
+      .rectangle(BOX_X + this.params.width, BOX_Y + this.params.height, 26, 26, 0x3f6bd4, 1)
+      .setInteractive({ draggable: true, useHandCursor: true });
+    this.handle.on("drag", (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
+      this.params.width = Phaser.Math.Clamp(Math.round(dragX) - BOX_X, 160, 900);
+      this.params.height = Phaser.Math.Clamp(Math.round(dragY) - BOX_Y, 80, 500);
+      this.pane?.refresh();
+      this.fit();
+    });
+
     this.fit();
     this.caption(
-      "Shrink-only by default; raise maxFontSize to let it grow. The chosen size " +
-        "is fractional by design.",
+      "Shrink-only by default; raise maxFontSize to let it grow. The chosen size is fractional " +
+        "by design. Switch fonts and the fit follows the new metrics - kerning included; " +
+        "JetBrains Mono has none. Drag the box corner or use the sliders.",
     );
   }
 
@@ -87,6 +103,9 @@ export class FitInsideScene extends ExampleScene {
       .lineStyle(2, 0x3f6bd4, 1)
       .strokeRect(rect.x!, rect.y!, rect.width, rect.height);
 
+    // Keep the drag handle pinned to the corner whichever input moved the box.
+    this.handle.setPosition(rect.x! + rect.width, rect.y! + rect.height);
+
     this.readout.setText(
       `font size ${this.text.fontSize.toFixed(1)}px  ` +
         `|  block ${Math.round(this.text.width)}x${Math.round(this.text.height)}`,
@@ -94,6 +113,7 @@ export class FitInsideScene extends ExampleScene {
   }
 
   protected addControls(pane: Pane): void {
+    this.pane = pane; // the corner-drag refreshes the width/height bindings
     const f = pane.addFolder({ title: "Fit box" });
     const refit = () => this.fit();
     f.addBinding(this.params, "font", { options: FONT_OPTIONS }).on("change", (e) => {

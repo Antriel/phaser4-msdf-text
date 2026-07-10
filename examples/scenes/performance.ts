@@ -19,7 +19,7 @@ interface Mover {
  */
 export class PerformanceScene extends ExampleScene {
   private movers: Mover[] = [];
-  private params = { count: 600, glyphs: 0, fps: 0 };
+  private params = { count: 600, styled: false, glyphs: 0, fps: 0 };
   private readouts: { refresh(): void }[] = [];
 
   constructor() {
@@ -31,7 +31,9 @@ export class PerformanceScene extends ExampleScene {
     this.heading("Performance", "Hundreds of text objects, one or two draw calls.");
     this.spawn(this.params.count);
     this.caption(
-      "Every word is its own MSDFText object, yet they share a single batch. Capture a frame to verify the draw calls.",
+      "Every word is its own MSDFText object, yet they share a single batch. Toggle 'styled' - " +
+        "random weights, outlines and shadows change nothing about the draw-call count, because " +
+        "they are all per-vertex attributes. Verify with GL Capture.",
     );
   }
 
@@ -54,6 +56,18 @@ export class PerformanceScene extends ExampleScene {
         .setColor(Phaser.Math.RND.pick(COLORS))
         .setOrigin(0.5);
 
+      // Styled mode: weight, outline and shadow ride per-vertex attributes, so
+      // mixing them across the field costs zero extra draw calls.
+      if (this.params.styled) {
+        text.weight = Phaser.Math.FloatBetween(0, 2);
+        if (Math.random() < 0.5) {
+          text.setOutline(Phaser.Math.FloatBetween(1, 3), Phaser.Math.RND.pick(COLORS));
+        }
+        if (Math.random() < 0.3) {
+          text.setShadow(0, 0, Phaser.Math.RND.pick(COLORS), 0.8, Phaser.Math.FloatBetween(3, 8));
+        }
+      }
+
       glyphs += word.length;
       this.movers.push({
         text,
@@ -68,6 +82,8 @@ export class PerformanceScene extends ExampleScene {
     const f = pane.addFolder({ title: "Performance" });
     f.addBinding(this.params, "count", { min: 10, max: 5000, step: 100 })
       .on("change", (e) => this.spawn(e.value));
+    f.addBinding(this.params, "styled", { label: "styled (same draw calls)" })
+      .on("change", () => this.spawn(this.params.count));
     this.readouts = [
       f.addBinding(this.params, "glyphs", { readonly: true }),
       f.addBinding(this.params, "fps", { readonly: true, format: (v: number) => v.toFixed(0) }),

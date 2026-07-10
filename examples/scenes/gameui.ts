@@ -6,16 +6,23 @@ import type { MSDFTextInstance } from "../../src";
 /** Score counter screen position — score-fly popups home in on this. */
 const SCORE_AT = { x: 150, y: 150 };
 
+/** Big banner moments keep this much distance from each other (attract mode). */
+const BANNER_COOLDOWN = 8000;
+
 /**
  * MSDF text in context — a mock game HUD. Everything here is plain MSDFText
  * driven by ordinary Phaser tweens: a monospace score counter, a decaying
  * combo meter, crit damage numbers, score-fly popups, and a wave banner.
+ * By default the scene plays itself (attract mode); the buttons still work.
  */
 export class GameUIScene extends ExampleScene {
   private score = 0;
   private combo = 0;
   private wave = 0;
   private lastHitTime = 0;
+  private lastWaveAt = -Infinity;
+  private lastLevelUpAt = -Infinity;
+  private params = { autoDemo: true };
 
   private scoreText!: MSDFTextInstance;
   private comboText!: MSDFTextInstance;
@@ -41,12 +48,15 @@ export class GameUIScene extends ExampleScene {
       .setColor("#ffd24a")
       .setOrigin(1, 0);
 
-    // Combo meter — hidden until the first hit, decays when you stop.
+    // Combo meter — hidden until the first hit, decays when you stop. The
+    // smoked-glass backing is a highlight pill: it hugs the text and batches
+    // with it, no extra Graphics object.
     this.comboText = this.add
       .msdfText(this.scoreText.x + this.scoreText.width / 2, 198, "Bangers", "COMBO x0", 44)
       .setColor("#ffe27a")
       .setAlpha(0)
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setHighlight({ color: 0x000000, alpha: 0.35, radius: 1, padding: { x: 0.35, y: 0.1 } });
 
     // Wave banner — parked off-screen left, sweeps across on demand.
     this.waveBanner = this.add
@@ -57,7 +67,8 @@ export class GameUIScene extends ExampleScene {
       .setShadow(0, 6, "#000000", 0.5, 4)
       .setDepth(10);
 
-    // Centre callout — outline + soft glow, hidden until triggered.
+    // Centre callout — outline + soft glow, hidden until triggered. The glow
+    // is two-tone: a white-hot core ramping out to the gold halo.
     this.levelUp = this.add
       .msdfText(640, 452, "Anton", "LEVEL UP!", 120)
       .setColor("#fff2b0")
@@ -65,12 +76,41 @@ export class GameUIScene extends ExampleScene {
       .setOutline(3, "#5a3a00", 1, true)
       .setLetterSpacing(10)
       .setShadow(0, 0, "#ffae00", 0.9, 10)
+      .setShadowInnerColor("#fff6c8")
       .setDepth(5)
       .setScale(0);
+
+    // Attract mode — the scene plays itself so the HUD is alive on arrival.
+    this.time.addEvent({ delay: 900, loop: true, callback: () => this.attractTick() });
 
     this.caption(
       "Combo meter, crits, score-fly popups and the wave banner are all plain MSDFText driven by Phaser tweens.",
     );
+  }
+
+  /** One attract-mode beat: usually a hit, occasionally a banner moment. */
+  private attractTick(): void {
+    if (!this.params.autoDemo) return;
+    const now = this.time.now;
+
+    const actions: { weight: number; run: () => void }[] = [
+      { weight: 6, run: () => this.spawnHit() },
+      { weight: 1, run: () => this.comboBurst() },
+    ];
+    if (now - this.lastWaveAt > BANNER_COOLDOWN) {
+      actions.push({ weight: 1, run: () => this.nextWave() });
+    }
+    if (now - this.lastLevelUpAt > BANNER_COOLDOWN) {
+      actions.push({ weight: 1, run: () => this.triggerLevelUp() });
+    }
+
+    let n = Math.random() * actions.reduce((s, a) => s + a.weight, 0);
+    for (const a of actions) {
+      if ((n -= a.weight) <= 0) {
+        a.run();
+        break;
+      }
+    }
   }
 
   // ── Combo ───────────────────────────────────────────────────────────────
@@ -150,7 +190,20 @@ export class GameUIScene extends ExampleScene {
       .setScale(0.5);
 
     if (crit) {
-      dmg.setOutline(2.5, "#3a0000", 1).setRotation(Phaser.Math.FloatBetween(-0.22, 0.22));
+      // Two-tone rim: the outline ramps from near-black at its outer edge to a
+      // hot gold where it meets the number (setting an inner colour implies the
+      // layered outline pass).
+      dmg
+        .setOutline(2.5, "#3a0000", 1)
+        .setOutlineInnerColor("#ffd24a")
+        .setRotation(Phaser.Math.FloatBetween(-0.22, 0.22));
+
+      // Manual glyph mode: editGlyphs() seeds the per-glyph array once and it
+      // persists — a one-shot per-corner gradient with no per-frame callback.
+      for (const g of dmg.editGlyphs()) {
+        g.fill.color.topLeft = g.fill.color.topRight = 0xfff2b0;
+        g.fill.color.bottomLeft = g.fill.color.bottomRight = 0xff3b3b;
+      }
 
       // A small "CRIT!" tag that floats up alongside the number.
       const tag = this.add
@@ -197,6 +250,7 @@ export class GameUIScene extends ExampleScene {
   /** Sweep the wave banner in from the left, hold, then off to the right. */
   private nextWave(): void {
     this.wave++;
+    this.lastWaveAt = this.time.now;
     const b = this.waveBanner;
 
     this.tweens.killTweensOf(b);
@@ -207,6 +261,7 @@ export class GameUIScene extends ExampleScene {
 
   /** Animate the centre callout in, hold, then fade out. */
   private triggerLevelUp(): void {
+    this.lastLevelUpAt = this.time.now;
     this.tweens.killTweensOf(this.levelUp);
     this.levelUp.setScale(0).setAlpha(1);
     this.tweens.add({
@@ -220,6 +275,7 @@ export class GameUIScene extends ExampleScene {
 
   protected addControls(pane: Pane): void {
     const f = pane.addFolder({ title: "Actions" });
+    f.addBinding(this.params, "autoDemo", { label: "auto demo" });
     f.addButton({ title: "Attack! (build combo)" }).on("click", () => this.spawnHit());
     f.addButton({ title: "Combo burst x8" }).on("click", () => this.comboBurst());
     f.addButton({ title: "Next wave" }).on("click", () => this.nextWave());
