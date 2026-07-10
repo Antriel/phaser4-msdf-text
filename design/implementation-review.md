@@ -8,6 +8,13 @@ What follows is the small stuff: one real behavioural bug, a few sharp edges and
 stale doc lines, and three performance candidates relevant to the old-Android
 regression noted during development.
 
+> **Status (follow-up pass):** bugs 1–5 and the stale doc lines are **fixed**.
+> Performance **A is implemented** (the shader now branches). **B and C are not**,
+> deliberately: neither runs in the `performance.ts` stress scene — B is wrap
+> (spawn-time only, and that scene never wraps), C needs styled runs plus a
+> display callback (that scene has neither). They stay on the shelf until a
+> profile of a *wrapping* or *styled-callback* text asks for them.
+
 ## Bugs / sharp edges
 
 ### 1. `editGlyphs()` / `resetGlyphs()` don't consume a pending `_stylesDirty` — the next render clobbers fresh manual edits
@@ -120,7 +127,20 @@ deep zoom reaches tens of thousands) and its `length()` squares them — past
 and clamps, so nothing visible is known to break, but the branch removes the
 undefined arithmetic instead of relying on it staying benign.
 
-### B. `wrapLines`'s `measure()` re-walks the line at every word boundary
+**Implemented.** The `mix()` triple became an `if (outParams.r >= 254.0/255.0)`
+with `fillCoverage` / `outlineCoverage` / `tone` / `fade` declared above it and
+assigned by whichever side runs. `texture2D`, `dFdx`/`dFdy` and `screenTexSize`
+stay above the branch (uniform control flow, as implicit-LOD sampling requires);
+`px` moved down into the glyph lane, its only consumer. The shared tail —
+`tone = mix(tone, tone*tone, softStep)`, the two-tone gate, the composite — is
+byte-for-byte the arithmetic it was, so output is unchanged on both lanes.
+
+`performance.ts` is **fill-rate bound**, which is the evidence for A: at 5000
+texts / 21817 glyphs the baseline was ~25 FPS portrait and ~19 FPS landscape.
+The glyph count is identical in both; only the pixels each quad covers changed.
+A CPU-bound scene would not care about the aspect ratio.
+
+### B. `wrapLines`'s `measure()` re-walks the line at every word boundary — *not done*
 
 `MSDFTextWrap.ts:70-93` measures `committed line + pending word` from scratch
 each time a wrap char or paragraph end is hit — O(line²) per line for long
@@ -135,22 +155,28 @@ width of the trailing run of wrap chars, also trackable incrementally. Wrap
 becomes O(n) with identical output — the three-way advance/kerning agreement is
 unaffected because the arithmetic per character is unchanged, only cached.
 
-### C. `applyRun` scans every glyph for every run — per frame in callback+styles mode
+Invisible to `performance.ts`: those texts are single short words with no
+`maxWidth`, and they are built once at spawn, not per frame. The scene that would
+show this is a long wrapped paragraph, especially under `fitInside`.
+
+### C. `applyRun` scans every glyph for every run — per frame in callback+styles mode — *not done*
 
 `MSDFText.ts:1218` is O(runs × glyphs) per re-seed, which the styling design
 accepted for typical counts — but in **callback** mode with styles it runs every
 frame. `_characters` (hence the glyph array) is monotone in `srcIndex`, so each
 run's span is a contiguous window: binary-search the start and break when
 `srcIndex >= end`. Only worth doing if a profiled text actually combines a
-display callback with many styled runs.
+display callback with many styled runs. `performance.ts` is not that text: it has
+no styles and no display callback, so it never leaves static mode and `applyRun`
+is never called.
 
-## Stale doc lines (design docs and code docs)
+## Stale doc lines (design docs and code docs) — *all fixed*
 
 - **`design/rich-text-styling.md:35`** — "per-run `font` (2b) is still open —
-  see the end" contradicts the doc's own status header (2b implemented). Also
-  `:153`, "a per-run `font` is still unimplemented" appears in the shipped-state
-  paragraph about `outline`/`shadow` omissions.
-- **`src/MSDFTextTypes.ts:153`** (the `StyleSpec` doc comment) — "a per-run
+  see the end" contradicted the doc's own status header (2b implemented). The
+  "as shipped" paragraph about `outline`/`shadow` omissions was likewise reworded
+  to say it describes the *first* shipped state.
+- **`src/MSDFTextTypes.ts`** (the `StyleSpec` doc comment) — "a per-run
   `font` is still unimplemented". It shipped; `RuleStyleSpec.font` two screens
   below documents it correctly.
 - `design/vertex-params.md` still describes `.g` as a flags bitfield and

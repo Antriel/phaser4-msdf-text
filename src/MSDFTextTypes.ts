@@ -147,11 +147,11 @@ export interface HighlightSpec {
  * across the glyph quad).
  *
  * This is an *appearance* spec: it never changes layout, composes with
- * `displayCallback`, and is animatable. Structural keys (per-run size) live on
- * {@link RuleStyleSpec}, which segments and rules use; a per-run `font` is still
- * unimplemented. Everything here seeds `GlyphState` except `underline`,
- * `strikethrough` and `highlight`, which resolve per source character into merged
- * rects.
+ * `displayCallback`, and is animatable. Structural keys (`fontScale`, `font`)
+ * live on {@link RuleStyleSpec}, which segments and rules use, because only a
+ * layer resolved before the layout pass may carry them. Everything here seeds
+ * `GlyphState` except `underline`, `strikethrough` and `highlight`, which resolve
+ * per source character into merged rects.
  */
 export interface StyleSpec {
     /** Fill colour — a scalar or a per-corner gradient. */
@@ -180,7 +180,16 @@ export interface StyleSpec {
         /** Round the outer corners using the true SDF (MTSDF atlas only). */
         rounded?: boolean;
     };
-    /** Shadow override. */
+    /**
+     * Shadow override.
+     *
+     * **A styled shadow needs an `alpha`**, unless the text object itself has a
+     * shadow for the run to inherit one from. Glyphs are seeded with a shadow
+     * alpha of `0` (so unstyled glyphs draw nothing when the shadow pass runs for
+     * a styled run's sake), and a spec applies only the keys it names — so
+     * `shadow: { color: 0xff0000, x: 2, y: 2 }` lands its colour and offset on an
+     * invisible aspect.
+     */
     shadow?: {
         /** Shadow colour — also the run's `innerColor` unless that is set too. */
         color?: ColorValue;
@@ -190,6 +199,7 @@ export interface StyleSpec {
          * shadow is a two-tone glow.
          */
         innerColor?: ColorValue;
+        /** Shadow alpha (0-1). Required for a shadow the object doesn't already have. */
         alpha?: number;
         x?: number;
         y?: number;

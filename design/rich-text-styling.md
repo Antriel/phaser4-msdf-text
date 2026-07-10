@@ -31,8 +31,8 @@ distinguished by **lifetime**:
 
 Everything in the list above is **appearance-lane**: it seeds `GlyphState`, never
 changes layout, composes with `displayCallback`, and is animatable. Structural
-per-run styling is the other lane: `fontScale` shipped as Phase 2a; per-run
-`font` (2b) is still open — see the end.
+per-run styling is the other lane: `fontScale` shipped as Phase 2a and per-run
+`font` as Phase 2b — see the end.
 
 ## The appearance/structural split (why this is all seeding)
 
@@ -145,8 +145,9 @@ Only the keys present in a `StyleSpec` override the seeded base; everything else
 inherits the text object's defaults. `color`/`alpha` accept either a scalar (all
 four corners) or a `PerCorner` (gradient).
 
-`outline` omits `width`/`rounded`, and `shadow` omits `softness` — **as shipped**,
-because those are per-batch uniforms, so per-run values would break batching. Do
+`outline` omits `width`/`rounded`, and `shadow` omits `softness` — **as first
+shipped**, because those were per-batch uniforms, so per-run values would break
+batching. (`vertex-params.md` has since landed and they are per-corner now.) Do
 **not** solve that with segment-level "breaks-batching" configs (an awkward
 middle that builds a flush mechanism we'd later delete). The plan of record is to
 promote them to per-glyph state via the `params` vertex attribute — see

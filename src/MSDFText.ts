@@ -359,6 +359,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         // `fitInside`'s free upper bound on the font size.
         this._maxLineUnit = fontData ? fontData.data.lineHeight : 1;
         this._missingFontWarned = false;
+        this._fontLimitWarned = false;
 
         // Bind atlas texture via the standard Texture component (no width/height
         // or origin updates — those derive from text bounds, not the atlas frame).
@@ -614,8 +615,8 @@ export const MSDFText: MSDFTextStatic = new Class({
             if (existing >= 0) return existing;
             // The map is a Uint8Array, so slot 255 is the last addressable one.
             if (fonts.length > 255) {
-                if (!this._missingFontWarned) {
-                    this._missingFontWarned = true;
+                if (!this._fontLimitWarned) {
+                    this._fontLimitWarned = true;
                     console.warn('[MSDFText] More than 256 distinct per-run fonts; ignoring the rest.');
                 }
                 return 0;
@@ -780,9 +781,10 @@ export const MSDFText: MSDFTextStatic = new Class({
      *
      * @param font  Key of the font in the `msdfFont` cache.
      * @param size  Optional font size in pixels. Defaults to the current size.
-     * @param align Optional alignment (0/1/2). Defaults to the current alignment.
+     * @param align Optional alignment (`'left'`, `'center'` or `'right'`).
+     *              Defaults to the current alignment.
      */
-    setFont: function (font: string, size?: number, align?: number) {
+    setFont: function (font: string, size?: number, align?: MSDFAlign) {
         const msdfCache = this.scene.sys.cache.custom.msdfFont;
         const fontData: MSDFFont | undefined = msdfCache ? msdfCache.get(font) : undefined;
 
@@ -846,7 +848,12 @@ export const MSDFText: MSDFTextStatic = new Class({
 
         // Free hard upper bound: any layout is at least one line tall, and the
         // tallest line is at least `size * maxLineUnit`, so size <= boxH / maxLineUnit.
-        let hi = Math.min(maxFontSize, boxH / this._maxLineUnit);
+        // A negative `lineSpacing` breaks the first half of that — the block can be
+        // *shorter* than its tallest line — so the bound would cap `hi` below a size
+        // that actually fits. Fall back to `maxFontSize` and let the bisection work.
+        let hi = this._lineSpacing >= 0
+            ? Math.min(maxFontSize, boxH / this._maxLineUnit)
+            : maxFontSize;
         let lo = minFontSize;
 
         let chosen: number;
@@ -1123,13 +1130,29 @@ export const MSDFText: MSDFTextStatic = new Class({
     },
 
     /**
+     * Consume a pending rebuild / re-seed before handing the glyph array to the
+     * user. The array `editGlyphs` and `resetGlyphs` return is seeded *and*
+     * styled by `prepareGlyphStates`, so a still-set `_stylesDirty` has nothing
+     * left to apply to it — but the next render would honour the flag anyway,
+     * re-seed over the user's fresh edits and emit a `'glyphsreset'` they never
+     * asked for. Decorations are the one part of the pending work that a seed
+     * doesn't cover, so they still run.
+     */
+    consumePendingStyles: function (): void {
+        if (this._dirty) {
+            this.rebuildText();          // clears _stylesDirty via refreshGlyphs
+        } else if (this._stylesDirty) {
+            this._stylesDirty = false;
+            this.rebuildDecorations();
+        }
+    },
+
+    /**
      * Take manual control of per-glyph state (chainable-returning the array).
      * See {@link MSDFTextInstance.editGlyphs}.
      */
     editGlyphs: function (): GlyphState[] {
-        if (this._dirty) {
-            this.rebuildText();
-        }
+        this.consumePendingStyles();
         this.displayCallback = undefined;
         this._glyphMode = GLYPH_MODE_MANUAL;
         return this.prepareGlyphStates();
@@ -1140,9 +1163,7 @@ export const MSDFText: MSDFTextStatic = new Class({
      */
     resetGlyphs: function () {
         if (this._glyphMode === GLYPH_MODE_MANUAL) {
-            if (this._dirty) {
-                this.rebuildText();
-            }
+            this.consumePendingStyles();
             this.prepareGlyphStates();
         }
         return this;

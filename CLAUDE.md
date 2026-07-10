@@ -145,12 +145,21 @@ the alpha channel alongside the MSDF in RGB. The fill layer always uses
   — whose `|dFdx| + |dFdy|` overestimates by `|cos θ| + |sin θ|` and softens a
   rotated edge to 1.41px. Two `sqrt`; the derivative fetches were paid either way.
 - The **glyph lane** derives `fill` / `outline` / `tone` from the distance field;
-  the **solid lane** derives the same triple from `-boxDist`. They `mix()` on
-  `solid` and feed one honest fill-over-outline composite, where the outline's
-  colour is itself the two-tone `mix`. A glyph's outline layer *is* a pill's
-  border ring; a glyph's fill *is* the pill's face, inset by that ring. Degenerate
-  cases are exact: zero outline alpha is a plain fill, zero fill alpha is a bare
-  silhouette, and a rect with all three payload bytes zero is a hard-edged box.
+  the **solid lane** derives the same triple from `-boxDist`. They are the two
+  sides of an `if` on the `solid` sentinel — **dynamically uniform per primitive**,
+  so no triangle diverges and it stays one program in one batch. Both feed one
+  honest fill-over-outline composite, where the outline's colour is itself the
+  two-tone `mix`. A glyph's outline layer *is* a pill's border ring; a glyph's
+  fill *is* the pill's face, inset by that ring. Degenerate cases are exact: zero
+  outline alpha is a plain fill, zero fill alpha is a bare silhouette, and a rect
+  with all three payload bytes zero is a hard-edged box.
+- The texture fetch and every derivative sit **above** the branch, where control
+  flow is unconditionally uniform — implicit-LOD sampling and `dFdx` require it.
+  `screenTexSize` is therefore shared; `px` is glyph-lane only.
+- Branching (rather than evaluating both lanes and `mix()`ing, as it did before)
+  is what keeps a glyph from running `roundedBox` on atlas-scaled coordinates,
+  whose `length()` squares them — past `~65504` that overflows a **mediump**
+  fragment at deep zoom. The old code relied on the garbage being mixed out.
 - `fade` (the deep-background haze guard) is forced to `1` on a solid quad, whose
   `outlineDist` is a stray atlas texel with nothing to say.
 - Output is premultiplied alpha (`vec4(rgb * a, a)`) — required by Phaser 4's

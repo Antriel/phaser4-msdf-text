@@ -502,7 +502,12 @@ Only the keys you set override the glyph's seeded base. `weight`,
 per-corner object.
 
 - A per-run **shadow renders on its own** — setting `shadow` on any run turns
-  the shadow pass on, so the object needs no shadow of its own.
+  the shadow pass on, so the object needs no shadow of its own. It does need an
+  **`alpha`**: glyphs seed a shadow alpha of `0` unless the object has a shadow to
+  inherit one from (that is what keeps unstyled glyphs from drawing a shadow when
+  the pass runs for a styled run's sake), and a spec applies only the keys it
+  names. So `shadow: { color: 0xff0000, x: 2, y: 2 }` is invisible — add
+  `alpha: 0.5`.
 - A per-run **outline** likewise stands alone: `outline: { width: 2 }` outlines
   just that run, and `width: 0` removes the outline from a run of an otherwise
   outlined text. Differing widths batch together.
