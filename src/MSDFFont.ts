@@ -51,7 +51,7 @@ export class MSDFFont {
      */
     private runs(scales: SizeScales): LayoutRuns {
         if (!scales) return this._runs;
-        return { base: this, scales, fonts: null, fontList: null };
+        return { base: this, scales, fonts: null, fontList: null, padBefore: null, padAfter: null };
     }
 
     // ========================================================================

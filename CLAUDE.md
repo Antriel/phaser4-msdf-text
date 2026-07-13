@@ -411,12 +411,59 @@ key lanes:
   `_characters`, not the glyph array.
 - **Structural** — `fontScale` (a *multiplier* on the object `fontSize`; absolute
   px would go stale under `setFontSize` and break `fitInside`'s monotone binary
-  search) and `font` (an `msdfFont` cache key; an unknown key warns once and falls
-  back to the base font). Neither reaches `GlyphState`. They are painted into two
-  parallel source-indexed maps — `_sizeScales` (`Float32Array` of multipliers) and
-  `_fontMap` (`Uint8Array` of `_runFonts` indices) — both `null` on the uniform
-  fast path, both feeding wrap, measurement and layout. A change sets `_dirty` —
-  a rebuild, not a re-seed.
+  search), `font` (an `msdfFont` cache key; an unknown key warns once and falls
+  back to the base font) and `space` (see below). None reaches `GlyphState`. They
+  are painted into four parallel source-indexed maps — `_sizeScales`
+  (`Float32Array` of multipliers), `_fontMap` (`Uint8Array` of `_runFonts`
+  indices) and `_padBefore`/`_padAfter` (`Float32Array` of em pads) — all `null` on
+  the uniform fast path, all feeding wrap, measurement and layout. A change sets
+  `_dirty` — a rebuild, not a re-seed.
+
+**`space`** — extra advance at a run's edges, em-relative to *the run's own size*
+(so it scales with `fontScale` and keeps `fitInside` monotone, for the same reason
+`fontScale` is a multiplier). It is the manual reconciliation of two faces where
+the no-kerning-across-a-font-boundary rule leaves a gap nobody chose; **negative
+is legal** and is half the use case.
+- Modelled as a pad on the run's edge **characters**, not as a gap between runs. A
+  boundary has no index, so it could not live in the source-indexed maps the whole
+  structural lane is built on, and it would need a rule for who owns a boundary two
+  runs both touch. As a character pad it needs neither: `before` writes the run's
+  first index and `after` its last, so run A's `after` and run B's `before` land on
+  *different* slots and both apply (they add — horizontal margins don't collapse in
+  CSS either), while two rules on the *same* edge resolve by layer order like every
+  other painted map.
+- The pad rides its character's advance, added **inside** the same `if (char)` guard
+  in all three passes (`measureSpan`, `wrapLines`'s `add()`, `rebuildText`), which
+  is what makes the "identical advance calls" invariant hold *by construction*: a
+  character missing from its run's font takes its pads with it, and a pad on a `\n`
+  never fires. It does not suppress kerning — where the run boundary is also a
+  font/size change, kerning was already skipped; where it isn't, the two add.
+- Consequences accepted, not overlooked: a pad at a line's end is real width, so it
+  nudges a centred line — exactly as `letterSpacing`'s trailing slot already does
+  (`measureSpan` documents that) — and a `before` pad on a wrapped character reads
+  as an indent. Trimming either would add a fourth rule the three passes must agree
+  on, for a cosmetic gain.
+- **`setSpacingCallback`** (`SpacingCallback`, `SpacingPads`) is the same two maps'
+  per-character lane: it runs as their **last layer** inside `buildPads`, after the
+  segments and overlays, and may add to or overwrite what they painted. It is not a
+  third frame-time callback — spacing is a layout *input*, so it runs at **rebuild**
+  time and `refreshSpacing()` (a relayout) is how a caller re-runs it when its own
+  inputs moved. It re-runs on every rebuild against the current string, so like a
+  `StyleMatcher` anchor it is content-anchored and survives a text change.
+  It exists for the *bulk* case only: a span anchor of length 1 already reaches one
+  character (`addStyle({start, length: 1}, {space})`), so what the spec layers can't
+  do is N characters with N *different* values without N overlays. (A *uniform* pad
+  is not a use for it either — that is `letterSpacing`.) Its motivating case is a
+  rule over the **font boundaries**, which is why `refreshStyleState` publishes the
+  structural maps *before* it calls `buildPads`: the callback reads them back through
+  `fontAt(i)` / `fontScaleAt(i)` (public, source-indexed), and a spacing rule that
+  cannot see the fonts cannot space the one gap that has no kern pair to fall back on.
+- **Not writable on `GlyphState`** — the pads are advance, so they feed wrap, line
+  width, alignment and the rects; a writable field there would mean a relayout per
+  frame in callback mode. `GlyphState.padBefore`/`padAfter` are therefore a
+  **readonly** mirror (in px, like `em`/`baselineOffset`). The per-frame lane for
+  spacing is `offsetX`, whose prefix sum *is* an advance — and which deliberately
+  leaves the line's wrap and alignment alone.
 
 **Specs are layout inputs; the glyph array is layout output.** That is the one
 hard boundary, and it is enforced physically rather than by convention: every
@@ -425,8 +472,8 @@ spec layer takes the same `StyleSpec` and may carry any key (the cost is per
 `editGlyphs` operate on already-laid-out glyphs and are appearance-only because
 `GlyphState` has no structural fields. `MSDFText.refreshStyleState()` recomputes
 all of `_hasStyles` / `_hasAppearance` / `_hasDecorations` / `_sizeScales` /
-`_fontMap` / `_maxLineUnit` and is the single place that decides re-seed vs
-rebuild. It rebuilds `_runFonts` unconditionally, because `setFont` swaps slot 0
+`_fontMap` / `_padBefore` / `_padAfter` / `_maxLineUnit` and is the single place
+that decides re-seed vs rebuild. It rebuilds `_runFonts` unconditionally, because `setFont` swaps slot 0
 out from under an otherwise unchanged map.
 
 **Overlay anchors** — `addStyle(target, style)` is the only overlay primitive.
@@ -484,10 +531,11 @@ formula. (One behaviour change: on *empty* text `getTextBounds()` reports zero l
 rather than one, which now agrees with `text.width`/`.height`, both already `0`.)
 
 `measureSpan`, `wrapLines` and `rebuildText` must make **identical** advance and
-kerning calls or wrapped lines mismeasure. The two shared rules: a character
+kerning calls or wrapped lines mismeasure. The three shared rules: a character
 missing from *its run's* font is skipped (no advance, and **no cross-font
 fallback**, ever); kerning applies only between two characters in the same font at
-the same size. `MSDFFont` keeps thin single-font wrappers (`measureText`,
+the same size; the `space` pads ride a character's own advance, inside that same
+skip guard. `MSDFFont` keeps thin single-font wrappers (`measureText`,
 `measureLines`) for direct callers.
 
 **Per-run font** is a **texture-binding problem and nothing else** — because the

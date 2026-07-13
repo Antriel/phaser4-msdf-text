@@ -156,6 +156,27 @@ export interface GlyphState {
     readonly baselineOffset: number;
 
     /**
+     * The extra advance the layout inserted **before** this glyph, in pixels — the
+     * `space` pad of its run (or of the spacing callback), already multiplied by
+     * this glyph's {@link em}. `0` on almost every glyph: only a run's first
+     * character carries one.
+     *
+     * Readonly, because it is layout *output* here. A pad is real advance — it moves
+     * the pen, so it feeds wrap, line width, alignment and the decoration rects —
+     * which makes it a layout *input* on the other side of the boundary, where
+     * `StyleSpec.space` and `setSpacingCallback` live. Writing it per frame would
+     * mean relaying out the text per frame. To animate spacing, displace
+     * {@link offsetX} instead (an advance is its prefix sum) and let the line keep
+     * its wrap and its alignment.
+     *
+     * What it is *for* is reading: a deform that has to know how much room it was
+     * given, or a callback that wants to draw into the gap it asked a run for.
+     */
+    readonly padBefore: number;
+    /** The extra advance inserted **after** this glyph, in pixels. See {@link padBefore}. */
+    readonly padAfter: number;
+
+    /**
      * Draw a **different letterform** in this glyph's slot. `0` (the default) draws
      * the character the text says it is; any other char code substitutes that
      * glyph, taken from *this* glyph's own run font. Use {@link setGlyph}, which
@@ -416,6 +437,8 @@ export function createGlyphState(): GlyphState {
         height: 0,
         em: 0,
         baselineOffset: 0,
+        padBefore: 0,
+        padAfter: 0,
         glyph: 0,
         visible: true,
         x: 0,

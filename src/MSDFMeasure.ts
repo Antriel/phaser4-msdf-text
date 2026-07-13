@@ -14,13 +14,16 @@
  * The wrap pass (`MSDFTextWrap.wrapLines`), the measurement pass here, and the
  * layout pass (`MSDFText.rebuildText`) must make **identical** advance and
  * kerning decisions, or a wrapped line will not match its measured width. The
- * two rules they share:
+ * three rules they share:
  *
  *   - a character missing from *its run's* font is skipped entirely — no
  *     advance, and no fallback to any other run's font;
  *   - kerning applies only between two characters in the same font at the same
  *     size. A kern pair across a font boundary does not exist, and one across a
- *     size boundary has no well-defined size to scale by.
+ *     size boundary has no well-defined size to scale by;
+ *   - the `space` pads (`padBefore` / `padAfter`) ride a character's own advance,
+ *     inside the same "is it in the font" guard, so a skipped character takes its
+ *     pads with it and the three passes cannot drift apart.
  */
 
 import type { MSDFFont } from './MSDFFont';
@@ -42,11 +45,15 @@ export interface LayoutRuns {
     fonts: ArrayLike<number> | null;
     /** The distinct fonts `fonts` indexes; `fontList[0]` is always `base`. */
     fontList: MSDFFont[] | null;
+    /** Per-index extra advance *before* the character, in em (`space`), or `null`. */
+    padBefore: ArrayLike<number> | null;
+    /** Per-index extra advance *after* the character, in em (`space`), or `null`. */
+    padAfter: ArrayLike<number> | null;
 }
 
-/** A {@link LayoutRuns} with one font at one size — the fast path. */
+/** A {@link LayoutRuns} with one font at one size and no pads — the fast path. */
 export function uniformRuns(base: MSDFFont): LayoutRuns {
-    return { base, scales: null, fonts: null, fontList: null };
+    return { base, scales: null, fonts: null, fontList: null, padBefore: null, padAfter: null };
 }
 
 /** The font governing character `i`. */
@@ -57,6 +64,24 @@ export function fontAt(runs: LayoutRuns, i: number): MSDFFont {
 /** The font-size multiplier governing character `i`. */
 export function scaleAt(runs: LayoutRuns, i: number): number {
     return runs.scales ? runs.scales[i] : 1;
+}
+
+/**
+ * The extra advance inserted before character `i`, in em of *that character's own
+ * size* — so a pad on a `fontScale`d run grows with the run, and every pad scales
+ * with `fontSize` (which is what keeps `fitInside`'s binary search monotone).
+ *
+ * A pad rides its character's advance: it is only ever applied where that
+ * character's own glyph was found in its own run's font, which is what keeps this
+ * pass, the wrap pass and the layout pass making identical decisions.
+ */
+export function padBeforeAt(runs: LayoutRuns, i: number): number {
+    return runs.padBefore ? runs.padBefore[i] : 0;
+}
+
+/** The extra advance inserted after character `i`, in em. See {@link padBeforeAt}. */
+export function padAfterAt(runs: LayoutRuns, i: number): number {
+    return runs.padAfter ? runs.padAfter[i] : 0;
 }
 
 /**
@@ -97,7 +122,12 @@ export function measureSpan(
             width += font.getKerning(prevCharCode, charCode) * size;
         }
 
+        // The `space` pads bracket the character's own advance. A pad does not
+        // suppress kerning: where a run boundary is also a font or size change,
+        // kerning was already skipped; where it is not, the two simply add.
+        width += padBeforeAt(runs, i) * size;
         width += char.xAdvance * size;
+        width += padAfterAt(runs, i) * size;
 
         prevCharCode = charCode;
         prevScale = scale;

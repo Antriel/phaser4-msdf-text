@@ -545,7 +545,7 @@ gradient), `weight`,
 `shadow` (`{ color?, innerColor?, alpha?, x?, y?, softness?, spread?, rounded? }`),
 `scale`/`scaleX`/`scaleY`, `rotation`, `skew`, `skewPivot`, `underline`,
 `strikethrough`,
-`highlight`, `fontScale` and `font`. Only the keys you set override the
+`highlight`, `fontScale`, `font` and `space`. Only the keys you set override the
 glyph's seeded base; `weight` and every continuous effect channel
 (`outline.width`/`.rounded`/`.softness`, `shadow.softness`/`.spread`/`.rounded`)
 also take per-corner objects — so an outline can melt from sharp to round across
@@ -586,7 +586,7 @@ once/tick).
 |---|---|---|
 | appearance | `color`, `alpha`, `weight`, `outline`, `shadow`, `scale`, `rotation`, `skew`, `skewPivot` | one coalesced per-glyph re-seed |
 | decoration | `underline`, `strikethrough`, `highlight` | one coalesced rect rebuild |
-| structural | `fontScale`, `font` | a **relayout** |
+| structural | `fontScale`, `font`, `space` | a **relayout** |
 
 The one hard line: **specs are layout inputs, the glyph array is layout
 output.** `displayCallback` and `editGlyphs` operate on already-laid-out
@@ -659,6 +659,104 @@ underline metrics — comes from **its own** font.
   texture, so runs naming them never flush.
 - Effects are per-run too: `rounded`/`softness` on a run whose font is plain
   `msdf` are clamped away silently, even if a neighbouring run supports them.
+
+#### Per-run spacing — `space`
+
+Extra advance at a run's **edges**. It exists because of the rule above: no kern
+pair exists across a font boundary, so where one face's right side bearing meets
+another's left, the gap is whatever the two happen to add up to — usually too
+tight one side of a run and too loose the other. `space` is the manual fix, and
+**negative tightens**, which is half of what you need.
+
+```ts
+text.setRichText([
+    { text: 'Inter ' },
+    { text: 'Bangers ', font: 'Bangers', space: { after: 0.14 } },       // open a gap
+    { text: 'Mono ', font: 'JetBrainsMono', space: { after: -0.18 } },   // close one
+    { text: 'Condensed', font: 'RobotoCondensed' },
+]);
+
+text.addStyle('CRIT', { space: 0.1 });   // a scalar opens both edges
+```
+
+Em-relative to the **run's own size** (`fontSize × fontScale`), so a display-size
+run's gaps grow with it and every gap survives `setFontSize`/`fitInside` in
+proportion — the same reason `fontScale` is a multiplier rather than pixels.
+
+- **Two edges, not a gap between runs.** `before` lands on the run's first
+  character, `after` on its last, so two adjacent runs each asking for room at the
+  boundary between them both get it (their pads sit on different characters and
+  add). Two rules fighting over the *same* edge resolve by layer order, like
+  everything else.
+- **Real advance**, so it feeds wrap, line width, alignment and the decoration
+  rects. A pad at the end of a line is real width, and so nudges a centred line —
+  exactly as `letterSpacing`'s trailing slot already does.
+- A pad rides its character's advance, so one on a character absent from its run's
+  font, or on a line break, is dropped with it.
+- Structural: a relayout, including through `handle.update`.
+
+#### Per-character spacing — `setSpacingCallback`
+
+A one-off nudge needs nothing new — a span anchor of length 1 *is* a character:
+
+```ts
+text.addStyle({ start: 12, length: 1 }, { space: { before: 0.1 } });
+```
+
+What the callback buys is the **bulk** case: many characters with *different*
+values, which through the spec layers would cost one overlay each. (A *uniform*
+pad is not a use for it — that is just `letterSpacing`.) It writes the same two pad
+maps, as their last layer, so it sees (and may overwrite) whatever the segments and
+overlays painted.
+
+```ts
+// One rule, every font boundary — the gaps no kern pair can reach. The boundaries
+// are wherever the runs fall, and they move when a style does, so this is not
+// something a spec key can say once.
+text.setSpacingCallback((pad, src, t) => {
+    for (let i = 1; i < src.length; i++) {
+        if (t.fontAt(i) !== t.fontAt(i - 1)) pad.before[i] = 0.08;
+    }
+});
+
+// Or a plain typographic rule:
+text.setSpacingCallback((pad, src) => {
+    for (let i = 0; i < src.length; i++) {
+        if (src[i] === ',') pad.after[i] += 0.06;                        // breathe after a comma
+        if (src[i] === 'A' && src[i + 1] === 'V') pad.after[i] -= 0.04;  // a kern pair the font lacks
+    }
+});
+```
+
+`pad.before` / `pad.after` are `Float32Array`s indexed by **source** character, in
+em of that character's own size. `t.fontAt(i)` / `t.fontScaleAt(i)` give the
+resolved structural state at a character, so a rule can react to the layout it is
+spacing.
+
+- It runs at **rebuild** time, not per frame — spacing is a layout input, so it
+  must be known before the text is laid out. It re-runs on every rebuild against
+  the current string, so (like a matcher-function anchor) it survives `setText`
+  and `setRichText` instead of dying with the indices it was written against.
+- `refreshSpacing()` re-runs it when the callback's *own* inputs changed and the
+  text did not (a tracking slider); `clearSpacingCallback()` drops it.
+- **Do not animate from here** — a per-frame pad change is a per-frame relayout.
+  Animate `GlyphState.offsetX` in a display callback instead: an advance is its
+  prefix sum, and doing it there leaves the line's wrap, alignment and underline
+  where they are, which is what kinetic type wants anyway.
+
+  ```ts
+  text.setDisplayCallback((glyphs) => {
+      let shift = 0;
+      for (const g of glyphs) {
+          shift += spread;                       // em, per glyph
+          g.offsetX.topLeft = g.offsetX.bottomLeft =
+          g.offsetX.topRight = g.offsetX.bottomRight = shift;
+      }
+  });
+  ```
+
+  Glyphs expose the pads they ride as readonly `padBefore` / `padAfter` (in px),
+  for a deform that needs to know how much room it was given.
 
 ### Per-glyph display callback
 

@@ -59,6 +59,7 @@ import type {
     StyleHandle,
     DisplayCallback,
     DecorationCallback,
+    SpacingCallback,
     LineInfo,
     MSDFTextStatic
 } from './MSDFTextTypes';
@@ -73,6 +74,7 @@ export type {
     HighlightPadding,
     MSDFAlign,
     PerCorner,
+    SpaceSpec,
     StyleSpec,
     SegmentSpec,
     Segment,
@@ -87,6 +89,8 @@ export type {
     FitOptions,
     DisplayCallback,
     DecorationCallback,
+    SpacingCallback,
+    SpacingPads,
     LineInfo,
     MSDFTextInstance,
     MSDFTextStatic
@@ -407,6 +411,16 @@ export const MSDFText: MSDFTextStatic = new Class({
         // always this object's own font (so `0` means "the base font").
         this._sizeScales = null;
         this._fontMap = null;
+        // The `space` pads: extra advance before / after a character, in em of that
+        // character's own size. Two more source-indexed maps in the same lane, and
+        // `null` on the same fast path. They are *edge* pads — a run writes only its
+        // first and last character — so two adjacent runs both asking for space at
+        // the boundary between them land on different slots and both get it.
+        this._padBefore = null;
+        this._padAfter = null;
+        // The per-character lane of the same two maps: a rebuild-time callback that
+        // runs as their last layer, after the segments and overlays have painted.
+        this.spacingCallback = undefined;
         this._runFonts = fontData ? [fontData] : [];
         // Texture frames parallel to `_runFonts`. Slot 0 stays `null`: the base
         // font's frame is the object's own `frame`, which `setTexture` owns.
@@ -640,22 +654,106 @@ export const MSDFText: MSDFTextStatic = new Class({
         // while styled); clear it here so it can't linger true after all styles go.
         if (!appearance) this._stylesHaveShadow = false;
 
+        const prevScales: Float32Array | null = this._sizeScales;
+        const prevFontMap: Uint8Array | null = this._fontMap;
+        const prevFontList: MSDFFont[] = this._runFonts;
+
         const nextScales = this.buildSizeScales();
         const nextFonts = this.buildFontMap();
 
-        // A structural change reflows. The font *list* is compared as well as the
-        // map, because `setFont` replaces slot 0 while leaving every index alone.
-        if (!scalesEqual(this._sizeScales, nextScales) ||
-            !fontsEqual(this._fontMap, nextFonts.map) ||
-            !fontListsEqual(this._runFonts, nextFonts.fonts)) {
-            this._dirty = true;
-        }
-
+        // Publish the font and size maps *before* building the pads: `buildPads`
+        // runs the spacing callback, and a spacing rule's whole job is to react to
+        // the structural state it is spacing (`fontAt`, `fontScaleAt` read these
+        // fields). Leaving them stale for the length of that call would hand the
+        // callback the previous layout's fonts.
         this._sizeScales = nextScales;
         this._fontMap = nextFonts.map;
         this._runFonts = nextFonts.fonts;
         this._runFrames = nextFonts.frames;
+
+        const nextPads = this.buildPads();
+
+        // A structural change reflows. The font *list* is compared as well as the
+        // map, because `setFont` replaces slot 0 while leaving every index alone.
+        if (!scalesEqual(prevScales, nextScales) ||
+            !fontsEqual(prevFontMap, nextFonts.map) ||
+            !fontListsEqual(prevFontList, nextFonts.fonts) ||
+            !scalesEqual(this._padBefore, nextPads.before) ||
+            !scalesEqual(this._padAfter, nextPads.after)) {
+            this._dirty = true;
+        }
+
+        this._padBefore = nextPads.before;
+        this._padAfter = nextPads.after;
         this._maxLineUnit = this.computeMaxLineUnit();
+    },
+
+    /**
+     * Paint the structural `space` of every segment run, then every overlay match,
+     * into two per-source-character em pads — the same layer order as the size,
+     * font, appearance and decoration passes, so a later overlay's pad beats an
+     * earlier one's and both beat an overlapping segment's.
+     *
+     * A run writes only its **edges**: `spaceBefore` lands on its first character,
+     * `spaceAfter` on its last. That is what keeps adjacency honest — run A's
+     * `after` and run B's `before` occupy *different* characters, so a boundary two
+     * runs both want space at gets both of their requests, while two rules fighting
+     * over the *same* edge resolve by layer order like everything else here.
+     *
+     * `spacingCallback` runs last, on the finished maps, and may add to or overwrite
+     * anything the spans painted. That is the whole per-character lane: a span of
+     * length 1 already reaches one character, so what the callback is for is *many*
+     * characters with *different* values, which through the spec layers would cost
+     * one overlay each.
+     *
+     * Returns `null` maps when nothing sets a pad, keeping the fast path
+     * allocation-free and letting every measurement skip the lookup.
+     */
+    buildPads: function (): { before: Float32Array | null; after: Float32Array | null } {
+        const n = this._text.length;
+        let before: Float32Array | null = null;
+        let after: Float32Array | null = null;
+
+        const paint = (start: number, length: number, style: ResolvedStyle): void => {
+            if (length <= 0 || n === 0) return;
+            if (style.spaceBefore !== undefined) {
+                const first = Math.max(0, start);
+                if (first < n) {
+                    if (!before) before = new Float32Array(n);
+                    before[first] = style.spaceBefore;
+                }
+            }
+            if (style.spaceAfter !== undefined) {
+                const last = Math.min(start + length, n) - 1;
+                if (last >= 0) {
+                    if (!after) after = new Float32Array(n);
+                    after[last] = style.spaceAfter;
+                }
+            }
+        };
+
+        for (let i = 0; i < this._segmentRuns.length; i++) {
+            const run: StyleRun = this._segmentRuns[i];
+            paint(run.start, run.length, run.style);
+        }
+        for (let i = 0; i < this._overlays.length; i++) {
+            const overlay: StyleOverlay = this._overlays[i];
+            const style: ResolvedStyle = overlay.style;
+            if (style.spaceBefore === undefined && style.spaceAfter === undefined) continue;
+            const runs = overlay.runs;
+            for (let r = 0; r < runs.length; r++) paint(runs[r].start, runs[r].length, style);
+        }
+
+        // The per-character lane. Both maps must exist for it to write into, so a
+        // text with a spacing callback leaves the null fast path — which is the
+        // callback's own cost, not the feature's.
+        if (this.spacingCallback && n > 0) {
+            if (!before) before = new Float32Array(n);
+            if (!after) after = new Float32Array(n);
+            this.spacingCallback({ before, after }, this._text, this);
+        }
+
+        return { before, after };
     },
 
     /**
@@ -765,16 +863,40 @@ export const MSDFText: MSDFTextStatic = new Class({
     },
 
     /**
+     * The font governing source character `index` — this text's own font unless a
+     * run put another one there. See {@link MSDFTextInstance.fontAt}.
+     */
+    fontAt: function (index: number): MSDFFont {
+        const map: Uint8Array | null = this._fontMap;
+        if (!map || index < 0 || index >= map.length) return this.fontData;
+        return this._runFonts[map[index]];
+    },
+
+    /**
+     * The `fontScale` multiplier governing source character `index` (`1` unless a
+     * run set one). See {@link MSDFTextInstance.fontScaleAt}.
+     */
+    fontScaleAt: function (index: number): number {
+        const scales: Float32Array | null = this._sizeScales;
+        if (!scales || index < 0 || index >= scales.length) return 1;
+        return scales[index];
+    },
+
+    /**
      * The structural maps as a run source keyed by **source** index — what the
      * wrap pass measures against. Not part of the public `MSDFTextInstance` type.
      */
     sourceRuns: function (): LayoutRuns {
-        if (!this._sizeScales && !this._fontMap) return uniformRuns(this.fontData);
+        if (!this._sizeScales && !this._fontMap && !this._padBefore && !this._padAfter) {
+            return uniformRuns(this.fontData);
+        }
         return {
             base: this.fontData,
             scales: this._sizeScales,
             fonts: this._fontMap,
-            fontList: this._runFonts
+            fontList: this._runFonts,
+            padBefore: this._padBefore,
+            padAfter: this._padAfter
         };
     },
 
@@ -823,18 +945,33 @@ export const MSDFText: MSDFTextStatic = new Class({
     wrappedRuns: function (srcIndex: number[]): LayoutRuns {
         const scales: Float32Array | null = this._sizeScales;
         const map: Uint8Array | null = this._fontMap;
-        if (!scales && !map) return uniformRuns(this.fontData);
+        const padB: Float32Array | null = this._padBefore;
+        const padA: Float32Array | null = this._padAfter;
+        if (!scales && !map && !padB && !padA) return uniformRuns(this.fontData);
 
         const n = srcIndex.length;
         const outScales = scales ? new Float32Array(n) : null;
         const outFonts = map ? new Uint8Array(n) : null;
+        const outPadB = padB ? new Float32Array(n) : null;
+        const outPadA = padA ? new Float32Array(n) : null;
 
         for (let i = 0; i < n; i++) {
             const si = srcIndex[i];
             if (outScales) outScales[i] = si >= 0 ? scales![si] : 1;
             if (outFonts) outFonts[i] = si >= 0 ? map![si] : 0;
+            // A wrap-inserted newline (`si < 0`) carries no glyph, so it carries no
+            // pad either — and the character it broke before keeps its own.
+            if (outPadB) outPadB[i] = si >= 0 ? padB![si] : 0;
+            if (outPadA) outPadA[i] = si >= 0 ? padA![si] : 0;
         }
-        return { base: this.fontData, scales: outScales, fonts: outFonts, fontList: this._runFonts };
+        return {
+            base: this.fontData,
+            scales: outScales,
+            fonts: outFonts,
+            fontList: this._runFonts,
+            padBefore: outPadB,
+            padAfter: outPadA
+        };
     },
 
     /**
@@ -1230,6 +1367,38 @@ export const MSDFText: MSDFTextStatic = new Class({
     },
 
     /**
+     * Set the per-character spacing callback. See
+     * {@link MSDFTextInstance.setSpacingCallback}.
+     *
+     * There is no *mode* to switch here, unlike the other two callbacks: the pads
+     * are a layout input, so the callback is simply the last layer of the two maps
+     * `refreshStyleState` already rebuilds. Setting it therefore reflows exactly
+     * when it changes the pads, and no more often.
+     */
+    setSpacingCallback: function (callback: SpacingCallback | undefined) {
+        this.spacingCallback = callback;
+        this.refreshStyleState();
+        return this;
+    },
+
+    /** Clear the spacing callback; the pads fall back to the `space` keys alone. */
+    clearSpacingCallback: function () {
+        this.spacingCallback = undefined;
+        this.refreshStyleState();
+        return this;
+    },
+
+    /**
+     * Re-run the spacing callback. Only needed when the callback's own inputs
+     * changed and the text did not — a rebuild re-runs it anyway. Costs a relayout
+     * if (and only if) it actually produces different pads.
+     */
+    refreshSpacing: function () {
+        this.refreshStyleState();
+        return this;
+    },
+
+    /**
      * The per-rect state array (`null` without a decoration callback). See
      * {@link MSDFTextInstance.decorations}.
      */
@@ -1526,6 +1695,10 @@ export const MSDFText: MSDFTextStatic = new Class({
         (g as any).height = char.h;
         (g as any).em = char.em;
         (g as any).baselineOffset = char.baselineY - char.y;
+        // The `space` pads this glyph rides, in px. Layout output here — the input
+        // side is `StyleSpec.space` / `setSpacingCallback`. See `GlyphState.padBefore`.
+        (g as any).padBefore = char.padBefore;
+        (g as any).padAfter = char.padAfter;
         g.glyph = 0;
         g.visible = true;
         g.x = char.x;
@@ -2457,6 +2630,8 @@ export const MSDFText: MSDFTextStatic = new Class({
         const runs = this.wrappedRuns(srcMap);
         const scales = runs.scales as Float32Array | null;
         const fontIdxs = runs.fonts as Uint8Array | null;
+        const padBefore = runs.padBefore as Float32Array | null;
+        const padAfter = runs.padAfter as Float32Array | null;
         const runFonts: MSDFFont[] = this._runFonts;
 
         // Measure first: with per-run sizes and fonts a line's height and baseline
@@ -2517,9 +2692,19 @@ export const MSDFText: MSDFTextStatic = new Class({
                 cursorX += kerning * size;
             }
 
+            // The `space` pads bracket this character's advance, in em of its own
+            // size. `padB` moves the pen *before* the glyph is placed, so it shifts
+            // this glyph and every one after it; `padA` only shifts what follows.
+            // Both ride the advance, inside the same "found in this run's font"
+            // guard the measure and wrap passes use — that is what keeps the three
+            // in step (see `MSDFMeasure`).
+            const padB = padBefore ? padBefore[i] * size : 0;
+            const padA = padAfter ? padAfter[i] * size : 0;
+            cursorX += padB;
+
             // Skip rendering for space (but still advance)
             if (charCode === 32) {
-                cursorX += char.xAdvance * size + this._letterSpacing;
+                cursorX += char.xAdvance * size + this._letterSpacing + padA;
                 prevCharCode = charCode;
                 prevScale = scale;
                 prevFontIdx = fontIdx;
@@ -2560,12 +2745,15 @@ export const MSDFText: MSDFTextStatic = new Class({
                 baselineY: baselineY,         // Layout baseline (used by the skew feature)
                 em: size,                     // This char's effective font size — the unit a
                                               // skew pivot and a per-corner deform are measured in
+                padBefore: padB,              // The `space` pads this glyph rides, in px —
+                padAfter: padA,               // layout facts a display callback may read
                 fontIdx: fontIdx              // Slot in `_runFonts` — the renderer's texture + unitRange
             });
 
             // Advance cursor (letter spacing applies after every character, and is
-            // a constant pixel amount — it does not scale with the run's size)
-            cursorX += char.xAdvance * size + this._letterSpacing;
+            // a constant pixel amount — it does not scale with the run's size; the
+            // `space` pad, being em-relative, does)
+            cursorX += char.xAdvance * size + this._letterSpacing + padA;
             prevCharCode = charCode;
             prevScale = scale;
             prevFontIdx = fontIdx;

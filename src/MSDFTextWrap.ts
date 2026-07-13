@@ -6,7 +6,7 @@
  */
 
 import type { MSDFFont } from './MSDFFont';
-import { fontAt, scaleAt, type LayoutRuns } from './MSDFMeasure';
+import { fontAt, padAfterAt, padBeforeAt, scaleAt, type LayoutRuns } from './MSDFMeasure';
 
 /**
  * Word wrap text to fit within `maxWidth`, returning both the wrapped string
@@ -27,9 +27,9 @@ import { fontAt, scaleAt, type LayoutRuns } from './MSDFMeasure';
  * @param fontSize         Font size the wrap is measured at.
  * @param wordWrapCharCode Character code word wrapping breaks on (usually space).
  * @param letterSpacing    Extra per-character spacing, in px (affects measurement).
- * @param runs             Per-character font and size, indexed by position in
- *   `text` (rich-text `font` / `fontScale` runs). Both maps `null` = one font at
- *   one size, the fast path.
+ * @param runs             Per-character font, size and edge pads, indexed by
+ *   position in `text` (rich-text `font` / `fontScale` / `space` runs). All maps
+ *   `null` = one font at one size with no pads, the fast path.
  */
 export function wrapLines(
     text: string,
@@ -63,9 +63,14 @@ export function wrapLines(
      * Width of `line + word`, optionally plus one more character (the wrap char
      * being tested). Walks the parallel arrays rather than a concatenated string
      * so each character can be measured in its own font at its own size. A
-     * character missing from its run's font is skipped, and kerning is skipped
-     * across a font or size change — matching `MSDFMeasure.measureSpan` and the
-     * layout pass, which this must agree with exactly.
+     * character missing from its run's font is skipped, kerning is skipped across
+     * a font or size change, and the `space` pads ride the character's own advance
+     * — matching `MSDFMeasure.measureSpan` and the layout pass, which this must
+     * agree with exactly.
+     *
+     * Note the pads are looked up by **source** index (`src`), like the font and
+     * the scale: that is the index the maps are keyed by, and the reason the
+     * parallel `*Src` arrays are carried around at all.
      */
     const measure = (extraCode: number, extraSrc: number): number => {
         let width = 0, prevCode = 0, prevScale = 1, count = 0;
@@ -80,7 +85,9 @@ export function wrapLines(
             if (prevCode !== 0 && scale === prevScale && font === prevFont) {
                 width += font.getKerning(prevCode, code) * size;
             }
+            width += padBeforeAt(runs, src) * size;
             width += char.xAdvance * size;
+            width += padAfterAt(runs, src) * size;
             prevCode = code; prevScale = scale; prevFont = font; count++;
         };
 

@@ -107,9 +107,9 @@ export interface ResolvedHighlight {
  * Colour is packed `0xRRGGBB` (per corner); alpha is `0-1` (per corner).
  *
  * Three lanes. Most fields are **appearance**: they are stamped onto a
- * `GlyphState` by {@link applyStyleToGlyph}. `fontScale` and `font` are
- * **structural** — they feed the layout pass instead and never reach a glyph
- * state. The two decorations are appearance-lane but glyph-independent: they
+ * `GlyphState` by {@link applyStyleToGlyph}. `fontScale`, `font` and the two
+ * `space` pads are **structural** — they feed the layout pass instead and never
+ * reach a glyph state. The two decorations are appearance-lane but glyph-independent: they
  * resolve per source character and merge into rects, so they never reach a glyph
  * state either. A decoration of `null` is an explicit "off", distinct from an
  * absent key.
@@ -146,6 +146,8 @@ export interface ResolvedStyle {
     highlight?: ResolvedHighlight | null;       // decoration lane
     fontScale?: number;    // structural — layout input, not glyph state
     font?: string;         // structural — msdfFont cache key, resolved at layout
+    spaceBefore?: number;  // structural — em pad on the run's first character
+    spaceAfter?: number;   // structural — em pad on the run's last character
 }
 
 /**
@@ -437,7 +439,38 @@ export function resolveStyle(spec: StyleSpec): ResolvedStyle {
             );
         }
     }
+
+    // Structural. A scalar sets both edges; the object form sets them apart.
+    // Negative is legal and load-bearing — it is how a run is pulled *towards* its
+    // neighbour, which is half of what mixed-font spacing needs.
+    if (spec.space !== undefined) {
+        if (typeof spec.space === 'number') {
+            if (isFinite(spec.space)) {
+                r.spaceBefore = spec.space;
+                r.spaceAfter = spec.space;
+            } else warnSpace(spec.space);
+        } else if (spec.space) {
+            const { before, after } = spec.space;
+            if (before !== undefined) {
+                if (isFinite(before)) r.spaceBefore = before; else warnSpace(before);
+            }
+            if (after !== undefined) {
+                if (isFinite(after)) r.spaceAfter = after; else warnSpace(after);
+            }
+        }
+    }
     return r;
+}
+
+/** One-time dev warning for a non-finite `space`. */
+let warnedSpace = false;
+function warnSpace(value: unknown): void {
+    if (warnedSpace) return;
+    warnedSpace = true;
+    console.warn(
+        `[MSDFText] "space" must be a finite em offset (negative tightens); got ` +
+        `${JSON.stringify(value)}. Ignoring it.`
+    );
 }
 
 /** Whether a spec carries at least one override (appearance, decoration or structural). */
@@ -448,7 +481,8 @@ export function hasStyleKeys(spec: StyleSpec): boolean {
         spec.rotation !== undefined || spec.skew !== undefined || spec.skewPivot !== undefined ||
         spec.underline !== undefined || spec.strikethrough !== undefined ||
         spec.highlight !== undefined ||
-        spec.fontScale !== undefined || spec.font !== undefined;
+        spec.fontScale !== undefined || spec.font !== undefined ||
+        spec.space !== undefined;
 }
 
 /**

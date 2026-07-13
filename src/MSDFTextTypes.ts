@@ -98,6 +98,17 @@ export interface DecorationSpec {
     dash?: boolean | DashSpec;
 }
 
+/**
+ * Extra advance at a run's two edges — the {@link StyleSpec.space} object form.
+ * Either side may be omitted; a bare number instead of this object sets both.
+ */
+export interface SpaceSpec {
+    /** Extra advance before the run's first character, em-relative. Default `0`. */
+    before?: number;
+    /** Extra advance after the run's last character, em-relative. Default `0`. */
+    after?: number;
+}
+
 /** Em-relative padding around a highlight pill (× the object's `fontSize`). */
 export interface HighlightPadding {
     /** Both horizontal sides. */
@@ -358,6 +369,42 @@ export interface StyleSpec {
      *   `-and`-separated inputs) so every run shares a texture.
      */
     font?: string;
+
+    /**
+     * Extra advance at the run's **edges** — a scalar for both sides, or
+     * `{ before, after }` for one at a time. **Negative tightens**, which is half
+     * the point: it is the manual fix for the two gaps a mixed-font line always
+     * has, where one face's side bearings meet another's and no kern pair exists
+     * to reconcile them.
+     *
+     * ```ts
+     * { text: 'Bangers ', font: 'Bangers', space: { after: 0.12 } }  // open a gap
+     * { text: 'Mono ', font: 'JetBrainsMono', space: { after: -0.15 } }  // close one
+     * ```
+     *
+     * Em-relative to the **run's own size** (`fontSize × fontScale`), like
+     * {@link DecorationSpec.offset} — so a display-size run's gaps grow with it,
+     * and every gap survives `setFontSize` and `fitInside` in proportion (an
+     * absolute-pixel pad would not, exactly as it would not for `fontScale`).
+     *
+     * **Structural** — the pads are real advance, so they feed wrap, line width,
+     * alignment and the decoration rects, and setting one (including via
+     * `handle.update`) costs a relayout rather than a re-seed.
+     *
+     * Two edges, not a gap between runs: `before` lands on the run's first
+     * character and `after` on its last, so two adjacent runs each asking for
+     * space at the boundary between them both get it (they occupy different
+     * characters, and their pads add). Two *overlapping* rules asking for the same
+     * edge do not add — the later layer wins, as everywhere else. A pad rides its
+     * character's advance, so one on a character absent from its run's font, or on
+     * a line break, is dropped with it; one at the end of a line is real width, and
+     * so nudges a centred line, exactly as `letterSpacing`'s trailing slot does.
+     *
+     * For a value that differs per character, see
+     * {@link MSDFTextInstance.setSpacingCallback} — the same two maps, written by a
+     * function instead of by a span.
+     */
+    space?: number | SpaceSpec;
 }
 
 /** A styled run of text for {@link MSDFTextInstance.setRichText}. */
@@ -576,6 +623,49 @@ export type DisplayCallback = (glyphs: GlyphState[], parent: MSDFTextInstance) =
  */
 export type DecorationCallback = (rects: DecorationState[], parent: MSDFTextInstance) => void;
 
+/**
+ * The two edge-pad maps a {@link SpacingCallback} writes into, both indexed by
+ * position in the **source** text (`text[i]` is the character `before[i]` /
+ * `after[i]` pad), both in em of that character's own size.
+ *
+ * They arrive pre-filled by the {@link StyleSpec.space} keys of every segment and
+ * overlay, so a callback can add to what the styles asked for (`+=`), override it
+ * (`=`), or read it and leave it alone.
+ */
+export interface SpacingPads {
+    /** Extra advance before character `i`. */
+    readonly before: Float32Array;
+    /** Extra advance after character `i`. */
+    readonly after: Float32Array;
+}
+
+/**
+ * Spacing callback signature — the per-character lane of {@link StyleSpec.space}.
+ *
+ * Unlike {@link DisplayCallback} and {@link DecorationCallback}, this runs at
+ * **rebuild** time, not once per frame: the pads are a layout input (they feed
+ * wrap, line width, alignment and the decoration rects), so they must be known
+ * before the text is laid out, and they cost a relayout to change. It is re-run on
+ * every rebuild against the current string — so, like a {@link StyleMatcher}
+ * anchor, it survives `setText` and `setRichText` instead of dying with the
+ * indices it was written against.
+ *
+ * ```ts
+ * text.setSpacingCallback((pad, src) => {
+ *   for (let i = 0; i < src.length; i++) {
+ *     if (src[i] === ',') pad.after[i] += 0.06;                        // a rule
+ *     if (src[i] === 'A' && src[i + 1] === 'V') pad.after[i] -= 0.04;  // a kern pair
+ *   }
+ * });
+ * ```
+ *
+ * Do not drive an animation from here — a per-frame pad change is a per-frame
+ * relayout. Animate `GlyphState.offsetX` in a display callback instead: an advance
+ * is its prefix sum, and doing it there leaves the line's wrap and alignment (and
+ * its underline) where they are, which is what kinetic type wants anyway.
+ */
+export type SpacingCallback = (pad: SpacingPads, text: string, parent: MSDFTextInstance) => void;
+
 // Re-export so consumers can type their callbacks against the per-quad state.
 export type { GlyphState } from './MSDFGlyphState';
 export type { DecorationState } from './MSDFDecorState';
@@ -604,6 +694,21 @@ export interface MSDFTextInstance extends
     readonly font: string;
     /** Parsed runtime font data. */
     readonly fontData: MSDFFont;
+
+    /**
+     * The font governing source character `index` — {@link fontData} unless a
+     * rich-text run put another face there. Out-of-range indices give the base
+     * font, so `fontAt(i) !== fontAt(i + 1)` is a safe font-boundary test at either
+     * end of the string.
+     *
+     * The resolved structural state, in other words, keyed the way a
+     * {@link SpacingCallback} is keyed — which is what it is for: a spacing rule
+     * that cannot see the fonts cannot space a font boundary, and a font boundary
+     * is exactly where spacing has no kern pair to fall back on.
+     */
+    fontAt(index: number): MSDFFont;
+    /** The `fontScale` multiplier governing source character `index` (`1` if none). */
+    fontScaleAt(index: number): number;
     /** Character code that word wrapping breaks on. Defaults to 32 (space). */
     wordWrapCharCode: number;
 
@@ -791,6 +896,12 @@ export interface MSDFTextInstance extends
      */
     readonly decorations: DecorationState[] | null;
 
+    /**
+     * Optional per-character spacing callback. Unlike the other two it runs at
+     * rebuild time, not per frame. Set via {@link setSpacingCallback}.
+     */
+    spacingCallback?: SpacingCallback;
+
     // Dimensions (derived from text bounds)
     readonly width: number;
     readonly height: number;
@@ -914,6 +1025,29 @@ export interface MSDFTextInstance extends
     setDecorationCallback(callback: DecorationCallback | undefined): this;
     /** Clear the decoration callback; rects return to their built appearance. */
     clearDecorationCallback(): this;
+    /**
+     * Set the per-character spacing callback — the lane that writes
+     * {@link StyleSpec.space} pads per source character instead of per run.
+     *
+     * A one-off nudge does not need this: a span anchor of length 1 *is* a
+     * character (`addStyle({ start: 12, length: 1 }, { space: { before: 0.1 } })`).
+     * What this buys is the bulk case — many characters, many *different* values —
+     * which through the spec layers would mean one overlay per value.
+     *
+     * It is the last layer of the pad maps, so it sees (and may overwrite) what the
+     * segments and overlays painted. It runs at **rebuild** time, not per frame:
+     * setting it costs a relayout, and so does {@link refreshSpacing}. Passing
+     * `undefined` clears it (same as {@link clearSpacingCallback}).
+     */
+    setSpacingCallback(callback: SpacingCallback | undefined): this;
+    /** Clear the spacing callback; the pads fall back to the `space` keys alone. */
+    clearSpacingCallback(): this;
+    /**
+     * Re-run the spacing callback (a relayout). It re-runs on every rebuild
+     * anyway, so this is only for when the callback's *own* inputs changed —
+     * a tracking slider, a difficulty setting — and the text did not.
+     */
+    refreshSpacing(): this;
     /**
      * Take manual control of per-glyph state. Returns the (persistent) glyph
      * array, seeded to the text's current colour/alpha/layout, and switches the
