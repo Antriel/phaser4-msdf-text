@@ -6,7 +6,7 @@
  */
 
 import * as Phaser from "phaser";
-import { MSDFText, type ColorValue, type MSDFAlign } from './MSDFText';
+import { MSDFText, type ColorValue, type MSDFAlign, type DecorationSpec, type HighlightSpec } from './MSDFText';
 
 // @ts-ignore - Phaser internals not fully typed
 const GameObjectCreator = Phaser.GameObjects.GameObjectCreator;
@@ -41,6 +41,11 @@ export interface MSDFTextOutlineConfig {
      * letterform, drawn in the fill's own quad.
      */
     softness?: number;
+    /**
+     * Inner end of the outline's two-tone colour ramp. `null`/omitted inherits
+     * the outline's own colour (no ramp).
+     */
+    innerColor?: ColorValue | null;
 }
 
 /**
@@ -68,6 +73,11 @@ export interface MSDFTextShadowConfig {
      * `1` — see `MSDFTextInstance.shadowRounded`.
      */
     rounded?: number | boolean;
+    /**
+     * Inner end of the shadow's two-tone colour ramp. `null`/omitted inherits
+     * the shadow's own colour (no ramp).
+     */
+    innerColor?: ColorValue | null;
 }
 
 /**
@@ -80,6 +90,8 @@ export interface MSDFTextConfig extends Phaser.Types.GameObjects.GameObjectConfi
     fontSize?: number;
     color?: ColorValue;
     colorAlpha?: number;
+    /** Faux-bold weight, in distance-field units. Defaults to 0. */
+    weight?: number;
     /** Line alignment: `'left'` (default), `'center'` or `'right'`. */
     align?: MSDFAlign;
     lineSpacing?: number;
@@ -89,6 +101,12 @@ export interface MSDFTextConfig extends Phaser.Types.GameObjects.GameObjectConfi
     outline?: MSDFTextOutlineConfig;
     /** Shadow effect. See {@link MSDFTextShadowConfig}. */
     shadow?: MSDFTextShadowConfig;
+    /** Underline decoration. `true` for defaults, or a {@link DecorationSpec}. */
+    underline?: boolean | DecorationSpec;
+    /** Strikethrough decoration. `true` for defaults, or a {@link DecorationSpec}. */
+    strikethrough?: boolean | DecorationSpec;
+    /** Highlight pill. `true` for defaults, or a {@link HighlightSpec}. */
+    highlight?: boolean | HighlightSpec;
 }
 
 /**
@@ -155,6 +173,11 @@ GameObjectCreator.register('msdfText', function (
         msdfText.setMaxWidth(maxWidth);
     }
 
+    const weight = GetAdvancedValue(config, 'weight', null);
+    if (weight !== null) {
+        msdfText.setWeight(weight);
+    }
+
     // Effect configs are nested objects, read directly rather than via
     // GetAdvancedValue (which is geared toward primitive/random values).
     //
@@ -166,6 +189,9 @@ GameObjectCreator.register('msdfText', function (
             outline.width || 0, outline.color, outline.alpha,
             outline.rounded || 0, !!outline.layered, outline.softness || 0
         );
+    }
+    if (outline && outline.innerColor !== undefined) {
+        msdfText.setOutlineInnerColor(outline.innerColor);
     }
 
     const shadow = config.shadow;
@@ -182,6 +208,19 @@ GameObjectCreator.register('msdfText', function (
         if (shadow.rounded !== undefined) {
             msdfText.shadowRounded = shadow.rounded;
         }
+        if (shadow.innerColor !== undefined) {
+            msdfText.setShadowInnerColor(shadow.innerColor);
+        }
+    }
+
+    if (config.underline !== undefined) {
+        msdfText.setUnderline(config.underline);
+    }
+    if (config.strikethrough !== undefined) {
+        msdfText.setStrikethrough(config.strikethrough);
+    }
+    if (config.highlight !== undefined) {
+        msdfText.setHighlight(config.highlight);
     }
 
     return msdfText;

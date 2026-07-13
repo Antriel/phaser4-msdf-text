@@ -81,9 +81,12 @@ const text = this.make.msdfText({
     fontSize: 48,
     color: 0xffffff,
     align: 'center',  // 'left' (default), 'center' or 'right'
-    // Optional effects — same fields as setOutline / setShadow:
+    // Optional effects — same fields as setOutline / setShadow, plus weight and
+    // decorations (underline / strikethrough / highlight):
     outline: { width: 1.5, color: 0x000000, rounded: true },
     shadow:  { offsetX: 4, offsetY: 4, alpha: 0.5, softness: 6 },
+    weight: 0.3,
+    underline: true,
 });
 ```
 
