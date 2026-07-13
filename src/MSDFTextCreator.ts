@@ -27,6 +27,8 @@ export interface MSDFTextOutlineConfig {
     alpha?: number;
     /** Round the outer corners using the true SDF (requires an MTSDF atlas). Defaults to false. */
     rounded?: boolean;
+    /** Draw outline silhouettes under the fills, so thick outlines never cover neighbouring glyphs. Defaults to false. */
+    layered?: boolean;
 }
 
 /**
@@ -41,7 +43,7 @@ export interface MSDFTextShadowConfig {
     color?: ColorValue;
     /** Shadow alpha (0-1). Defaults to 0.5. */
     alpha?: number;
-    /** Shadow blur in screen pixels (requires an MTSDF atlas). Defaults to 0. */
+    /** Shadow blur in distance-field units (requires an MTSDF atlas). Defaults to 0. */
     softness?: number;
 }
 
@@ -134,7 +136,7 @@ GameObjectCreator.register('msdfText', function (
     // GetAdvancedValue (which is geared toward primitive/random values).
     const outline = config.outline;
     if (outline && outline.width > 0) {
-        msdfText.setOutline(outline.width, outline.color, outline.alpha, !!outline.rounded);
+        msdfText.setOutline(outline.width, outline.color, outline.alpha, !!outline.rounded, !!outline.layered);
     }
 
     const shadow = config.shadow;

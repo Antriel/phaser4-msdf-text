@@ -11,6 +11,7 @@ MSDF (Multi-channel Signed Distance Field) font rendering for [Phaser 4](https:/
 - Batched rendering — 1–2 draw calls per text object, regardless of length
 - Shader-based outlines — sharp, or rounded corners on MTSDF atlases (no extra draw calls)
 - Drop shadows — hard, or soft/glow on MTSDF atlases (extra pass, batched)
+- Rich text — per-run colour, size, typeface, effects; no markup in the string
 - Per-character display callbacks (wave, rainbow, jiggle, rotate, scale, …)
 - Word wrapping with configurable wrap character
 
@@ -28,9 +29,8 @@ npm install phaser@^4.1.0
 
 ## Setup
 
-Register the global plugin in your Phaser game config. The plugin wires up the
-`BatchHandlerMSDF` render node, the font cache, and verifies the required
-`OES_standard_derivatives` extension — no separate `renderNodes` entry needed.
+Register the global plugin in your game config. It wires up the render node
+and font cache, and verifies the required `OES_standard_derivatives` extension.
 
 ```ts
 import * as Phaser from 'phaser';
@@ -49,16 +49,11 @@ new Phaser.Game({
 });
 ```
 
-> If you prefer not to wire it up in the game config, call
-> `installMSDFPlugin(game)` from `callbacks.postBoot` — it registers the batch
-> handler with the renderer directly.
+> Alternatively, call `installMSDFPlugin(game)` from `callbacks.postBoot`.
 
 ## Use
 
-Load fonts via the standard Phaser loader, then create text via the
-`add.msdfText` factory. Rendering goes through a custom `BatchHandler`
-(extending `Phaser.Renderer.WebGL.RenderNodes.BatchHandler`), so a page full
-of text typically renders in 1–2 draw calls.
+Load fonts via the standard Phaser loader, then create text via `add.msdfText`:
 
 ```ts
 class MyScene extends Phaser.Scene {
@@ -99,17 +94,15 @@ Live, interactive demos — each link opens that example directly:
 | Example | What it shows |
 |---|---|
 | [Crisp at Any Scale](https://antriel.github.io/phaser4-msdf-text/#crisp) | MSDF vs. bitmap fonts under extreme zoom — no pixelation |
-| [Outline](https://antriel.github.io/phaser4-msdf-text/#outline) | Sharp and rounded shader outlines |
-| [Glow & Drop Shadow](https://antriel.github.io/phaser4-msdf-text/#glow) | Hard shadows, soft shadows, and glow |
+| [Style Lab](https://antriel.github.io/phaser4-msdf-text/#stylelab) | Outline, glow, shadow and weight — every knob, live |
 | [Animated Effects](https://antriel.github.io/phaser4-msdf-text/#effects) | Per-character display callbacks — wave, rainbow, jiggle |
-| [Text Layout](https://antriel.github.io/phaser4-msdf-text/#layout) | Alignment, word wrap, and line spacing |
-| [Fit Inside](https://antriel.github.io/phaser4-msdf-text/#fitinside) | Reflowing text to fit a box via `fitInside` |
-| [Glyph Provenance](https://antriel.github.io/phaser4-msdf-text/#provenance) | `srcIndex` / `line` / `srcLine` — mapping glyphs back to the source |
 | [Rich Text](https://antriel.github.io/phaser4-msdf-text/#richtext) | Per-run colour, gradient, shadow, skew; keyword rules and ranges |
-| [Per-Run Font](https://antriel.github.io/phaser4-msdf-text/#perrunfont) | Mixed typefaces in one object; shared baselines, per-font metrics |
-| [Performance](https://antriel.github.io/phaser4-msdf-text/#performance) | Draw-call count under a heavy text load |
+| [Mixed Fonts & Sizes](https://antriel.github.io/phaser4-msdf-text/#fonts) | Multiple typefaces and sizes in one object, shared baselines |
+| [Highlights & Decorations](https://antriel.github.io/phaser4-msdf-text/#decor) | Underline, strikethrough, and highlight pills |
+| [Fit Inside](https://antriel.github.io/phaser4-msdf-text/#fitinside) | Reflowing text to fit a box via `fitInside` |
 | [Game UI Showcase](https://antriel.github.io/phaser4-msdf-text/#gameui) | A mock game HUD — score counter, combo meter, damage numbers |
-| [RPG Loot Cards](https://antriel.github.io/phaser4-msdf-text/#loot) | Procedural item cards — mixed fonts, rarity-keyed outline & glow, crisp through every tilt |
+| [RPG Loot Cards](https://antriel.github.io/phaser4-msdf-text/#loot) | Procedural item cards — mixed fonts, rarity-keyed outline & glow |
+| [Performance](https://antriel.github.io/phaser4-msdf-text/#performance) | Draw-call count under a heavy text load |
 
 Each example's source is in [`examples/scenes/`](./examples/scenes).
 
@@ -127,21 +120,19 @@ text.setColor({ r: 255, g: 136, b: 0 });  // object (0-255), optional `a`
 text.setColor(0xff8800, 0.5);      // optional alpha (0-1) overrides color's alpha
 text.setCenterAlign();             // also setLeftAlign() / setRightAlign()
 text.setLineSpacing(10);
+text.setLetterSpacing(2);          // extra px after each character
 
 // Or use property accessors directly
 text.text = 'New content';
 text.fontSize = 64;
 text.align = 'center';             // 'left' (default), 'center' or 'right'
 text.lineSpacing = 10;
+text.letterSpacing = 2;
 
 text.width;                        // rendered width in local space (read-only)
 text.height;                       // rendered height in local space (read-only)
 text.getTextBounds();              // { width, height, lines: { count, lengths, shortest, longest } }
 ```
-
-`align` is the string union `'left' | 'center' | 'right'` (exported as
-`MSDFAlign`); `setLeftAlign()` / `setCenterAlign()` / `setRightAlign()` are
-chainable shortcuts.
 
 ### Word wrap
 
@@ -167,12 +158,10 @@ text.fitInside(
 text.fitInside({ width: 400, height: 200 }, { maxFontSize: 120 });
 ```
 
-`fitInside` sizes text to a box by **reflowing**, not just scaling — it
-binary-searches the largest `fontSize` whose *word-wrapped* layout fits the box
-on both axes. A naive scale-to-fit is already covered by `setDisplaySize` /
-`displayWidth` / `displayHeight`; the reason to touch `fontSize` is that a
-larger font wraps to fewer words per line, changing the shape of the block. That
-reflow is the whole point.
+`fitInside` binary-searches the largest `fontSize` whose **word-wrapped**
+layout fits the box on both axes. It reflows rather than scales — a larger
+font wraps to fewer words per line, changing the shape of the block. (A naive
+scale-to-fit is already covered by `setDisplaySize`.)
 
 ```ts
 interface RectLike { x?: number; y?: number; width: number; height: number; }
@@ -186,22 +175,19 @@ interface FitOptions {
 }
 ```
 
-- **Shrink-only by default.** `maxFontSize` defaults to the current `fontSize`,
-  so a label never enlarges past what you set. Pass a larger `maxFontSize` to
-  allow growth-to-fill.
-- **Placement.** With both `x` and `y` (they must be supplied together) the
-  block is positioned inside the box via `hAlign`/`vAlign`, respecting the
-  object's origin and any pre-existing scale. With neither, the text is only
-  resized. A rect with just one of `x`/`y` is treated as size-only (dev-warn).
-- **Permanent side effects.** `fitInside` sets both `fontSize` **and**
-  `maxWidth` (to the box width) — the wrap width is what keeps the text fitted.
-  It is a **one-shot** call: if the text later changes it re-wraps at that width
-  but does not re-fit the size; call `fitInside` again.
-- The chosen size is **fractional** by design (MSDF is crisp at any scale);
-  `Math.floor` the result yourself if you need an integer.
+- **Shrink-only by default** — `maxFontSize` defaults to the current
+  `fontSize`; pass a larger one to allow growth-to-fill.
+- With both `x` and `y` (supplied together) the block is also positioned via
+  `hAlign`/`vAlign`, respecting origin and scale; with neither, it is only
+  resized.
+- It sets both `fontSize` **and** `maxWidth` (the box width), and it is
+  **one-shot**: later text changes re-wrap at that width but don't re-fit the
+  size — call it again.
+- The chosen size is fractional by design (MSDF is crisp at any scale);
+  `Math.floor` it yourself if you need an integer.
 - `lineSpacing` / `letterSpacing` / shadow offset are constant pixels and do
-  **not** scale with the fitted size; outline width, shadow offset and rotation
-  are ignored (they fall outside `width`/`height`, as elsewhere in the API).
+  not scale with the fitted size; outline width, shadow offset and rotation
+  fall outside `width`/`height` and are ignored.
 
 ### Outline (shader-based, no extra draw calls)
 
@@ -225,39 +211,26 @@ text.setOutlineInnerColor(0xff5ea8);
 text.setOutlineInnerColor(null);              // back to a single-colour outline
 ```
 
-Practical outline widths are roughly 0.5–3.0. The shader can only represent
-outlines up to about `distanceRange / 2` distance-field units — beyond that,
-the texture's distance field is saturated and the outline stops growing,
-showing flat edges around the glyph's atlas cell instead. If you need thicker
-outlines, regenerate the atlas with a larger `-pxrange` in `msdf-atlas-gen`
-(and matching glyph padding) rather than pushing the width higher at runtime.
+Practical widths are roughly 0.5–3.0 — the shader saturates around
+`distanceRange / 2` distance-field units. For thicker outlines, regenerate the
+atlas with a larger `-pxrange` rather than pushing the width higher.
 
-`rounded` rounds the outline's outer corners using the atlas's true
-signed distance field. It requires an **MTSDF** atlas (generated with
-`-type mtsdf`; see [FONTS.md](FONTS.md)). On a plain MSDF font it is ignored
-with a one-time console warning and the outline stays sharp. The letterforms
-themselves stay crisp either way — only the outline edge rounds.
+`rounded` rounds the outline's outer corners; the letterforms stay sharp. It
+requires an **MTSDF** atlas (`-type mtsdf`; see [FONTS.md](FONTS.md)) — on
+plain MSDF it is ignored with a one-time warning.
 
-`layered` fixes the one drawback of the default single-pass outline: because the
-outline is computed per glyph, a thick one can spill over and cover the previous
-glyph. With `layered`, every glyph's outline silhouette is drawn first and every
-glyph's fill goes on top, so neighbouring outlines never cover a glyph's face.
-The cost is a second set of glyph quads (≈2× the outline's fragment work, still
-within the same 1–2 draw calls), and because the outline now sits *under* the
-fill rather than being composited with it in one pass, partially transparent
-text shows the outline faintly through the fill. Leave it off (the default)
-unless the outline is actually thick enough to overlap. Works on plain MSDF and
-MTSDF alike, and combines with `rounded` and the drop shadow.
+`layered` fixes thick outlines spilling over neighbouring glyphs: every
+outline silhouette draws first, every fill on top. Costs a second set of glyph
+quads (still 1–2 draw calls), and translucent text shows the outline through
+the fill — leave it off unless the outline is actually thick enough to
+overlap. Works on plain MSDF, combines with `rounded` and the shadow.
 
-`setOutlineInnerColor` gives the outline a second colour at its inner edge; it
-ramps from `outlineColor` at the outer edge to that colour across the outline
-band, so the effect only shows on outlines wide enough to see a gradient in.
-It costs nothing — the inner colour rides the silhouette quad's otherwise-idle
-fill-colour attribute — but for exactly that reason it **forces `outlineLayered`**
-(a combined fill+outline quad has already spent that attribute on the fill). It
-needs no MTSDF atlas. The per-corner `outline.innerColor` on a `GlyphState`, and
-`outline.innerColor` in a rich-text run, address it per glyph and per run; a run
-that sets `outline.color` alone gets a solid outline in that colour.
+`setOutlineInnerColor` ramps the outline from `outlineColor` at the outer edge
+to a second colour where it meets the glyph, so it only shows on outlines wide
+enough to see a gradient in. It costs nothing — the inner colour rides an
+otherwise-idle vertex attribute — but for exactly that reason it **forces
+`outlineLayered`**. No MTSDF needed. Per-glyph via `outline.innerColor` on a
+`GlyphState`, per-run via `outline.innerColor` in a style spec.
 
 ### Shadow (extra pass, still batched)
 
@@ -280,28 +253,23 @@ text.setShadowInnerColor(0xffffff);
 text.setShadowInnerColor(null);                   // back to a single-colour shadow
 ```
 
-`softness` is the shadow blur in **distance-field units** (`0` = hard edge,
-the default) — the same units as `outlineWidth`, so the blur scales with the
-text at any size. Any value above `0` produces a soft shadow and requires an
-**MTSDF** atlas; on a plain MSDF font it is ignored with a one-time console
-warning. The maximum usable blur is the atlas `distanceRange` — for softer
-shadows than that, regenerate with a larger `-pxrange`.
+`softness` is the blur in **distance-field units** (`0` = hard edge, the
+default), so it scales with the text at any size. Any value above `0` requires
+an **MTSDF** atlas; on plain MSDF it is ignored with a one-time warning. The
+maximum usable blur is the atlas `distanceRange` — for softer, regenerate with
+a larger `-pxrange`.
 
-`setShadowInnerColor` makes the blur a two-tone gradient: `shadowColor` at its
-outer edge, the inner colour where it meets the glyph. A soft, zero-offset shadow
-with a white inner colour is the classic glow — a white-hot core inside a
-coloured halo. Unlike the outline's, it needs no layering (a shadow quad never
-has a fill), but it does need `shadowSoftness` above `0` to have a band to ramp
-across. The shadow's ramp is weighted toward the outer colour (the outline's is
-linear), because a shadow's alpha fades across the same interval and an even ramp
-would leave the outer hue only in the parts that have already faded out. Per-glyph
-via `shadow.innerColor` on a `GlyphState`, per-run via `shadow.innerColor` in a
-style spec.
+`setShadowInnerColor` makes the blur a two-tone gradient: `shadowColor` at the
+outer edge, the inner colour at the glyph. A soft, zero-offset shadow with a
+white inner colour is the classic glow. It needs `shadowSoftness` above `0` to
+have a band to ramp across, but no layering. Per-glyph via `shadow.innerColor`
+on a `GlyphState`, per-run via a style spec.
 
 Shadow colour, alpha, offset and softness are per-glyph state, so a
-`displayCallback` or `editGlyphs` can give individual glyphs their own drop
-shadow — soft ones included. The shadow pass is normally skipped when the object
-has no shadow, so set **`perGlyphShadow = true`** to run it for those glyphs:
+`displayCallback` or `editGlyphs` can give individual glyphs their own shadow.
+The pass is skipped when the object has no shadow, so set
+**`perGlyphShadow = true`** to run it for those glyphs (rich-text runs that set
+a shadow turn the pass on automatically):
 
 ```ts
 text.perGlyphShadow = true;
@@ -310,10 +278,6 @@ text.setDisplayCallback((glyphs) => {
 });
 ```
 
-Rich-text runs that set a shadow (`setRichText` / `addStyle`) turn the pass on
-automatically, so `perGlyphShadow` is only needed for callback- or manual-driven
-shadows.
-
 ### Faux bold — `weight`
 
 ```ts
@@ -321,17 +285,12 @@ text.weight = 2.5;          // distance-field units; negative thins the glyph
 text.setWeight(2.5);        // chainable wrapper
 ```
 
-`weight` shifts each glyph's distance threshold, so it fattens (or thins) the
-letterform. It is measured in **distance-field units**, like `outlineWidth`, and
-saturates at half the atlas `distanceRange`. The outline and shadow edges move
-with it, so an outlined glyph stays outlined as it thickens.
-
-It widens glyphs **without changing their advance**, so at a high weight letters
-can touch. That is the tradeoff against a real bold face; for body text at large
-weights, prefer loading the bold atlas.
-
-Weight is per-glyph and per-corner (`g.weight.topLeft`, …), so a faux-bold
-gradient down a glyph is free.
+`weight` shifts each glyph's distance threshold to fatten (or thin) the
+letterform, in distance-field units, saturating at half the atlas
+`distanceRange`. Outline and shadow edges move with it. It does **not** change
+the advance, so at high weights letters can touch — prefer a real bold atlas
+for body text. Per-glyph and per-corner (`g.weight.topLeft`, …), so a
+faux-bold gradient is free.
 
 ### Underline & strikethrough
 
@@ -341,30 +300,22 @@ text.setStrikethrough({ color: 0xff5252, offset: 0.02 });
 text.setUnderline(false);                            // off
 ```
 
-Both accept `true`/`false` or a `DecorationSpec`: `{ color?, alpha?, thickness?,
-offset? }`. `thickness` multiplies the font's own `underlineThickness`; `offset`
-shifts the rule by an em-relative amount (positive is down). Left alone, colour
-and alpha **inherit the resolved fill**, so each coloured word gets a matching
-rule; naming a colour paints the whole span one colour instead.
+Both accept `true`/`false` or `{ color?, alpha?, thickness?, offset? }`.
+`thickness` multiplies the font's own `underlineThickness`; `offset` is
+em-relative (positive is down). Left alone, colour and alpha **inherit the
+resolved fill**, so each coloured word gets a matching rule. They are also
+`StyleSpec` keys, so segments and overlays can set them per run — including
+`underline: false` to punch a hole in an object-level underline. The rects
+batch with the glyphs: a decorated text is still one draw call.
 
-They are also `StyleSpec` keys, so segments and overlays can set them per run —
-including `underline: false` to punch a hole in an object-level underline.
-The rects use a `solid` flag in the vertex `params`, so they **batch with the
-glyphs**: a decorated text is still one draw call.
-
-A few things worth knowing:
-
-- Decorations follow the **layout**, not the glyphs. Per-glyph `scale`,
-  `rotation` and `skew` move a glyph; the rule under it stays put.
-- `displayCallback` cannot see or animate them — they resolve from the style
-  layers only, and never reach `GlyphState`.
-- A rule splits at line breaks, at `fontScale` and `font` boundaries (thickness
-  and position are size- and font-relative, so each segment uses its own metrics)
-  and — when the colour is inherited — at every colour change. Its X extent is the
-  union of the span's glyph quads, so interior spaces are bridged but
+- Decorations follow the **layout**, not the glyphs: per-glyph `scale`,
+  `rotation` and `skew` move a glyph, its rule stays put, and
+  `displayCallback` cannot see them.
+- A rule splits at line breaks, at `fontScale`/`font` boundaries, and — when
+  the colour is inherited — at colour changes. Interior spaces are bridged;
   leading/trailing ones are not.
-- Strikethrough sits at `-0.25 em` above the baseline, because msdf-atlas-gen
-  emits no strike metric. Use `offset` where that lands wrong for your face.
+- Strikethrough sits at `-0.25 em` above the baseline (msdf-atlas-gen emits no
+  strike metric); use `offset` where that lands wrong for your face.
 - Decorations cast no shadow and take no outline.
 
 ### Highlight pills
@@ -388,21 +339,19 @@ text.setHighlight(false);   // off
 ```
 
 `radius`, `borderWidth` and `softness` are **fractions of the pill's own
-half-thickness** (`min(width, height) / 2`), not pixels — so `radius: 1` is a
-stadium at any font size, and a pill keeps its proportions when you `setFontSize`
+half-thickness** (`min(width, height) / 2`), not pixels — `radius: 1` is a
+stadium at any font size, and a pill keeps its proportions under `setFontSize`
 or `fitInside`.
 
-`softness` fades **inward** from the pill's box, so the box is the outer bound of
-everything the pill draws — a rect's quad ends exactly at its box, and an outward
-blur would be clipped in half. Give a glow its room with `padding`.
+`softness` fades **inward** — the box is the outer bound of everything the
+pill draws — so give a glow its room with `padding`. `padding` is em-relative:
+a scalar, or `{ x?, y?, left?, right?, top?, bottom? }` (a named side wins over
+its axis). The unpadded box runs from the tallest ascender to the deepest
+descender, so **negative padding** is often what you want — it crops inward,
+towards the x-height.
 
-`padding` is em-relative to the object's `fontSize`. It takes a scalar, or
-`{ x?, y?, left?, right?, top?, bottom? }` (a named side wins over its axis). The
-unpadded box runs from the tallest ascender to the deepest descender on the line,
-so **negative padding** is often what you want — it crops inward, pulling the slab
-down towards the x-height.
-
-Like a glyph's outline width, all three are continuous and therefore **per-corner**:
+Like a glyph's outline width, all three are continuous and therefore
+**per-corner**:
 
 ```ts
 // A tab: rounded on top, square on the bottom, blurred down the right edge.
@@ -413,47 +362,36 @@ text.setHighlight({
 });
 ```
 
-A face `alpha` of `0` frees the colour slot for `innerColor`, the inner end of a
-colour ramp across the border — the same two-tone mechanism a glowing shadow uses.
-Combine it with `borderWidth: 1` (a ring that fills the pill's whole body) and a
-`softness` for a glow blob:
+A face `alpha` of `0` frees the colour slot for `innerColor`, the inner end of
+a colour ramp across the border — the same two-tone mechanism a glowing shadow
+uses. With `borderWidth: 1` (a ring that fills the pill's whole body, so the
+ramp spans the full half-thickness) and a `softness`, that is a glow blob:
 
 ```ts
 text.setHighlight({ alpha: 0, borderWidth: 1, softness: 0.75, radius: 1,
                     borderColor: 0x2b0a4a, innerColor: 0x9ad8ff, padding: 0.35 });
 ```
 
-With no face to inset, `borderWidth` there is purely the ramp's depth: `1` spreads
-`borderColor → innerColor` over the pill's full half-thickness, lower values reach
-the inner colour sooner.
-
-Things worth knowing:
-
-- Pills draw **behind everything**, the text's own drop shadow included, so a
-  shadow falls on its pill. They batch with the glyphs: a highlighted, shadowed,
-  outlined, underlined text is still one draw call.
-- A highlight **never inherits the fill colour** (a slab of text-coloured paint
-  behind the text would hide it), so unlike an underline it does not split at
-  colour changes, and a colour tween on the object does not drag it along.
-- One pill per **visual line**. Its vertical extent is the union of the run's
-  metrics — highest ascender, deepest descender — so a pill wraps a run of mixed
-  `fontScale`s and mixed `font`s as one shape rather than shattering at each
-  boundary.
+- Pills draw **behind everything**, the text's own drop shadow included, and
+  batch with the glyphs — still one draw call.
+- A highlight **never inherits the fill colour** (it would hide the text), so
+  it doesn't split at colour changes and a colour tween doesn't drag it along.
+- One pill per **visual line**; its vertical extent is the union over the run,
+  so mixed `fontScale`s and mixed `font`s wrap as one shape.
 - Like the other decorations it follows the layout, not the glyphs, and
   `displayCallback` cannot see it.
 
 ### Rich text — per-run styling
 
-Style specific words or ranges — colour, gradient, alpha, outline/shadow colour,
-scale, rotation, skew, size, typeface — **without markup in the string** and
-without hand-counting glyphs. Two entry points: *content* goes in through
-`setRichText`, *overlays* go on through `addStyle`. Both take the same
-`StyleSpec`.
+Style specific words or ranges — colour, gradient, effects, size, typeface —
+**without markup in the string**. Two entry points, both taking the same
+`StyleSpec`: *content* goes in through `setRichText`, *overlays* go on through
+`addStyle`.
 
-**Content — `setRichText(segments)`.** Structured styled input. Segment text is
-concatenated into the plain text (so `text` still returns the joined string and
-wrapping is unchanged); the styles travel *with the content* and are replaced by
-the next `setText`/`setRichText`.
+**Content — `setRichText(segments)`.** Segment text is concatenated into the
+plain text (`text` still returns the joined string; wrapping is unchanged);
+the styles travel with the content and are replaced by the next
+`setText`/`setRichText`.
 
 ```ts
 text.setRichText([
@@ -467,8 +405,8 @@ text.setRichText([
 text.text; // → "Deal 50 fire damage to all enemies."  (plain string, wraps normally)
 ```
 
-**Overlays — `addStyle(target, style)`.** Style whatever `target` selects, on top
-of the content. Returns a `StyleHandle` (`update` / `remove`).
+**Overlays — `addStyle(target, style)`.** Style whatever `target` selects, on
+top of the content. Returns a `StyleHandle` (`update` / `remove`).
 
 ```ts
 const dmg = text.addStyle('DMG', { color: 0xff5252 });         // every "DMG" is red
@@ -485,25 +423,24 @@ dmg.remove();                      // drop the overlay
 The **anchor decides the lifetime**, and that is the whole rule:
 
 - **Content-anchored** — a string, a `RegExp`, a `{ match, … }` object, a
-  `{ segment }` name, or a `(text) => { start, length }[]` matcher. The spans are
+  `{ segment }` name, or a `(text) => { start, length }[]` matcher. Spans are
   re-derived on every text change, so the overlay **survives** `setText` and
   `setRichText`.
 - **Position-anchored** — a `{ start, length }` object. It indexes the text you
-  passed it against, so **any** text change drops it and kills its handle (no
-  clamping; a stale handle no-ops with a one-time warning). Use it for overlays on
-  text you know is stable — search hits, your own parser's output.
+  passed it against, so **any** text change drops it and kills its handle (a
+  stale handle no-ops with a one-time warning). Use it for text you know is
+  stable — search hits, your own parser's output.
 
-A bare string matches every occurrence, case-sensitively; the `{ match, … }` form
-adds `all`, `nth`, `wholeWord` and `caseSensitive`. A `RegExp` matches every
-occurrence of the pattern (its `g`/`y` flags are ignored; zero-length matches are
-skipped; use the `i` flag for case-insensitivity). The **matcher function** is the
-extension point — a parser's token spans, "every emoji", "every third word" are
-all one-liners, re-run on each text change.
+A bare string matches every occurrence, case-sensitively; `{ match, … }` adds
+`all`, `nth`, `wholeWord`, `caseSensitive`. A `RegExp` matches every occurrence
+(`g`/`y` flags ignored, zero-length matches skipped; use `i` for
+case-insensitivity). The matcher function is the extension point — a parser's
+token spans, "every emoji", "every third word" are one-liners, re-run on each
+text change. `clearStyles()` removes every overlay (segments are content,
+kept).
 
-`clearStyles()` removes every overlay (segments are content, kept).
-
-**Named segments — `{ segment: id }`.** Give a segment an `id` and an overlay can
-address it by name, wherever it currently sits:
+**Named segments — `{ segment: id }`.** Give a segment an `id` and an overlay
+can address it by name, wherever it currently sits:
 
 ```ts
 const render = (weapon: string) => text.setRichText([
@@ -519,47 +456,40 @@ rarity.update({ color: 0xb388ff });   // restyle the piece; nothing else moves
 render('Cinderfang');                 // new content, same id — the overlay follows
 ```
 
-This is the answer to the one wart of content styling: `setRichText` replaces the
-content, so it drops every position-anchored overlay as collateral. Driving a
-named piece through its own handle touches no other layer. A named segment needs
-no style keys of its own — it exists to be a target — and an overlay whose id is
-currently absent (after a plain `setText`, say) is **alive but empty**: it draws
-nothing and revives if a later `setRichText` brings the id back. Ids need not be
-unique; an overlay covers every segment carrying its id, in order.
+This answers the one wart of content styling: `setRichText` replaces the
+content, dropping every position-anchored overlay as collateral, but a named
+piece keeps its own handle. A segment needs no style keys to carry an id, ids
+need not be unique, and an overlay whose id is currently absent is alive but
+empty — it revives when a later `setRichText` brings the id back.
 
 A `StyleSpec` accepts: `color`/`alpha` (a scalar, or a per-corner object for a
 gradient), `weight`, `outline` (`{ color?, innerColor?, alpha?, width?, rounded? }`),
 `shadow` (`{ color?, innerColor?, alpha?, x?, y?, softness? }`),
 `scale`/`scaleX`/`scaleY`, `rotation`, `skew`, `underline`, `strikethrough`,
-`highlight`, `fontScale` and `font`.
-Only the keys you set override the glyph's seeded base. `weight`,
-`outline.width` and `shadow.softness` are continuous, so they also take a
-per-corner object.
+`highlight`, `fontScale` and `font`. Only the keys you set override the
+glyph's seeded base; `weight`, `outline.width` and `shadow.softness` also take
+per-corner objects.
 
-- A per-run **shadow renders on its own** — setting `shadow` on any run turns
-  the shadow pass on, so the object needs no shadow of its own. It does need an
-  **`alpha`**: glyphs seed a shadow alpha of `0` unless the object has a shadow to
-  inherit one from (that is what keeps unstyled glyphs from drawing a shadow when
-  the pass runs for a styled run's sake), and a spec applies only the keys it
-  names. So `shadow: { color: 0xff0000, x: 2, y: 2 }` is invisible — add
-  `alpha: 0.5`.
+- A per-run **shadow** turns the shadow pass on by itself — but it needs an
+  explicit **`alpha`**: glyphs seed a shadow alpha of `0` unless the object has
+  a shadow to inherit, so `shadow: { color: 0xff0000, x: 2, y: 2 }` is
+  invisible — add `alpha: 0.5`.
 - A per-run **outline** likewise stands alone: `outline: { width: 2 }` outlines
-  just that run, and `width: 0` removes the outline from a run of an otherwise
-  outlined text. Differing widths batch together.
-- `rounded` and `softness` need an **MTSDF** atlas; on a plain MSDF font they are
-  clamped away silently (per-run styles skip the object-level warning).
-- Setting `outline.color` on a run makes that run's outline **solid** in that
-  colour — `innerColor` follows `color` unless the run sets it too, exactly as it
-  does at the object level. A run's `outline.innerColor` still needs the object's
-  `outlineLayered` (or `outlineInnerColor`) to have a silhouette pass to ride.
+  just that run, `width: 0` removes it from a run of an outlined text, and
+  differing widths batch together.
+- `rounded` and `softness` need an **MTSDF** atlas; on plain MSDF they are
+  clamped away silently.
+- `outline.color` on a run makes that run's outline **solid** in that colour —
+  `innerColor` follows `color` unless set too. A run's `outline.innerColor`
+  still needs the object's `outlineLayered` (or `outlineInnerColor`) for a
+  silhouette pass to ride.
 
 Styles paint in order of increasing dynamism — **segments → overlays →
-`displayCallback`** — with overlays in the order they were added, applied
-key-by-key. A later layer that sets only `outline` keeps an earlier layer's
-`color`; where two do set the same key, the one added last wins. This is what
-lets a static keyword colour and an animated callback compose: the callback sees
-already-styled glyphs and layers on top. Handle updates coalesce into one re-seed
-before the next render (in manual mode a styles re-seed emits `'glyphsreset'`,
+`displayCallback`** — with overlays in the order added, applied key-by-key: a
+later layer that sets only `outline` keeps an earlier layer's `color`; where
+two set the same key, last wins. A static keyword colour and an animated
+callback therefore compose. Handle updates coalesce into one re-seed before
+the next render (in manual mode a styles re-seed emits `'glyphsreset'`,
 once/tick).
 
 | action | segments | content-anchored overlays | position-anchored overlays |
@@ -568,8 +498,7 @@ once/tick).
 | `handle.update` / `remove` | — | mutates the overlay | mutates the overlay |
 | `clearStyles()` | kept | removed | removed |
 
-**What a style change costs** depends on the *keys*, not on the layer — every
-spec layer may carry every key:
+**What a style change costs** depends on the *keys*, not the layer:
 
 | key lane | keys | cost |
 |---|---|---|
@@ -577,16 +506,14 @@ spec layer may carry every key:
 | decoration | `underline`, `strikethrough`, `highlight` | one coalesced rect rebuild |
 | structural | `fontScale`, `font` | a **relayout** |
 
-The one hard line is between specs and glyphs: **specs are layout inputs, the
-glyph array is layout output.** `displayCallback` and `editGlyphs` operate on
-already-laid-out glyphs, so they are appearance-only by construction —
-`GlyphState` has no structural fields, and nothing you do there can reflow the
-text. To animate size, tween `fontScale` through a handle's `update` and pay a
-rebuild per change.
+The one hard line: **specs are layout inputs, the glyph array is layout
+output.** `displayCallback` and `editGlyphs` operate on already-laid-out
+glyphs, so they are appearance-only by construction — `GlyphState` has no
+structural fields. To animate size, tween `fontScale` through a handle's
+`update` and pay a rebuild per change.
 
 #### Per-run size — `fontScale`
 
-The appearance keys above seed per-glyph state and never touch layout.
 `fontScale` and `font` are the **structural** keys — they change advance, wrap
 and line height, so they reflow the text instead of re-seeding it.
 
@@ -604,29 +531,23 @@ const burn = text.addStyle('Burn', { color: 0xff5252, fontScale: 1.4 });
 burn.update({ color: 0xff5252, fontScale: 2 });   // reflows (see below)
 ```
 
-It is a **multiplier** on the object's `fontSize`, not an absolute pixel size, so
-`setFontSize` and `fitInside` stay coherent: every run keeps its proportion at
-any object size, and `fitInside`'s binary search stays monotone. Must be `> 0`.
+It is a **multiplier** on the object's `fontSize` (must be `> 0`), not an
+absolute pixel size, so `setFontSize` and `fitInside` stay coherent.
 
-- **Line metrics are variable.** A line's box grows to its tallest run, and every
-  glyph on the line sits on one shared baseline — mixed sizes align by baseline,
-  not by top. A blank line keeps the object's own size.
-- **Kerning is skipped where the size changes.** A kern pair straddling a run
-  boundary has no well-defined size to scale by.
-- **Any spec layer may set it** — a segment or any `addStyle` overlay, whatever
-  its anchor. Only `displayCallback`/`editGlyphs` cannot, and that is physical:
-  `GlyphState` has no structural fields.
-- **Cost.** Setting `fontScale` (including through `handle.update`) triggers a
-  rebuild rather than the usual coalesced re-seed, and a structural overlay makes
-  `setText` a relayout too. An appearance-only update is unaffected.
+- A line's box grows to its tallest run, and every glyph sits on one shared
+  baseline — mixed sizes align by baseline, not by top.
+- Kerning is skipped where the size changes across a run boundary.
+- Any spec layer may set it; only `displayCallback`/`editGlyphs` cannot.
+- Cost: a rebuild rather than the usual coalesced re-seed, including through
+  `handle.update`.
 - `letterSpacing`, `lineSpacing` and shadow offsets are constant pixels and do
-  **not** scale with a run.
+  not scale with a run.
 
 #### Per-run font — `font`
 
 Mix typefaces in one text object. `font` names a key already loaded with
-`this.load.msdfFont(key, ...)`; runs that don't set it use the object's own font.
-Structural, exactly like `fontScale`, and legal on the same layers.
+`this.load.msdfFont(key, ...)`; runs that don't set it use the object's own
+font. Structural, exactly like `fontScale`, and legal on the same layers.
 
 ```ts
 text.setRichText([
@@ -641,26 +562,21 @@ text.setRichText([
 text.addStyle('fire', { font: 'Bangers', color: 0xff8c42 });
 ```
 
-Everything a run measures with — advance, kerning, ascender, line height, and the
-underline position/thickness — comes from **its own** font.
+Everything a run measures with — advance, kerning, ascender, line height,
+underline metrics — comes from **its own** font.
 
-- **Mixed faces align by baseline.** A line's ascent and box height each take the
-  largest among the runs on that line, so the baseline is shared. (With one font
-  those maxima always coincide, which is why single-font layout is unchanged.)
+- **Mixed faces align by baseline**: a line's ascent and box height each take
+  the largest among its runs.
 - **No kerning across a font boundary**, and **no glyph fallback**: a character
-  absent from its run's font is skipped, exactly as a missing character is on a
-  single-font text. It is never borrowed from the object's font or another run's.
-- **An unknown key** falls back to the object's own font with a one-time warning.
+  absent from its run's font is skipped, never borrowed from another font.
+- An unknown key falls back to the object's own font with a one-time warning.
 - **Cost: a run whose font uses a different atlas texture ends the draw call.**
-  That is cheap at text-scale glyph counts. To keep it at one draw call, generate a
-  single merged atlas (`msdf-atlas-gen` with `-and`-separated inputs, one
-  `-fontname` per input — see [FONTS.md](FONTS.md#merging-several-fonts-into-one-atlas))
-  and load it with **one** `this.load.msdfFont(key, ...)` call: the loader
-  registers each input font under its own `-fontname` in the `msdfFont` cache,
-  all sharing that one texture, so runs naming them never flush.
-- **Effects are per-run too.** `rounded` outlines and soft shadows need an MTSDF
-  atlas; on a run whose font is plain `msdf` they are clamped away silently, even
-  if a neighbouring run supports them.
+  Cheap at text-scale glyph counts; to stay at one draw call, generate a merged
+  atlas (see [FONTS.md](FONTS.md#merging-several-fonts-into-one-atlas)) and
+  load it with **one** `this.load.msdfFont` call — every font in it shares one
+  texture, so runs naming them never flush.
+- Effects are per-run too: `rounded`/`softness` on a run whose font is plain
+  `msdf` are clamped away silently, even if a neighbouring run supports them.
 
 ### Per-glyph display callback
 
@@ -678,44 +594,36 @@ text.clearDisplayCallback();
 The callback runs **once per frame** (not once per glyph) with the full array
 of per-glyph state and the text object. Each `glyphs[i]` is seeded with the
 text's effective position, colour, alpha, outline and shadow before you get it
-— mutate it in place. The return value is ignored, and the same array is reused
-every frame.
+— mutate it in place. The same array is reused every frame.
 
 Each glyph exposes:
 
 - **transform** — `x`, `y`, `scaleX`, `scaleY`, `rotation` (about the glyph
-  centre; `scaleX`/`scaleY = 0` hides it) and `skew`. `setScale(v)` sets both
-  axes; `setScale(x, y)` sets them independently (squash/stretch). `skew` is a
-  baseline shear (`dx/dy`) — a faux italic; positive leans the top right, and
-  the pivot is the glyph's *layout* baseline so a whole line slants as one.
+  centre; scale `0` hides it) and `skew`, a baseline shear (faux italic;
+  positive leans the top right, pivoting on the layout baseline so a whole line
+  slants as one). `setScale(v)` sets both axes, `setScale(x, y)` independently.
 - **`weight`** — per-corner faux bold, in distance-field units.
 - **`fill`** — the glyph face: `{ color: Corners, alpha: Corners }`.
-- **`shadow`** — `{ color, alpha, x, y, softness: Corners }`, controlled
-  independently of the fill. Drawn if the text has a drop shadow, or you set
-  `perGlyphShadow = true` (see the Shadow section).
-- **`outline`** — `{ color, alpha, width: Corners, rounded: Corners }`. A `width`
-  of `0` is what "no outline" means, so a glyph can be outlined even when the
-  object is not. `rounded` runs `0` (sharp) to `1` (fully rounded) per corner.
+- **`shadow`** — `{ color, alpha, x, y, softness: Corners }`, independent of
+  the fill. Drawn if the text has a shadow, or `perGlyphShadow = true`.
+- **`outline`** — `{ color, alpha, width: Corners, rounded: Corners }`. A
+  `width` of `0` means "no outline", so a glyph can be outlined even when the
+  object is not.
 - read-only **`index`**, **`charCode`**, and **provenance** — `srcIndex`,
   `line`, `srcLine` (see below).
 
 #### Glyph provenance — `srcIndex` / `line` / `srcLine`
 
-Every glyph carries three read-only fields that map it back to the text you set:
+Three read-only fields map each glyph back to the text you set:
 
 - **`srcIndex`** — index into the original `text` string, *before* word
-  wrapping. `text[glyph.srcIndex]` is that glyph's character. This is the robust
-  way to target a glyph by source position: it stays correct across word wrap,
-  where counting rendered glyphs does not (inserted line breaks and skipped
-  spaces desync the count). `srcIndex` is monotonic across the array but
-  non-contiguous, since spaces and newlines produce no glyph.
-- **`line`** — visual line index *after* wrapping. Use it to style by rendered
-  line, e.g. alternating colours per wrapped line.
+  wrapping: `text[glyph.srcIndex]` is that glyph's character. Robust across
+  wrapping, where counting rendered glyphs desyncs (spaces and newlines produce
+  no glyph — `srcIndex` is monotonic but non-contiguous).
+- **`line`** — visual line index *after* wrapping.
 - **`srcLine`** — source paragraph index: how many original `'\n'` precede the
-  glyph. Wrap-inserted (soft) breaks don't count, so `srcLine` identifies "the
-  Nth line of my string" regardless of wrapping. Two glyphs in the same source
-  paragraph share `srcLine` even when a soft break splits them onto different
-  visual `line`s.
+  glyph. Soft (wrap-inserted) breaks don't count, so it identifies "the Nth
+  line of my string" regardless of wrapping.
 
 ```ts
 // Colour the word starting at source index 12, wrap-proof:
@@ -732,8 +640,8 @@ text.setDisplayCallback((glyphs) => {
 ```
 
 `Corners` is `{ topLeft, topRight, bottomLeft, bottomRight }`. Colour is plain
-`0xRRGGBB` and alpha is a separate `0–1` float — set them independently, with no
-bit-packing. Scalar helpers cover the common "all four corners the same" case:
+`0xRRGGBB` and alpha a separate `0–1` float — no bit-packing. Scalar helpers
+cover the "all four corners the same" case:
 
 ```ts
 g.setScale(1.2, 0.8);                      // squash/stretch about the centre
@@ -753,18 +661,16 @@ g.fill.color.bottomLeft = g.fill.color.bottomRight = 0x5db8ff;
 ```
 
 `weight`, `outline.width`, `outline.rounded`, `outline.innerColor`,
-`shadow.softness` and `shadow.innerColor` are per-corner too, so a faux-bold
-gradient, a directional outline, a soft-on-one-side shadow, an outline melting
-from sharp to round, or a glow whose core shifts hue across the glyph all cost
-nothing extra. The interpolation is linear across the quad's bounding box, not
-along the letter contour — a directional ramp, not a contour-following pulse.
+`shadow.softness` and `shadow.innerColor` are per-corner too — a faux-bold
+gradient, a directional outline, a soft-on-one-side shadow all cost nothing
+extra. Interpolation is linear across the quad's bounding box, not along the
+letter contour.
 
 #### Persistent per-glyph state (manual mode)
 
-For per-glyph effects that don't change every frame — a fixed gradient,
-highlighted spans, a static rainbow — use `editGlyphs()` instead of a callback.
-It hands you the same array, seeded once, and the text stops re-seeding it, so
-your edits persist with **zero per-frame cost**:
+For per-glyph effects that don't change every frame, use `editGlyphs()`
+instead of a callback. It hands you the same array, seeded once, and the text
+stops re-seeding it — your edits persist with **zero per-frame cost**:
 
 ```ts
 const glyphs = text.editGlyphs();
@@ -773,8 +679,8 @@ glyphs[1].setFillColor(0x40ff40);
 ```
 
 The array is rebuilt and re-seeded whenever the glyph set changes (`setText`,
-`setFont`, word-wrap), which clears your edits and emits a `'glyphsreset'`
-event so you can re-apply them:
+`setFont`, word-wrap), which clears your edits and emits `'glyphsreset'` so
+you can re-apply them:
 
 ```ts
 text.on('glyphsreset', () => { /* re-apply per-glyph colours */ });
@@ -798,13 +704,12 @@ this.load.msdfFont({
 ```
 
 Fonts land in `this.cache.custom.msdfFont` as parsed `MSDFFont` instances —
-`add.msdfText` looks them up by key automatically, but you can pull the
-`MSDFFont` directly if you need to inspect glyph metrics or measure text.
+`add.msdfText` looks them up by key, or pull the `MSDFFont` directly to
+inspect glyph metrics or measure text.
 
-> **Texture filtering:** MSDF rendering relies on linear interpolation across
-> the distance field. Phaser's default `LINEAR` filtering works correctly. If
-> you opt into `NEAREST` (e.g. for a pixel-art project), MSDF edges will alias
-> badly — use a bitmap font in that case.
+> **Texture filtering:** MSDF relies on linear interpolation of the distance
+> field. Phaser's default `LINEAR` filtering is correct; `NEAREST` (e.g. for a
+> pixel-art project) aliases badly — use a bitmap font in that case.
 
 ## Generating MSDF fonts
 
@@ -819,9 +724,8 @@ msdf-atlas-gen -font MyFont.ttf -type msdf -size 42 -pxrange 4 \
 
 - Phaser 4.1+ (peer dependency)
 - WebGL with the `OES_standard_derivatives` extension (universally available
-  on WebGL 1.0; Phaser 4 fetches it during renderer init)
-
-The plugin throws a clear error during `init()` if the extension is missing.
+  on WebGL 1.0; Phaser 4 fetches it during renderer init). The plugin throws a
+  clear error during `init()` if it is missing.
 
 ## License
 

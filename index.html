@@ -98,8 +98,9 @@
     }
     #nav a#link-github:hover { background: #3a4256; }
 
-    /* Mobile-only pane toggle */
-    #btn-pane { display: none; padding: 0 10px; font-size: 12px; }
+    /* Mobile-only pane toggle. The #nav qualifier is load-bearing: `#nav button`
+       (display: flex) outranks a bare `#btn-pane`, so this needs two IDs to win. */
+    #nav #btn-pane { display: none; padding: 0 10px; font-size: 12px; }
 
     /* ── Main area ───────────────────────────────────────────── */
     #main {
@@ -137,7 +138,7 @@
        while the .open styles are inert. 900px (not 760px) so half-snapped
        desktop windows get the drawer instead of a crushed canvas. */
     @media (max-width: 900px) {
-      #btn-pane { display: flex; }
+      #nav #btn-pane { display: flex; }
       #nav-counter { display: none; }
 
       #pane-container {

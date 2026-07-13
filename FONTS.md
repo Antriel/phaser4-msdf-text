@@ -56,11 +56,12 @@ includes every glyph in the font, `-nokerning` drops kerning pairs.
 
 ## MTSDF: rounded outlines and soft shadows
 
-Generate with `-type mtsdf` to enable `setOutline(..., { rounded: true })` and
-`setShadow(..., { softness })`. MTSDF keeps the same 3-channel MSDF in the RGB
-channels (text stays exactly as crisp) and adds a *true* signed distance field
-in the alpha channel — that extra channel is what rounds outline corners and
-softens/blurs shadows.
+Generate with `-type mtsdf` to enable rounded outlines
+(`setOutline(width, color, alpha, rounded)`) and soft shadows
+(`setShadow(x, y, color, alpha, softness)`). MTSDF keeps the same 3-channel
+MSDF in the RGB channels (text stays exactly as crisp) and adds a *true*
+signed distance field in the alpha channel — that extra channel is what rounds
+outline corners and softens shadows.
 
 ```bash
 msdf-atlas-gen \
@@ -84,13 +85,11 @@ ignored with a one-time console warning.
 
 ## Merging several fonts into one atlas
 
-If a text object mixes fonts via rich text (`font:` on a segment or rule —
-see the README's rich-text section), each font normally uses its own atlas
-texture, so a run that switches fonts ends the draw call. `msdf-atlas-gen`
-can pack multiple `-font` inputs into one atlas texture with `-and`, and this
-plugin's loader (`this.load.msdfFont`) understands the resulting JSON
-natively — mixed-font text sharing a merged atlas never flushes on texture
-change.
+When rich text mixes fonts (`font:` on a segment or rule — see the README),
+each font normally uses its own atlas texture, so a run that switches fonts
+ends the draw call. `msdf-atlas-gen` can pack multiple `-font` inputs into one
+texture with `-and`, and the loader understands the resulting JSON natively —
+mixed-font text sharing a merged atlas never flushes on texture change.
 
 ```bash
 msdf-atlas-gen \

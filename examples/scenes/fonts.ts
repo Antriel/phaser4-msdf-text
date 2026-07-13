@@ -111,7 +111,7 @@ export class FontsScene extends ExampleScene {
     const left = 640 - blockA.width / 2;
     this.add
       .graphics()
-      .setDepth(-1)
+      .setDepth(-3)
       .lineStyle(1, 0x4ade80, 0.7)
       .lineBetween(left - 20, baselineY, left + blockA.width + 20, baselineY);
     this.add
