@@ -11,10 +11,11 @@
  */
 
 import * as Phaser from "phaser";
-import type { Corners } from './MSDFColor';
+import { packDashParams, type Corners, type PackedCorners } from './MSDFColor';
 import type { GlyphState } from './MSDFGlyphState';
 import type {
     ColorValue,
+    DashSpec,
     DecorationSpec,
     HighlightSpec,
     MatchTarget,
@@ -33,6 +34,17 @@ export function toColorInt(value: ColorValue): number {
 }
 
 /**
+ * A dash pattern, pre-parsed. `period` is what the rect builder needs (it fits a
+ * whole number of them across each rect); `params` is the dash's shape — the
+ * `254` sentinel plus its duty cycle, cap radius and blur — packed once here,
+ * since none of the three varies per corner.
+ */
+export interface ResolvedDash {
+    period: number;         // em-relative (× the run's size): length + gap
+    params: PackedCorners;  // the dash sentinel + radius / duty / softness
+}
+
+/**
  * An underline / strikethrough, pre-parsed. `color`/`alpha` absent mean "inherit
  * the resolved fill", which is also what makes the rect split at every colour
  * change in the span it covers.
@@ -42,6 +54,7 @@ export interface ResolvedDecoration {
     alpha?: Corners;   // 0-1 per corner
     thickness: number; // multiplier on the font's underlineThickness
     offset: number;    // em-relative shift from the default position
+    dash?: ResolvedDash; // absent ⇒ a solid rule
 }
 
 /**
@@ -192,6 +205,38 @@ function resolveNumberCorners(value: number | PerCorner<number>): Corners {
     return { topLeft: a, topRight: a, bottomLeft: a, bottomRight: a };
 }
 
+/** A dash long enough to read as a dash, and a gap wide enough to see through. */
+const DASH_LENGTH = 0.14;
+const DASH_GAP = 0.09;
+/**
+ * The widest duty cycle a dash may carry. At exactly `1` the dashes meet, and the
+ * crease where two cells touch sits at distance zero — a half-covered hairline
+ * every period. Backing off a hair keeps a near-solid rule near-solid.
+ */
+const DASH_MAX_DUTY = 0.98;
+
+/**
+ * Parse a dash pattern. A non-positive `length` or `gap` is not a pattern at all,
+ * so it resolves to `undefined` — a solid rule — rather than to a degenerate one
+ * (a zero-length dash is a hairline per cell; a zero gap is a solid rule already).
+ */
+function resolveDash(spec: boolean | DashSpec | undefined): ResolvedDash | undefined {
+    if (spec === undefined || spec === false) return undefined;
+    const s: DashSpec = spec === true ? {} : spec;
+
+    const length = s.length !== undefined ? s.length : DASH_LENGTH;
+    const gap = s.gap !== undefined ? s.gap : DASH_GAP;
+    if (!(length > 0) || !(gap > 0)) return undefined;
+
+    const period = length + gap;
+    const duty = Math.min(length / period, DASH_MAX_DUTY);
+    // Not per-corner, unlike a pill's — a rule's three shape bytes describe the
+    // dash, and a dash is one cell of a rect that may hold a hundred of them, so
+    // there is no corner for an interpolant to be anchored to.
+    const p = packDashParams(s.radius !== undefined ? s.radius : 0, duty, s.softness !== undefined ? s.softness : 0);
+    return { period, params: { topLeft: p, topRight: p, bottomLeft: p, bottomRight: p } };
+}
+
 /**
  * Parse an underline / strikethrough spec. `undefined` means the layer says
  * nothing (inherit); `false` is an explicit off, which is why it resolves to
@@ -208,6 +253,8 @@ export function resolveDecoration(spec: boolean | DecorationSpec | undefined): R
     };
     if (spec.color !== undefined) r.color = resolveColorCorners(spec.color);
     if (spec.alpha !== undefined) r.alpha = resolveNumberCorners(spec.alpha);
+    const dash = resolveDash(spec.dash);
+    if (dash !== undefined) r.dash = dash;
     return r;
 }
 

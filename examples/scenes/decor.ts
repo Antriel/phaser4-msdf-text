@@ -45,11 +45,16 @@ const DECOR: Segment[] = [
  * is a stadium at any font size and the whole pill scales with the camera
  * exactly as the text does.
  *
- * When dashed/dotted underlines land (see design/future-ideas.md), they get a
- * gallery row here and a `dash` control in the underline folder.
+ * A dashed rule is the same rect and the same rounded-box SDF, folded: its U
+ * spans one unit *per dash* instead of `0..1`, so the shader cuts it into cells
+ * with `fract` and the derivative it already reads as a pill's width comes out as
+ * one dash period. However many dashes it draws, it is still one quad — and the
+ * marching ants below are a plain `dashPhase` tween, which only slides that U
+ * origin, so they rebuild nothing.
  */
 export class DecorScene extends ExampleScene {
   private playground!: MSDFTextInstance;
+  private ants!: MSDFTextInstance;
 
   private params = {
     radius: 1,
@@ -61,14 +66,29 @@ export class DecorScene extends ExampleScene {
     innerColor: 0x9ad8ff,
     padX: 0.3,
     padY: 0.12,
-    underline: false,
+    underline: true,
     thickness: 1,
     offset: 0,
+    dash: false,
+    dashLength: 0.14,
+    dashGap: 0.09,
+    dashRadius: 0,
     strike: false,
   };
 
   constructor() {
     super({ key: "decor" });
+  }
+
+  /**
+   * The ants march. `dashPhase` counts in whole dash periods, so it is seamlessly
+   * periodic — `+= dt` for ever accumulates no error and needs no wrapping here
+   * (the renderer wraps it), and it resolves at submit time, so this costs no
+   * rebuild, no re-seed and no relayout. A tween on the field would do just as
+   * well; this is only so the speed reads honestly per second.
+   */
+  update(_time: number, delta: number): void {
+    if (this.ants) this.ants.dashPhase += delta / 1000;
   }
 
   protected build(): void {
@@ -83,8 +103,9 @@ export class DecorScene extends ExampleScene {
 
     this.caption(
       "Pills draw behind everything, the text's own drop shadow included. Underlines split " +
-        "where an inherited colour changes. Decorations follow the layout, not the glyph " +
-        "transform — displayCallback cannot see them. All of it batches with the glyphs.",
+        "where an inherited colour changes, and a dashed one is still a single quad — the dash " +
+        "count rides its UVs, so tweening dashPhase marches the ants for free. All of it batches " +
+        "with the glyphs.",
     );
   }
 
@@ -166,19 +187,54 @@ export class DecorScene extends ExampleScene {
 
     // Underline / strikethrough splits, driven purely by the segments.
     this.add
-      .msdfText(640, 468, "Inter", "", 28)
+      .msdfText(640, 448, "Inter", "", 28)
       .setColor("#f0ecff")
       .setOrigin(0.5, 0)
       .setCenterAlign()
       .setMaxWidth(1000)
       .setRichText(DECOR)
       .setUnderline({ thickness: 1, offset: 0 });
+
+    // Dashes. `length` and `gap` are em-relative to the run's own size, and the
+    // period is rounded to fit each rect a whole number of times — so a rule
+    // always begins and ends the same way, whatever it happens to span.
+    this.add
+      .msdfText(280, 566, "Inter", "dashed", 30)
+      .setColor("#f0ecff")
+      .setOrigin(0.5)
+      .setUnderline({ dash: true });
+
+    // Dots are not a second feature: a cap radius of 1 rounds a dash into a
+    // stadium, and a dash as long as the rule is thick makes that stadium a
+    // circle. Inter's underline is 0.068 em, so a 1.6x rule is ~0.11 em thick —
+    // which is where `length` has to land for a round dot rather than a lozenge.
+    this.add
+      .msdfText(530, 566, "Inter", "dotted", 30)
+      .setColor("#f0ecff")
+      .setOrigin(0.5)
+      .setUnderline({ thickness: 1.6, dash: { length: 0.11, gap: 0.1, radius: 1 } });
+
+    // Softness blurs a dash exactly as it blurs a pill — inward from its own box.
+    this.add
+      .msdfText(800, 566, "Inter", "soft", 30)
+      .setColor("#f0ecff")
+      .setOrigin(0.5)
+      .setUnderline({ thickness: 2.5, color: 0x7fd4ff, dash: { length: 0.24, gap: 0.16, radius: 1, softness: 0.9 } });
+
+    // And the ants march: one `dashPhase` field, tweened in `update`. Nothing is
+    // rebuilt — the phase slides the rect's UV origin at submit time — and a dash
+    // cut by the rule's end simply travels through it.
+    this.ants = this.add
+      .msdfText(1040, 566, "Inter", "marching", 30)
+      .setColor("#ffd23f")
+      .setOrigin(0.5)
+      .setUnderline({ thickness: 1.4, dash: { length: 0.16, gap: 0.1, radius: 1 } });
   }
 
   /** The one row the controls touch. */
   private buildPlayground(): void {
     this.playground = this.add
-      .msdfText(640, 620, "Inter", "P L A Y G R O U N D", 44)
+      .msdfText(640, 645, "Inter", "P L A Y G R O U N D", 40)
       .setColor("#fff6d5")
       .setOrigin(0.5);
     this.applyPlayground();
@@ -200,10 +256,15 @@ export class DecorScene extends ExampleScene {
       innerColor: p.twoTone ? p.innerColor : undefined,
       padding: { x: p.padX, y: p.padY },
     });
+    // `false` is a solid rule, so the whole dash lane costs nothing when it is
+    // off — no sentinel, no fold, the same constant params a rule has always
+    // packed. A strikethrough takes the identical spec: the two are one code
+    // path that differs only in where the rect lands.
+    const dash = p.dash ? { length: p.dashLength, gap: p.dashGap, radius: p.dashRadius } : false;
     this.playground.setUnderline(
-      p.underline ? { thickness: p.thickness, offset: p.offset } : false,
+      p.underline ? { thickness: p.thickness, offset: p.offset, dash } : false,
     );
-    this.playground.setStrikethrough(p.strike);
+    this.playground.setStrikethrough(p.strike ? { dash } : false);
   }
 
   protected addControls(pane: Pane): void {
@@ -225,10 +286,19 @@ export class DecorScene extends ExampleScene {
     h.addBinding(this.params, "padX", { label: "padding x (em)", min: -0.2, max: 1, step: 0.01 }).on("change", apply);
     h.addBinding(this.params, "padY", { label: "padding y (em)", min: -0.2, max: 1, step: 0.01 }).on("change", apply);
 
-    const u = pane.addFolder({ title: "Underline" });
+    const u = pane.addFolder({ title: "Underline (playground row)" });
     u.addBinding(this.params, "underline", { label: "enabled" }).on("change", apply);
     u.addBinding(this.params, "thickness", { min: 0.25, max: 4, step: 0.05 }).on("change", apply);
     u.addBinding(this.params, "offset", { label: "offset (em)", min: -0.3, max: 0.3, step: 0.01 }).on("change", apply);
+    // Dash length and gap are em-relative to the run's size, like `offset`; the
+    // cap radius is a fraction of the dash's own half-thickness, like a pill's.
+    // Sweep the radius up with a short length and the dashes become dots.
+    // The dash controls drive the strikethrough too — one code path, differing
+    // only in where the rect lands.
+    u.addBinding(this.params, "dash", { label: "dashed (both rules)" }).on("change", apply);
+    u.addBinding(this.params, "dashLength", { label: "dash length (em)", min: 0.01, max: 0.5, step: 0.01 }).on("change", apply);
+    u.addBinding(this.params, "dashGap", { label: "dash gap (em)", min: 0.01, max: 0.5, step: 0.01 }).on("change", apply);
+    u.addBinding(this.params, "dashRadius", { label: "cap radius", min: 0, max: 1, step: 0.01 }).on("change", apply);
 
     pane.addBinding(this.params, "strike", { label: "strikethrough" }).on("change", apply);
   }

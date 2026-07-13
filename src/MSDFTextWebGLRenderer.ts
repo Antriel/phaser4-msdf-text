@@ -96,14 +96,17 @@ const zeroCorners: Corners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRig
 // The object's effective per-corner alpha, for decorations that inherit it.
 const baseAlpha: Corners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 
-// An underline / strikethrough rect: a hard-edged box, no radius, no border, no
-// blur. A highlight pill carries its own packed params instead.
+// A solid underline / strikethrough rect: a hard-edged box, no radius, no border,
+// no blur. A highlight pill and a dashed rule carry their own packed params.
 const rectParams: PackedCorners = { topLeft: SOLID_PARAMS, topRight: SOLID_PARAMS, bottomLeft: SOLID_PARAMS, bottomRight: SOLID_PARAMS };
 const rectColor: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 // A rect spans the full 0..1 of its own UV box. Originally just so
 // `fwidth(texCoord)` stayed nonzero, but the shader now reads those derivatives
 // as the rect's screen size in pixels — which is the whole of the box SDF's
 // input, and why a pill needs no attribute a decoration didn't already have.
+//
+// A *dashed* rule stretches that U span to one unit per dash (see below), which
+// is why `u0`/`u1` are written per rect rather than left at their defaults.
 const rectQuad = { x: 0, y: 0, w: 0, h: 0, u0: 0, v0: 0, u1: 1, v1: 1 };
 
 /**
@@ -412,6 +415,10 @@ function packRectCorner(rgb: number, alpha: number, inner: number): number {
  * texture, so a decoration under a per-run font costs no extra draw call. A plain
  * underline leaves `params` and the border colour at their constant defaults; a
  * highlight pill carries its own, packed once at rebuild.
+ *
+ * `dashPhase` is the one decoration input resolved *here* rather than at rebuild,
+ * for the same reason an inherited colour is: it changes nothing about the rects
+ * and everything about how they are submitted, so tweening it is free.
  */
 function submitDecorations(
     drawingContext: any,
@@ -423,7 +430,8 @@ function submitDecorations(
     originOffsetX: number,
     originOffsetY: number,
     baseRgb: number,
-    baseAlpha: Corners
+    baseAlpha: Corners,
+    dashPhase: number
 ): void {
     for (let i = 0; i < rects.length; i++) {
         const r = rects[i];
@@ -436,6 +444,16 @@ function submitDecorations(
         rectQuad.y = r.y;
         rectQuad.w = r.w;
         rectQuad.h = r.h;
+
+        // A dashed rule spans one unit of U per dash, so the shader's fold
+        // (`fract`) cuts the rect into that many cells and the derivative it
+        // already computes comes out as one period in pixels — the dash count
+        // needs no vertex byte, and the phase is a slide of the U origin. Negated,
+        // so a rising phase marches the dashes forward; pre-wrapped by the caller,
+        // so U stays small however long the tween has run.
+        const dashCount: number = r.dashCount;
+        rectQuad.u0 = dashCount > 0 ? -dashPhase : 0;
+        rectQuad.u1 = dashCount > 0 ? dashCount - dashPhase : 1;
 
         const rgb: Corners | undefined = r.rgb;
         const alpha: Corners | undefined = r.alpha;
@@ -505,12 +523,19 @@ function MSDFTextWebGLRenderer(
     const hasShadow = src.hasShadow();
     const decorations = src._decorRects;
     const hasDecorations = decorations.length > 0;
+    // A dash pattern repeats every unit of phase, so wrapping it into [0, 1) is
+    // exact — and it keeps a rect's U span small however long a marching-ants
+    // tween has been accumulating.
+    let dashPhase = 0;
     if (hasDecorations) {
         const cA = src._color.a;
         baseAlpha.topLeft = cA * src._alphaTL;
         baseAlpha.topRight = cA * src._alphaTR;
         baseAlpha.bottomLeft = cA * src._alphaBL;
         baseAlpha.bottomRight = cA * src._alphaBR;
+
+        const p = src.dashPhase;
+        dashPhase = p - Math.floor(p);
     }
 
     // ── Resolve per-glyph state ─────────────────────────────────────────────
@@ -591,7 +616,7 @@ function MSDFTextWebGLRenderer(
     // ── Highlight pass — pills behind everything, the shadow included. ───────
     if (hasDecorations) {
         submitDecorations(drawingContext, batchHandler, decorations, PASS_HIGHLIGHT, multiFont,
-            calcMatrix, originOffsetX, originOffsetY, src.color, baseAlpha);
+            calcMatrix, originOffsetX, originOffsetY, src.color, baseAlpha, dashPhase);
     }
 
     // ── Shadow pass — render shadow behind the text. ────────────────────────
@@ -667,7 +692,7 @@ function MSDFTextWebGLRenderer(
     // ── Underline pass — under the glyphs, over the shadows and silhouettes. ─
     if (hasDecorations) {
         submitDecorations(drawingContext, batchHandler, decorations, PASS_UNDERLINE, multiFont,
-            calcMatrix, originOffsetX, originOffsetY, src.color, baseAlpha);
+            calcMatrix, originOffsetX, originOffsetY, src.color, baseAlpha, dashPhase);
     }
 
     // ── Text pass — fill, with the outline composited under it in the same ───
@@ -711,7 +736,7 @@ function MSDFTextWebGLRenderer(
     // ── Strikethrough pass — over the glyphs, matching browsers. ─────────────
     if (hasDecorations) {
         submitDecorations(drawingContext, batchHandler, decorations, PASS_STRIKE, multiFont,
-            calcMatrix, originOffsetX, originOffsetY, src.color, baseAlpha);
+            calcMatrix, originOffsetX, originOffsetY, src.color, baseAlpha, dashPhase);
     }
 }
 

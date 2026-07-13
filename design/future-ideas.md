@@ -326,7 +326,65 @@ What the build settled beyond the sketch:
   `sqrt` per fragment**; the glyph lane, which shares the vector, gets a sharper
   rotated edge out of it too.
 
-### Dashed / dotted underline
+### ~~Dashed / dotted underline~~ — **built**
+
+`DecorationSpec.dash` (`{ length, gap, radius, softness }`, em-relative on the
+first two), on both rules, on every style layer. Plus `dashPhase` at the object
+level — the marching ants the note below asked about, and they cost nothing.
+
+The sketch's escape route was taken and its guard-band argument holds, but its
+**byte budget was wrong in the caller's favour**: it planned to spend all three
+payload bytes on the dashed variant (count, duty, cap radius) and lose `softness`.
+It does not have to. The dash **count needs no byte at all** — a dashed rect spans
+one unit of U *per dash* instead of `0..1`, so `screenTexSize.x` (the derivative
+the pill already reads as its width) comes out as one period in pixels, and the
+shader folds U into a single cell with `fract`. Count and phase therefore ride the
+vertex UVs at float precision.
+
+What that buys, and what it settled:
+
+- **Only one byte changes meaning.** `.b` becomes a duty cycle; `.g` and `.a` keep
+  the pill's `radius` and `softness` exactly. So **dots are not a second feature**:
+  a `radius` of `1` rounds a dash into a stadium, and a dash as long as the rule is
+  thick makes that stadium a circle. A blurred dash comes free with them.
+- **The shader zeroes the border on the dashed variant.** Not cosmetic: `.b` is a
+  duty cycle there, and left alone it would inset the dash's face by a phantom
+  ring. That is the only line the fold needs beyond rewriting the box's `x`.
+- **The fold is seamless, and that is a property of `roundedBox`, not luck.** It is
+  even in `x` about the cell centre, so `fract` 0 and `fract` 1 give the *same*
+  distance (verified: max difference `0.0` across 40 cells). A dash may therefore be
+  cut by the rect's own edge without a sliver where U wraps — which is what makes a
+  phase slide legal at all. A *left-aligned* dash within its cell would not have this
+  property and would fringe the right edge.
+- **Phase is free, so marching ants are.** `dashPhase` negates and slides the U
+  origin at *submit* time (`u0 = -phase`, `u1 = count - phase`) — no rebuild, no
+  re-seed, no relayout, and it counts whole periods, so `+= dt` for ever accumulates
+  no error (the renderer wraps into `[0, 1)`, exactly).
+- **Whole-dash fitting, at a known cost.** `buildDecorRects` rounds the count so each
+  rect fits whole dashes and every rule begins and ends the same way; the period
+  stretches by up to half a dash to pay for it. The cost is that a *split* rule (an
+  inherited colour changing mid-underline) refits per piece, so the grids do not line
+  up across the seam. Visible, judged rare enough, **left alone** — free-running the
+  grid instead would fix the seam and truncate every rule's last dash, which is the
+  worse trade.
+- **The vertex shader went `highp`.** A long rule's U runs to tens of units, where an
+  fp16 varying's ULP would be a visible fraction of a dash. Vertex `highp` is
+  mandatory in GLSL ES 1.00, so this costs nothing — and it incidentally fixes
+  positions, which run to thousands of pixels and were riding `mediump`.
+- **The guard band moved.** A real glyph now clips at byte `252` and the shader takes
+  the solid lane at `253` (was `253`/`254`), keeping the full byte of guard against a
+  bold glyph's interpolated weight. The two sentinels split at `254.5` with half a
+  byte each side, which needs no guard: neither is interpolated. Faux bold loses the
+  top `3/255` instead of `2/255` — still inside the range where the fill edge has
+  collapsed onto the field's clamp.
+
+Not built, and not obviously wanted: a per-*run* dash phase (the object-level one
+covers marching; a static per-run stagger is a strange thing to want), a dashed pill
+**border** (`.b` is the pill's border width — there is no byte, and the shape is a
+ring, not a rule), and per-corner dash channels (a dash is one cell of a rect that
+may hold a hundred, so there is no corner to anchor an interpolant to).
+
+*The original sketch follows, unedited.*
 
 **What:** `fract(u · n)` against the rect's own `0..1` U coordinate, thresholded
 in the `solid` branch — same UV groundwork as the pill above. `n` (dash count)
@@ -377,6 +435,22 @@ and rects are a different shape. If a real use case shows up (animated
 underline color following a tween, a "typewriter" strike-through reveal), the
 rect array would need its own lightweight per-rect state object, seeded and
 read back the same way glyphs are.
+
+**Two of the three motivating cases turned out not to need it**, which is worth
+recording before anyone builds the per-rect state object on their strength:
+
+- *Colour following a tween* — already works, and always did. An **inherited**
+  colour/alpha is resolved at submit time, so tweening the object's colour drags
+  every rule that didn't name its own along with it.
+- *Marching ants* — `dashPhase`, above. Same trick, one level further: the phase is
+  read at submit and slides the rects' UV origin, so it animates with no per-rect
+  state at all.
+
+The pattern both share, and the thing to reach for first: **an input the renderer
+can resolve at submit time needs no state object, because the rects never change.**
+What is left over is the genuinely per-rect, genuinely stateful case — a typewriter
+reveal, where each rect needs its *own* progress — and that one still wants the
+array. Its cost has not changed.
 
 ## Not on this list (explicitly rejected, not deferred)
 

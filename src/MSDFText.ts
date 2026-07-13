@@ -36,6 +36,7 @@ import {
     styleHasAppearanceKeys,
     styleHasDecorationKeys,
     applyStyleToGlyph,
+    type ResolvedDash,
     type ResolvedDecoration,
     type ResolvedHighlight,
     type ResolvedStyle,
@@ -62,6 +63,7 @@ import type {
 // for consumers (index.ts, the factory/creator, the Phaser augmentations).
 export type {
     ColorValue,
+    DashSpec,
     DecorationSpec,
     HighlightSpec,
     HighlightPadding,
@@ -352,6 +354,10 @@ export const MSDFText: MSDFTextStatic = new Class({
         this._highlight = null;      // object-level default: ResolvedHighlight | null
         this._decorRects = [];
         this._hasDecorations = false;
+        // The one decoration knob that is *not* resolved at rebuild: a dashed
+        // rule's phase slides the rects' UV origin at submit time, so it is a
+        // plain public field with no dirty flag — tween it and the ants march.
+        this.dashPhase = 0;
 
         // ── Structural styling (per-run `fontScale` and `font`) ─────────────
         // Two source-indexed maps, both `null` on the uniform fast path, both
@@ -1817,6 +1823,17 @@ export const MSDFText: MSDFTextStatic = new Class({
                 : (data.underlineY + spec.offset) * size;
 
             if (h > 0 && x1 > x0) {
+                // A dashed rule spans one unit of U per dash rather than 0..1, so
+                // the count is the whole of what the shader needs to fold the rect
+                // into cells — no vertex byte, and the phase slides for free at
+                // submit. Round it, so a rule always fits a whole number of dashes
+                // and therefore begins and ends the same way; the period stretches
+                // by up to half a dash to pay for that, and a rule too short for
+                // one and a half periods becomes a single centred dash.
+                const dash = spec.dash;
+                const period = dash ? dash.period * size : 0;
+                const dashCount = period > 0 ? Math.max(1, Math.round((x1 - x0) / period)) : 0;
+
                 rects.push({
                     x: x0,
                     y: first.baselineY + centre - h / 2,
@@ -1831,12 +1848,15 @@ export const MSDFText: MSDFTextStatic = new Class({
                     // text's colour drags an inherited underline along with it.
                     rgb: spec.color !== undefined ? spec.color : cs,
                     alpha: spec.alpha !== undefined ? spec.alpha : as,
-                    // A rule is a hard-edged box with no border and no two-tone
-                    // ramp; the renderer substitutes its constant defaults. Named
-                    // anyway so both rect kinds share one hidden class.
+                    // A rule takes no border and no two-tone ramp; the renderer
+                    // substitutes its constant defaults. Named anyway so both rect
+                    // kinds share one hidden class.
                     inner: undefined,
                     border: undefined,
-                    params: undefined
+                    // A solid rule is the constant hard-edged box, so it packs
+                    // nothing. A dashed one carries the dash's own shape.
+                    params: dashCount > 0 ? (dash as ResolvedDash).params : undefined,
+                    dashCount: dashCount
                 });
             }
             i = j;
@@ -1917,7 +1937,11 @@ export const MSDFText: MSDFTextStatic = new Class({
                     // "no face" and "this rgb is the border ramp's inner end".
                     inner: spec.innerColor,
                     border: packBorder(spec),
-                    params: packPillParams(spec)
+                    params: packPillParams(spec),
+                    // A pill is never dashed — the byte a dash spends on its duty
+                    // cycle is the pill's border width. Named so both rect kinds
+                    // share one hidden class.
+                    dashCount: 0
                 });
             }
             i = j;

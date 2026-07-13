@@ -32,13 +32,53 @@ export interface PerCorner<T> {
 }
 
 /**
+ * A dash pattern for an underline or strikethrough — the rule is cut into evenly
+ * spaced dashes instead of being drawn solid. Passing `true` instead of this
+ * object takes the defaults below.
+ *
+ * `length` and `gap` are em-relative to the **run's own size**, like
+ * {@link DecorationSpec.offset}, so a dashed rule keeps its proportions under a
+ * `fontScale` run or a `fitInside`. The requested period (`length + gap`) is
+ * rounded to fit each rect a whole number of times, so a rule always begins and
+ * ends the same way; a rect narrower than one and a half periods becomes a single
+ * centred dash.
+ *
+ * Dots are a corner of the same shape, not a second feature: a `radius` of `1`
+ * rounds a dash into a stadium, and a `length` at or below the rule's thickness
+ * makes that stadium a circle.
+ *
+ * The whole pattern is **one quad**, however many dashes it draws — the count
+ * rides the rect's UVs, not a vertex byte — so a dashed rule costs no more to draw
+ * than a solid one, and {@link MSDFTextInstance.dashPhase} can slide it every
+ * frame without rebuilding anything.
+ */
+export interface DashSpec {
+    /** Dash length, em-relative (× the run's font size). Default `0.14`. Must be `> 0`. */
+    length?: number;
+    /** Gap between dashes, em-relative (× the run's font size). Default `0.09`. Must be `> 0`. */
+    gap?: number;
+    /**
+     * Cap rounding, `0` (square) to `1` (a stadium), as a fraction of the dash's
+     * own half-thickness. Default `0`. With a short `length`, `1` is a round dot.
+     */
+    radius?: number;
+    /**
+     * Edge blur, `0` (a 1-screen-pixel antialiased edge) to `1`, as a fraction of
+     * the dash's half-thickness. Default `0`. Fades inward, like a pill's.
+     */
+    softness?: number;
+}
+
+/**
  * An underline or strikethrough. Passing `true` instead of this object inherits
  * everything; passing `false` switches the decoration off for the run.
  *
  * Decorations follow the **layout**, not the glyphs: per-glyph `scale`,
  * `rotation` and `skew` move a glyph without moving the rule under it. They also
  * cast no shadow and take no outline, and `displayCallback` cannot see or
- * animate them — they are resolved from the style layers only.
+ * animate them — they are resolved from the style layers only. The one exception
+ * is {@link MSDFTextInstance.dashPhase}, which slides a dash pattern at submit
+ * time and so is tweenable without a rebuild.
  */
 export interface DecorationSpec {
     /** Rule colour. Default: inherit the run's resolved fill colour. */
@@ -49,6 +89,12 @@ export interface DecorationSpec {
     thickness?: number;
     /** Em-relative shift from the default position; positive moves down. Default `0`. */
     offset?: number;
+    /**
+     * Cut the rule into dashes (or dots). `true` takes the {@link DashSpec}
+     * defaults; omitting it (or `false`) draws a solid rule. A `length` or `gap`
+     * of `0` is not a dash pattern, so it falls back to solid.
+     */
+    dash?: boolean | DashSpec;
 }
 
 /** Em-relative padding around a highlight pill (× the object's `fontSize`). */
@@ -602,6 +648,23 @@ export interface MSDFTextInstance extends
      * letter. Set it `false` if you want those spikes.
      */
     shadowRounded: boolean;
+
+    /**
+     * Slide every dashed rule on this text along its own length, in **dash
+     * periods**: `1` advances the pattern by exactly one dash and a gap, so it is
+     * seamlessly periodic and a plain `dashPhase += delta` marches for ever
+     * without accumulating error. Positive moves the dashes forward (to the
+     * right). Default `0`.
+     *
+     * This is the marching-ants knob. It is resolved at *submit* time — it slides
+     * the rects' UV origin and nothing else — so tweening it costs no rebuild, no
+     * re-seed and no re-layout, and it is a plain field, so `scene.tweens.add({
+     * targets: text, dashPhase: 1, duration: 600, repeat: -1 })` is the whole
+     * effect. Dashes cut by a rect's ends simply travel through them.
+     *
+     * No effect unless a rule carries a {@link DashSpec}.
+     */
+    dashPhase: number;
 
     /**
      * Render per-glyph shadows even when the object has no shadow of its own.

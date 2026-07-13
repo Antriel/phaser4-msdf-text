@@ -36,6 +36,16 @@
  * interpolated: a rect writes it to all four corners by construction, so it is
  * uniform across the quad in the same way, and for the same reason, the `solid`
  * short-circuit itself is.
+ *
+ * `solid` is a sentinel **value**, not a bit, so it can name more than one thing.
+ * {@link packDashParams} claims a second one — byte `254`, a *dashed* rect — and
+ * with it the middle channel, which becomes a **duty cycle** instead of a border
+ * width. It needs no byte for the dash *count*, because a dashed rect spans that
+ * many cells of its own U coordinate rather than the usual `0..1`: the count (and
+ * the marching-ants phase with it) rides the UVs at full float precision, and
+ * `screenTexSize.x` — the derivative the shader already computes — comes out as
+ * one dash period in pixels. Telling `254` from `255` is safe for exactly the
+ * reason `solid` is: both are written to all four corners by construction.
  */
 
 /** A value per glyph quad corner. */
@@ -55,24 +65,34 @@ export interface PackedCorners {
 }
 
 /**
- * The largest `weight` byte a real glyph may carry. `255` is reserved as the
- * {@link SOLID_PARAMS} sentinel, and the shader splits the two at `254`, so both
- * sides keep a full byte of guard band — wide enough that a `mediump` varying
- * can never interpolate a bold glyph across the threshold.
+ * The two `weight` bytes that mean "this quad is a rect, not a glyph": `255` is a
+ * plain box or pill ({@link packSolidParams}), `254` a dashed one
+ * ({@link packDashParams}). The shader takes the solid lane at `≥ 253` and tells
+ * the two variants apart at `254.5`.
+ */
+const SOLID_SENTINEL = 255;
+const DASH_SENTINEL = 254;
+
+/**
+ * The largest `weight` byte a real glyph may carry — one full byte below the
+ * shader's `253` solid threshold, so a `mediump` varying can never interpolate a
+ * bold glyph across it. (The two sentinels above sit half a byte either side of
+ * their own threshold, which needs no guard: both are written to all four corners
+ * by construction, so there is nothing to interpolate.)
  *
- * The cost is the top `2/255` of the faux-bold range (`weightNorm` saturates at
- * `≈0.4902` instead of `0.5`). At that end the fill edge has already collapsed
+ * The cost is the top `3/255` of the faux-bold range (`weightNorm` saturates at
+ * `≈0.4863` instead of `0.5`). At that end the fill edge has already collapsed
  * onto the field's own clamp and neighbouring letters overlap, so the sacrifice
  * is invisible — see the sentinel discussion in `design/future-ideas.md`.
  */
-const WEIGHT_MAX_BYTE = 253;
+const WEIGHT_MAX_BYTE = 252;
 
 /**
- * The `params` value for a plain, square-cornered rect: `weight = 255` is the
- * solid sentinel, and the other three channels are zero — no corner radius, no
- * border, no softness, which is a hard-edged box. Equal to
- * `packSolidParams(0, 0, 0)`; kept as a constant because underline and
- * strikethrough rects are exactly that and never need to pack anything.
+ * The `params` value for a plain, square-cornered rect: the solid sentinel, and
+ * the other three channels zero — no corner radius, no border, no softness, which
+ * is a hard-edged box. Equal to `packSolidParams(0, 0, 0)`; kept as a constant
+ * because an undashed underline or strikethrough is exactly that and never needs
+ * to pack anything.
  *
  * A constant is safe under interpolation for the same reason the old bitfield
  * was not: a rect's four corners carry identical values by construction, so
@@ -108,8 +128,8 @@ export function packColor(rgb: number, alpha: number): number {
  *   `±0.5` of the range clears the field's own clamp. Neutral is byte `128`,
  *   which decodes to `128/255 ≈ 0.50196`, *not* `0.5` — the shader subtracts
  *   the same constant, or every glyph would pick up a hair of faux bold. The
- *   top of the byte is clipped to {@link WEIGHT_MAX_BYTE}, reserving `255` for
- *   the {@link SOLID_PARAMS} sentinel.
+ *   top of the byte is clipped to {@link WEIGHT_MAX_BYTE}, reserving the top of
+ *   the range for the rect sentinels.
  * - `rounded` — how far the outline / shadow edge slides from `median(rgb)`
  *   towards the true SDF (MTSDF only). The shader `mix()`es on it, so the whole
  *   `[0, 1]` is meaningful and intermediate corners blend sharp into round.
@@ -161,5 +181,40 @@ export function packSolidParams(radiusNorm: number, borderNorm: number, softNorm
     const g = toByte(radiusNorm * 255);
     const b = toByte(borderNorm * 255);
     const a = toByte(softNorm * 255);
-    return ((a << 24) | (b << 16) | (g << 8) | 0xff) >>> 0;
+    return ((a << 24) | (b << 16) | (g << 8) | SOLID_SENTINEL) >>> 0;
+}
+
+/**
+ * Pack the four `params` channels of a **dashed** rect — the second solid
+ * variant. `radius` and `softness` keep the meaning {@link packSolidParams} gives
+ * them, and the middle channel becomes the dash's **duty cycle** rather than a
+ * border width (a dashed rule has no ring to draw, and the shader zeroes the
+ * border on this variant so a duty byte can never inset the face).
+ *
+ * The dash **count** takes no byte at all. A dashed rect spans that many cells of
+ * its own U coordinate instead of the usual `0..1`, so the shader recovers one
+ * period in pixels from the derivative it already computes and folds U into a
+ * single cell with `fract`. Count and phase therefore ride the vertex UVs at full
+ * float precision, which is what leaves room here for a duty cycle *and* keeps
+ * marching ants free: sliding the U origin costs nothing at submit time.
+ *
+ * The fold is seamless because `roundedBox` is even in x about the cell centre —
+ * `fract` 0 and `fract` 1 are the same distance — so a dash may be cut by the
+ * rect's own edge without a sliver appearing where U wraps.
+ *
+ * @param radiusNorm Cap rounding, `0` (square) to `1` (a stadium — a round dot at
+ *                   a short enough `dutyNorm`). Fraction of the dash's own
+ *                   half-thickness, `min(dashLength, thickness) / 2`.
+ * @param dutyNorm   Dash length as a fraction of the period. Must be `> 0` (a
+ *                   zero-length dash leaves a 1px hairline per cell) and `< 1`
+ *                   (at `1` the dashes touch, and the crease where they meet
+ *                   reads as a half-covered seam).
+ * @param softNorm   Edge blur, as for a pill: fades inward, `0` is a 1-screen-pixel
+ *                   antialiased edge.
+ */
+export function packDashParams(radiusNorm: number, dutyNorm: number, softNorm: number): number {
+    const g = toByte(radiusNorm * 255);
+    const b = toByte(dutyNorm * 255);
+    const a = toByte(softNorm * 255);
+    return ((a << 24) | (b << 16) | (g << 8) | DASH_SENTINEL) >>> 0;
 }

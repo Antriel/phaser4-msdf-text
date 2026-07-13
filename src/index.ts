@@ -52,6 +52,7 @@ export type {
     StyleSpec,
     SegmentSpec,
     Segment,
+    DashSpec,
     DecorationSpec,
     HighlightSpec,
     HighlightPadding,

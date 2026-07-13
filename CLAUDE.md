@@ -55,15 +55,19 @@ shader decodes with its exact inverse, and there is no second source of truth.
   outline melting from sharp to round across a glyph. There is no bitfield: GLSL
   ES 1.00 has no `flat` qualifier, so an interpolated bitfield would be garbage.
 - `solid` (rect quads: underline, strike, highlight pill) is instead a
-  **sentinel**: weight byte `255`. A rect writes it identically to all four
-  corners, so it is uniform across its quad by construction — which is what makes
-  it the format's **one legitimate selector**, and why the upper three bytes of a
-  solid quad may be *re-decoded* as a pill's radius / border / blur (see
-  Decorations). `packParams` clips a real glyph's weight to byte `253` and the
-  shader splits at `254` — a byte of guard band each side, ~4× a `mediump`
-  varying's ULP. The cost is the top `2/255` of faux bold, where the fill edge has
-  already collapsed onto the field's clamp. `packSolidParams` is the rect-side
-  packer; `SOLID_PARAMS` is its all-zero (hard-edged box) constant.
+  **sentinel**: weight byte `255`, or `254` for a *dashed* rect. A rect writes it
+  identically to all four corners, so it is uniform across its quad by
+  construction — which is what makes it the format's **one legitimate selector**,
+  and why the upper three bytes of a solid quad may be *re-decoded* as a pill's
+  radius / border / blur, or a dash's radius / **duty** / blur (see Decorations).
+  It is a sentinel *value*, not a bit, which is the whole reason it can name two
+  variants. `packParams` clips a real glyph's weight to byte `252` and the shader
+  takes the solid lane at `253` — a byte of guard band, ~4× a `mediump` varying's
+  ULP; the two sentinels sit half a byte either side of their own `254.5` split,
+  which needs no guard because neither is interpolated. The cost is the top `3/255`
+  of faux bold, where the fill edge has already collapsed onto the field's clamp.
+  `packSolidParams` / `packDashParams` are the rect-side packers; `SOLID_PARAMS` is
+  the all-zero (hard-edged box) constant.
 
 **Outline** — outline and fill composite in one quad (fill *over* outline; the
 outline edge is `fillEdge - width`). Because that is per-glyph, a thick outline
@@ -178,7 +182,9 @@ the alpha channel alongside the MSDF in RGB. The fill layer always uses
   two-tone `mix`. A glyph's outline layer *is* a pill's border ring; a glyph's
   fill *is* the pill's face, inset by that ring. Degenerate cases are exact: zero
   outline alpha is a plain fill, zero fill alpha is a bare silhouette, and a rect
-  with all three payload bytes zero is a hard-edged box.
+  with all three payload bytes zero is a hard-edged box. The solid lane nests one
+  further branch — the dash fold — uniform per quad for the same reason, and it
+  only rewrites the box's `x` coordinate and half-extent before the shared math.
 - The texture fetch and every derivative sit **above** the branch, where control
   flow is unconditionally uniform — implicit-LOD sampling and `dFdx` require it.
   `screenTexSize` is therefore shared; `px` is glyph-lane only.
@@ -219,8 +225,29 @@ shadow included; underlines before the fill loop; strikethroughs after.
 - **Underline / strikethrough** (`buildDecorRects`) split at line breaks,
   `fontScale` and `font` boundaries, and — when the colour is inherited — resolved
   fill colour/alpha changes. An inherited colour is resolved at *submit* time, so
-  tweening the object's colour or alpha drags the underline along. Their params
-  are the constant `SOLID_PARAMS`.
+  tweening the object's colour or alpha drags the underline along. A solid rule's
+  params are the constant `SOLID_PARAMS`.
+- **Dashed / dotted rules** (`DecorationSpec.dash`) are the second solid sentinel
+  (`254`, `packDashParams`). The dash **count takes no byte**: a dashed rect spans
+  one unit of U *per dash* instead of `0..1`, so `screenTexSize.x` — the derivative
+  the pill already reads as its width — comes out as one period in pixels, and the
+  shader folds U into a single cell with `fract`. That is what frees `.b` to be a
+  **duty cycle** (the shader zeroes the border on this variant, or a duty byte would
+  inset the dash's face by a phantom ring), while `.g`/`.a` keep their pill meanings
+  — so a `radius` of `1` with a dash as long as the rule is thick *is* a dot, and
+  `softness` blurs it. The fold is seamless because `roundedBox` is **even in x
+  about the cell centre**: `fract` 0 and `fract` 1 are the same distance, so a dash
+  cut by the rect's own edge grows no sliver where U wraps. `buildDecorRects` rounds
+  the count so each rect fits whole dashes (a rule always begins and ends the same
+  way; a rule shorter than 1.5 periods is one centred dash) — at the cost of grids
+  that don't line up across a *split* rule, which is accepted, not fixed.
+  Consequence worth stating: the vertex shader is **`highp`**, not `mediump`, since
+  a long rule's U runs to tens of units.
+- **`dashPhase`** (object level, default `0`) is the marching-ants knob and the one
+  decoration input resolved at *submit* rather than rebuild: it negates and slides
+  the rects' U origin (`u0 = -phase`, `u1 = count - phase`), so tweening it costs no
+  rebuild, no re-seed and no relayout. It counts whole periods, so it is seamlessly
+  periodic — the renderer wraps it into `[0, 1)`, which is exact.
 - **Highlight pills** (`buildHighlightRects`) never inherit the fill colour — a
   slab of text-coloured paint behind the text would hide it — so there is no
   colour-change split and no submit-time resolution. Their vertical extent is a

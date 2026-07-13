@@ -330,7 +330,7 @@ text.setStrikethrough({ color: 0xff5252, offset: 0.02 });
 text.setUnderline(false);                            // off
 ```
 
-Both accept `true`/`false` or `{ color?, alpha?, thickness?, offset? }`.
+Both accept `true`/`false` or `{ color?, alpha?, thickness?, offset?, dash? }`.
 `thickness` multiplies the font's own `underlineThickness`; `offset` is
 em-relative (positive is down). Left alone, colour and alpha **inherit the
 resolved fill**, so each coloured word gets a matching rule. They are also
@@ -347,6 +347,46 @@ batch with the glyphs: a decorated text is still one draw call.
 - Strikethrough sits at `-0.25 em` above the baseline (msdf-atlas-gen emits no
   strike metric); use `offset` where that lands wrong for your face.
 - Decorations cast no shadow and take no outline.
+
+#### Dashed, dotted, and marching ants
+
+```ts
+text.setUnderline({ dash: true });                                  // dashes
+text.setUnderline({ thickness: 1.6, dash: { length: 0.11, gap: 0.1, radius: 1 } });  // dots
+```
+
+`dash` takes `true` (the defaults) or `{ length?, gap?, radius?, softness? }`.
+`length` and `gap` are em-relative to the **run's own size**, like `offset`;
+`radius` rounds the dash caps (`0` square, `1` a stadium) and `softness` blurs
+them, both as fractions of the dash's own half-thickness — the same two knobs a
+highlight pill spends on the same two bytes.
+
+Dots are not a second feature, just a corner of that one shape: `radius: 1`
+rounds a dash into a stadium, and a dash *as long as the rule is thick* makes
+that stadium a circle. So a dotted rule wants `length ≈ thickness × the font's
+underlineThickness` — for Inter (`0.068 em`) at `thickness: 1.6`, that is
+`length: 0.11`.
+
+The requested period (`length + gap`) is rounded to fit each rect a whole number
+of times, so a rule always begins and ends the same way whatever it spans; the
+period stretches by up to half a dash to pay for it, and a rule too short for one
+and a half periods becomes a single centred dash. Where a rule *splits* (a colour
+or size change mid-underline), each piece refits its own whole dashes, so the
+grids do not line up across the seam.
+
+However many dashes it draws, a dashed rule is still **one quad** — the dash count
+rides the rect's UVs rather than a vertex attribute, which is what leaves a byte
+free for the duty cycle and makes the phase free to slide:
+
+```ts
+// Marching ants. dashPhase counts whole dash periods, so it is seamlessly
+// periodic and accumulates no error; it resolves at submit time, so this
+// rebuilds nothing.
+scene.tweens.add({ targets: text, dashPhase: 1, duration: 700, repeat: -1 });
+```
+
+`dashPhase` is a plain field on the text object (default `0`, positive marches
+forward). It slides every dashed rule on that text and does nothing otherwise.
 
 ### Highlight pills
 
