@@ -290,6 +290,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         this._outlineColor = 0x000000;
         this._outlineAlpha = 1;
         this._outlineRounded = false;
+        this._outlineSoftness = 0;
         this.outlineLayered = false;
         // Inner end of the outline's colour ramp. `-1` means "inherit
         // `outlineColor`", i.e. no ramp — a real colour here is what turns the
@@ -302,6 +303,13 @@ export const MSDFText: MSDFTextStatic = new Class({
         this._shadowColor = 0x000000;
         this._shadowAlpha = 0.5;
         this._shadowSoftness = 0;
+        this._shadowSpread = 0;
+        // Default *on*, unlike `outlineRounded`. Rounding only bites once the
+        // shadow's edge leaves the glyph contour — which needs a spread or a
+        // softness — and where it does, a sharp dilation grows a mitre spike at
+        // every corner. So `true` reproduces the old derived behaviour exactly
+        // (soft ⇒ round) and is what a spread wants; `false` is opt-in spikes.
+        this._shadowRounded = true;
         this._shadowInnerColor = -1;
 
         // Force the shadow pass in per-glyph modes (callback / manual) even when
@@ -1363,6 +1371,10 @@ export const MSDFText: MSDFTextStatic = new Class({
         g.shadow.y = this.shadowY;
         const ss = g.shadow.softness, sSoft = this.shadowSoftness;
         ss.topLeft = ss.topRight = ss.bottomLeft = ss.bottomRight = sSoft;
+        const ssp = g.shadow.spread, sSpread = this.shadowSpread;
+        ssp.topLeft = ssp.topRight = ssp.bottomLeft = ssp.bottomRight = sSpread;
+        const srd = g.shadow.rounded, sRound = this.shadowRounded ? 1 : 0;
+        srd.topLeft = srd.topRight = srd.bottomLeft = srd.bottomRight = sRound;
 
         const ot = g.outline.color, oa = g.outline.alpha;
         const oc = this.outlineColor, oAlpha = this.outlineAlpha;
@@ -1372,21 +1384,24 @@ export const MSDFText: MSDFTextStatic = new Class({
         const oin = g.outline.innerColor;
         const oInner = this._outlineInnerColor >= 0 ? this._outlineInnerColor : oc;
         oin.topLeft = oin.topRight = oin.bottomLeft = oin.bottomRight = oInner;
-        // A width of 0 is what "no outline" means to the shader, so seeding the
-        // object's width is all the gating the renderer needs.
+        // A width of 0 (with no softness to give it a body) is what "no outline"
+        // means to the shader, so seeding the object's values is all the gating
+        // the renderer needs.
         const owd = g.outline.width, oWidth = this.outlineWidth;
         owd.topLeft = owd.topRight = owd.bottomLeft = owd.bottomRight = oWidth;
         // Rounding is continuous per corner; the object-level flag seeds its ends.
         const ord = g.outline.rounded, oRound = this.outlineRounded ? 1 : 0;
         ord.topLeft = ord.topRight = ord.bottomLeft = ord.bottomRight = oRound;
+        const osf = g.outline.softness, oSoft = this.outlineSoftness;
+        osf.topLeft = osf.topRight = osf.bottomLeft = osf.bottomRight = oSoft;
     },
 
     /**
      * Set the outline for the text (chainable convenience wrapper).
      *
      * The outline edge has no layout side effects, so the underlying
-     * `outlineWidth`, `outlineColor`, `outlineAlpha` and `outlineRounded`
-     * fields can also be assigned or tweened directly.
+     * `outlineWidth`, `outlineColor`, `outlineAlpha`, `outlineRounded` and
+     * `outlineSoftness` fields can also be assigned or tweened directly.
      *
      * The maximum representable outline is roughly half the font's
      * `distanceRange` (`pxRange`). Past that, the MSDF texture's distance
@@ -1404,15 +1419,25 @@ export const MSDFText: MSDFTextStatic = new Class({
      *   fill so a thick outline does not overlap the neighbouring glyph. See
      *   {@link MSDFTextInstance.outlineLayered} for the cost and the
      *   transparent-text caveat. Defaults to `false`.
+     * @param softness Blur the outline's outer edge, in distance-field units.
+     *   Defaults to `0` (a crisp edge). The blur straddles the outline edge, so
+     *   its inner half hides under the fill and only the outside softens — with
+     *   `width` at `0` that is a glow hugging the letterform, drawn in the fill's
+     *   own quad with no shadow pass. Requires an MTSDF atlas; ignored with a
+     *   one-time warning on a plain MSDF font.
      */
-    setOutline: function (width: number, color: ColorValue = 0x000000, alpha: number = 1, rounded: boolean = false, layered: boolean = false) {
+    setOutline: function (width: number, color: ColorValue = 0x000000, alpha: number = 1, rounded: boolean = false, layered: boolean = false, softness: number = 0) {
         this.outlineWidth = width;
         this.outlineColor = toColorInt(color);
         this.outlineAlpha = alpha;
         this.outlineRounded = !!rounded;
         this.outlineLayered = !!layered;
+        this.outlineSoftness = Math.max(0, softness);
         if (this.outlineRounded && width > 0) {
             warnNeedsMtsdf(this, 'rounded outline');
+        }
+        if (this.outlineSoftness > 0) {
+            warnNeedsMtsdf(this, 'soft outline');
         }
         return this;
     },
@@ -1443,14 +1468,16 @@ export const MSDFText: MSDFTextStatic = new Class({
     clearOutline: function () {
         this.outlineWidth = 0;
         this.outlineRounded = false;
+        this.outlineSoftness = 0;
         return this;
     },
 
     /**
-     * Whether an outline is currently enabled.
+     * Whether an outline is currently visible — it needs a body, which is either
+     * a width or (for a zero-width glow) a softness.
      */
     hasOutline: function (): boolean {
-        return this.outlineWidth > 0;
+        return this.outlineWidth > 0 || this.outlineSoftness > 0;
     },
 
     // Outline fields — plain-looking, but each is backed by an accessor purely
@@ -1486,6 +1513,13 @@ export const MSDFText: MSDFTextStatic = new Class({
             this._markAppearanceDirty();
         }
     },
+    outlineSoftness: {
+        get: function (this: any): number { return this._outlineSoftness; },
+        set: function (this: any, value: number) {
+            this._outlineSoftness = value;
+            this._markAppearanceDirty();
+        }
+    },
     outlineInnerColor: {
         get: function (this: any): number { return this._outlineInnerColor; },
         set: function (this: any, value: number) {
@@ -1498,8 +1532,8 @@ export const MSDFText: MSDFTextStatic = new Class({
      * Set the drop shadow for the text (chainable convenience wrapper).
      *
      * The shadow has no layout side effects, so the underlying `shadowX`,
-     * `shadowY`, `shadowColor`, `shadowAlpha` and `shadowSoftness` fields can
-     * also be assigned or tweened directly.
+     * `shadowY`, `shadowColor`, `shadowAlpha`, `shadowSoftness`, `shadowSpread`
+     * and `shadowRounded` fields can also be assigned or tweened directly.
      *
      * Called with no arguments, this resets the shadow to its defaults
      * (effectively clearing it).
@@ -1513,13 +1547,20 @@ export const MSDFText: MSDFTextStatic = new Class({
      *   above 0 requires an MTSDF atlas; ignored with a one-time warning on a
      *   plain MSDF font. A soft shadow with zero offset reads as a glow. The
      *   maximum usable blur is the atlas `distanceRange`.
+     * @param spread Dilate the shadow's silhouette *before* blurring it, in
+     *   distance-field units — Photoshop's *spread* next to its *size*. Defaults
+     *   to 0 (the shadow traces the glyph). This is how you fatten a shadow
+     *   without mushing it, and the only way to reach a fat *hard* shadow; unlike
+     *   softness it needs no MTSDF atlas, since it dilates the same field a thick
+     *   outline does. See {@link MSDFTextInstance.shadowSpread} for its bounds.
      */
-    setShadow: function (x: number = 0, y: number = 0, color: ColorValue = 0x000000, alpha: number = 0.5, softness: number = 0) {
+    setShadow: function (x: number = 0, y: number = 0, color: ColorValue = 0x000000, alpha: number = 0.5, softness: number = 0, spread: number = 0) {
         this.shadowX = x;
         this.shadowY = y;
         this.shadowColor = toColorInt(color);
         this.shadowAlpha = alpha;
         this.shadowSoftness = Math.max(0, softness);
+        this.shadowSpread = Math.max(0, spread);
         if (this.shadowSoftness > 0) {
             warnNeedsMtsdf(this, 'soft shadow');
         }
@@ -1545,21 +1586,25 @@ export const MSDFText: MSDFTextStatic = new Class({
     },
 
     /**
-     * Clear the drop shadow effect (chainable). Resets the offset and softness;
-     * leaves color and alpha so a later `setShadow` reuses them.
+     * Clear the drop shadow effect (chainable). Resets the offset, softness and
+     * spread; leaves color and alpha so a later `setShadow` reuses them.
      */
     clearShadow: function () {
         this.shadowX = 0;
         this.shadowY = 0;
         this.shadowSoftness = 0;
+        this.shadowSpread = 0;
         return this;
     },
 
     /**
-     * Whether a drop shadow is currently visible (has an offset or softness).
+     * Whether a drop shadow is currently visible — it needs a body, which is an
+     * offset, a softness or a spread. (A shadow with none of the three is the
+     * glyph's own silhouette, exactly covered by the fill drawn on top of it.)
      */
     hasShadow: function (): boolean {
-        return this.shadowX !== 0 || this.shadowY !== 0 || this.shadowSoftness > 0;
+        return this.shadowX !== 0 || this.shadowY !== 0 ||
+            this.shadowSoftness > 0 || this.shadowSpread > 0;
     },
 
     // Shadow fields — same accessor-for-a-dirty-flag treatment as the outline
@@ -1596,6 +1641,20 @@ export const MSDFText: MSDFTextStatic = new Class({
         get: function (this: any): number { return this._shadowSoftness; },
         set: function (this: any, value: number) {
             this._shadowSoftness = value;
+            this._markAppearanceDirty();
+        }
+    },
+    shadowSpread: {
+        get: function (this: any): number { return this._shadowSpread; },
+        set: function (this: any, value: number) {
+            this._shadowSpread = value;
+            this._markAppearanceDirty();
+        }
+    },
+    shadowRounded: {
+        get: function (this: any): boolean { return this._shadowRounded; },
+        set: function (this: any, value: boolean) {
+            this._shadowRounded = value;
             this._markAppearanceDirty();
         }
     },

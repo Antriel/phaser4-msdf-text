@@ -14,10 +14,15 @@
  *   - A **shadow quad is an outline-only quad**: fill alpha zero, shadow colour
  *     in the outline attribute. It has to be, because softness and rounding live
  *     on the outline layer, and the fill layer must keep `median(rgb)` or a
- *     rounded outline would round its own glyph's face.
- *   - An outline with **width 0 contributes nothing**. The outline layer's edge
- *     is `fillEdge - width`, so a zero width makes it the glyph silhouette; we
- *     zero its alpha at pack time instead of branching in the shader.
+ *     rounded outline would round its own glyph's face. That identity is what
+ *     makes a shadow's **spread** free: the layer's edge is `fillEdge - width`,
+ *     so the channel an outline calls its width is, on a shadow quad, a dilation
+ *     of the silhouette.
+ *   - An outline with **no width and no softness contributes nothing**. At zero
+ *     width the layer's edge is the glyph silhouette itself, so we zero its alpha
+ *     at pack time rather than branch in the shader — but a blurred zero-width
+ *     outline has a visible body of its own (a glow hugging the letterform) and
+ *     survives that gate.
  *   - Those two quad kinds therefore leave the **fill colour attribute idle**,
  *     which is where the **two-tone inner colour** rides. A zero fill alpha is
  *     both the "no fill" signal and the "this rgb is an inner colour" signal, so
@@ -88,11 +93,6 @@ const zeroColor: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, botto
 const outlineToneBuf: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 const shadowToneBuf: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 const zeroCorners: Corners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
-// A shadow rounds itself off the true SDF exactly where it is blurred, so this
-// tracks `shadow.softness` corner for corner. Uniform softness reproduces the
-// old all-or-nothing flag; a soft-on-one-side shadow now keeps its hard side
-// crisp against `median(rgb)`, matching the fill it sits behind.
-const shadowRounded: Corners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 // The object's effective per-corner alpha, for decorations that inherit it.
 const baseAlpha: Corners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 
@@ -175,23 +175,29 @@ function resolveBindings(src: any, baseTexture: any): number {
 /**
  * Pre-pack the object-level params once per font, for static mode. Rounding and
  * softness are clamped away on a plain `msdf` atlas here, at pack time, because
- * `fieldType` is a property of the *run's* font, not of the text object.
+ * `fieldType` is a property of the *run's* font, not of the text object. Spread
+ * is not: it dilates `median(rgb)` exactly as a thick outline does, so it needs
+ * no true SDF.
+ *
+ * `staticParams` serves both the fill and the layered-silhouette pass. The
+ * silhouette pass is the only one that draws the outline layer — on a layered
+ * *fill* quad the outline alpha is zero, so its width and softness are inert
+ * there and one packed value covers both.
  */
 function packStaticParams(src: any, count: number): void {
     const weight = src.weight;
     const outlineWidth = src.outlineWidth;
-    const shadowSoftness = src.shadowSoftness;
-    const outlineRounded = src.outlineRounded;
+    const shadowSpread = src.shadowSpread;
 
     for (let i = 0; i < count; i++) {
         const b = bindings[i];
         const inv = b.invRange;
-        const softness = b.isMtsdf ? shadowSoftness : 0;
-        const rounded = (b.isMtsdf && outlineRounded) ? 1 : 0;
-        b.staticParams = packParams(weight * inv, rounded, outlineWidth * inv, 0);
-        b.staticShadowParams = packParams(
-            weight * inv, softness > 0 ? 1 : 0, 0, softness * inv
-        );
+        const outSoft = b.isMtsdf ? src.outlineSoftness : 0;
+        const shSoft = b.isMtsdf ? src.shadowSoftness : 0;
+        const outRound = (b.isMtsdf && src.outlineRounded) ? 1 : 0;
+        const shRound = (b.isMtsdf && src.shadowRounded) ? 1 : 0;
+        b.staticParams = packParams(weight * inv, outRound, outlineWidth * inv, outSoft * inv);
+        b.staticShadowParams = packParams(weight * inv, shRound, shadowSpread * inv, shSoft * inv);
     }
 }
 
@@ -238,16 +244,17 @@ function packFillAspect(buf: PackedCorners, color: Corners, alpha: Corners, fall
 }
 
 /**
- * Pack the outline colour, zeroing the alpha wherever the width is zero. "No
- * outline" is a width of zero, and at zero width the outline edge coincides with
- * the fill edge — so without this the outline colour would fringe every glyph's
- * antialiased edge.
+ * Pack the outline colour, zeroing the alpha wherever the outline has no body of
+ * its own — neither a width nor a softness. At zero width the outline edge
+ * coincides with the fill edge, so without this the outline colour would fringe
+ * every glyph's antialiased edge; but a *blurred* zero-width outline is a glow
+ * hugging the letterform, which has a body and must survive.
  */
-function packOutlineAspect(buf: PackedCorners, color: Corners, alpha: Corners, width: Corners): void {
-    buf.topLeft = packColor(color.topLeft, width.topLeft > 0 ? alpha.topLeft : 0);
-    buf.topRight = packColor(color.topRight, width.topRight > 0 ? alpha.topRight : 0);
-    buf.bottomLeft = packColor(color.bottomLeft, width.bottomLeft > 0 ? alpha.bottomLeft : 0);
-    buf.bottomRight = packColor(color.bottomRight, width.bottomRight > 0 ? alpha.bottomRight : 0);
+function packOutlineAspect(buf: PackedCorners, color: Corners, alpha: Corners, width: Corners, softness: Corners): void {
+    buf.topLeft = packColor(color.topLeft, (width.topLeft > 0 || softness.topLeft > 0) ? alpha.topLeft : 0);
+    buf.topRight = packColor(color.topRight, (width.topRight > 0 || softness.topRight > 0) ? alpha.topRight : 0);
+    buf.bottomLeft = packColor(color.bottomLeft, (width.bottomLeft > 0 || softness.bottomLeft > 0) ? alpha.bottomLeft : 0);
+    buf.bottomRight = packColor(color.bottomRight, (width.bottomRight > 0 || softness.bottomRight > 0) ? alpha.bottomRight : 0);
 }
 
 /**
@@ -256,6 +263,11 @@ function packOutlineAspect(buf: PackedCorners, color: Corners, alpha: Corners, w
  * a bitfield. The distance-field quantities are normalized by the font's
  * `distanceRange` here, on the CPU, which is what makes them font-independent
  * and lets the range cancel out of the shader.
+ *
+ * `width` and `softness` describe the *outline / shadow layer*, so each serves
+ * both quad kinds: on a fill or silhouette quad `width` is the outline's width,
+ * on a shadow quad it is the shadow's spread (the same dilation of the same
+ * edge), and `softness` blurs that edge either way.
  */
 function packParamsAspect(
     buf: PackedCorners,
@@ -274,14 +286,6 @@ function packParamsAspect(
 /** Fill all four corners of a buffer with one packed value. */
 function fillCorners(buf: PackedCorners, value: number): void {
     buf.topLeft = buf.topRight = buf.bottomLeft = buf.bottomRight = value;
-}
-
-/** Where a corner's shadow is blurred, its silhouette rounds off the true SDF. */
-function roundedFromSoftness(buf: Corners, softness: Corners): void {
-    buf.topLeft = softness.topLeft > 0 ? 1 : 0;
-    buf.topRight = softness.topRight > 0 ? 1 : 0;
-    buf.bottomLeft = softness.bottomLeft > 0 ? 1 : 0;
-    buf.bottomRight = softness.bottomRight > 0 ? 1 : 0;
 }
 
 /**
@@ -610,13 +614,15 @@ function MSDFTextWebGLRenderer(
 
             if (perGlyph) {
                 const g = glyphs![i];
-                // A soft shadow reads the true SDF; a hard one is just the glyph
-                // silhouette in the shadow colour, so it keeps median(rgb).
+                // Blurring and rounding both read the true SDF. Spread does not —
+                // it dilates the same median(rgb) edge a thick outline does — so
+                // it rides `width`, the one channel a shadow quad leaves idle, and
+                // needs no clamp.
                 const softness = b.isMtsdf ? g.shadow.softness : zeroCorners;
-                roundedFromSoftness(shadowRounded, softness);
+                const rounded = b.isMtsdf ? g.shadow.rounded : zeroCorners;
                 packAspect(shadowBuf, g.shadow.color, g.shadow.alpha);
                 packToneAspect(shadowToneBuf, g.shadow.innerColor);
-                packParamsAspect(shadowParams, g.weight, shadowRounded, zeroCorners, softness, b.invRange);
+                packParamsAspect(shadowParams, g.weight, rounded, g.shadow.spread, softness, b.invRange);
                 submitOneGlyph(drawingContext, batchHandler, b.texture, char,
                     g.x + g.shadow.x, g.y + g.shadow.y, g.scaleX, g.scaleY, g.rotation, g.skew,
                     calcMatrix, originOffsetX, originOffsetY, shadowToneBuf, shadowBuf, shadowParams);
@@ -642,9 +648,10 @@ function MSDFTextWebGLRenderer(
             if (perGlyph) {
                 const g = glyphs![i];
                 const rounded = b.isMtsdf ? g.outline.rounded : zeroCorners;
-                packOutlineAspect(outlineBuf, g.outline.color, g.outline.alpha, g.outline.width);
+                const softness = b.isMtsdf ? g.outline.softness : zeroCorners;
+                packOutlineAspect(outlineBuf, g.outline.color, g.outline.alpha, g.outline.width, softness);
                 packToneAspect(outlineToneBuf, g.outline.innerColor);
-                packParamsAspect(glyphParams, g.weight, rounded, g.outline.width, zeroCorners, b.invRange);
+                packParamsAspect(glyphParams, g.weight, rounded, g.outline.width, softness, b.invRange);
                 submitOneGlyph(drawingContext, batchHandler, b.texture, char,
                     g.x, g.y, g.scaleX, g.scaleY, g.rotation, g.skew,
                     calcMatrix, originOffsetX, originOffsetY, outlineToneBuf, outlineBuf, glyphParams);
@@ -675,16 +682,20 @@ function MSDFTextWebGLRenderer(
 
         if (perGlyph) {
             const g = glyphs![i];
+            const rounded = b.isMtsdf ? g.outline.rounded : zeroCorners;
+            const softness = b.isMtsdf ? g.outline.softness : zeroCorners;
             let outlineData = zeroColor;
             if (combined) {
-                packOutlineAspect(outlineBuf, g.outline.color, g.outline.alpha, g.outline.width);
+                packOutlineAspect(outlineBuf, g.outline.color, g.outline.alpha, g.outline.width, softness);
                 packFillAspect(fillBuf, g.fill.color, g.fill.alpha, g.outline.color);
                 outlineData = outlineBuf;
             } else {
                 packAspect(fillBuf, g.fill.color, g.fill.alpha);
             }
-            const rounded = b.isMtsdf ? g.outline.rounded : zeroCorners;
-            packParamsAspect(glyphParams, g.weight, rounded, g.outline.width, zeroCorners, b.invRange);
+            // In the layered case the outline layer is already drawn and this
+            // quad's outline alpha is zero, so its width and softness are inert
+            // here — passed anyway, so both branches share one pack.
+            packParamsAspect(glyphParams, g.weight, rounded, g.outline.width, softness, b.invRange);
             submitOneGlyph(drawingContext, batchHandler, b.texture, char,
                 g.x, g.y, g.scaleX, g.scaleY, g.rotation, g.skew,
                 calcMatrix, originOffsetX, originOffsetY, fillBuf, outlineData, glyphParams);

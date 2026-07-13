@@ -19,7 +19,10 @@ const GetAdvancedValue = Phaser.Utils.Objects.GetAdvancedValue;
  * Outline configuration for {@link MSDFTextConfig}. Mirrors `setOutline`.
  */
 export interface MSDFTextOutlineConfig {
-    /** Outline width in distance-field units. Values <= 0 disable the outline. */
+    /**
+     * Outline width in distance-field units. Values <= 0 disable the outline,
+     * unless {@link softness} gives it a body of its own.
+     */
     width: number;
     /** Outline color. Defaults to black. */
     color?: ColorValue;
@@ -29,6 +32,12 @@ export interface MSDFTextOutlineConfig {
     rounded?: boolean;
     /** Draw outline silhouettes under the fills, so thick outlines never cover neighbouring glyphs. Defaults to false. */
     layered?: boolean;
+    /**
+     * Blur the outline's outer edge, in distance-field units (requires an MTSDF
+     * atlas). Defaults to 0. With `width: 0` this alone is a glow hugging the
+     * letterform, drawn in the fill's own quad.
+     */
+    softness?: number;
 }
 
 /**
@@ -45,6 +54,16 @@ export interface MSDFTextShadowConfig {
     alpha?: number;
     /** Shadow blur in distance-field units (requires an MTSDF atlas). Defaults to 0. */
     softness?: number;
+    /**
+     * Dilate the shadow's silhouette before blurring it, in distance-field units.
+     * Defaults to 0. Fattens a shadow without mushing it; needs no MTSDF atlas.
+     */
+    spread?: number;
+    /**
+     * Round the dilated / blurred silhouette off the true SDF (requires an MTSDF
+     * atlas). Defaults to `true` — see `MSDFTextInstance.shadowRounded`.
+     */
+    rounded?: boolean;
 }
 
 /**
@@ -134,9 +153,15 @@ GameObjectCreator.register('msdfText', function (
 
     // Effect configs are nested objects, read directly rather than via
     // GetAdvancedValue (which is geared toward primitive/random values).
+    //
+    // A softness with no width is a legitimate outline (a glow on the
+    // letterform), so the gate is "has a body", not "has a width".
     const outline = config.outline;
-    if (outline && outline.width > 0) {
-        msdfText.setOutline(outline.width, outline.color, outline.alpha, !!outline.rounded, !!outline.layered);
+    if (outline && ((outline.width || 0) > 0 || (outline.softness || 0) > 0)) {
+        msdfText.setOutline(
+            outline.width || 0, outline.color, outline.alpha,
+            !!outline.rounded, !!outline.layered, outline.softness || 0
+        );
     }
 
     const shadow = config.shadow;
@@ -146,8 +171,13 @@ GameObjectCreator.register('msdfText', function (
             shadow.offsetY || 0,
             shadow.color,
             shadow.alpha,
-            shadow.softness || 0
+            shadow.softness || 0,
+            shadow.spread || 0
         );
+        // Defaults to `true` on the object, so only an explicit key overrides it.
+        if (shadow.rounded !== undefined) {
+            msdfText.shadowRounded = shadow.rounded;
+        }
     }
 
     return msdfText;

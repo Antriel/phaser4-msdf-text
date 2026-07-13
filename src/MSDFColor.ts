@@ -9,14 +9,24 @@
  * `0xAARRGGBB` doubles and the divide/repack roundtrip the old ARGB path needed.
  *
  * The `params` attribute uses the same byte order: `weight` in the low byte,
- * then `rounded`, `outlineWidth`, `shadowSoftness`. All four are continuous, so
- * all four are per-corner for free. Its numeric channels are
+ * then `rounded`, `width`, `softness`. All four are continuous, so all four are
+ * per-corner for free. Its numeric channels are
  * **fractions of the atlas `distanceRange`**, normalized on the CPU by the
  * glyph's own font, which is what makes them font-independent (a glyph from a
  * `distanceRange 4` atlas and one from a `distanceRange 8` atlas both encode
  * "outline = 0.15 of the range") and what lets `distanceRange` cancel out of
  * every shader branch. The shader in `MSDFBatchHandler.ts` decodes with the
  * exact inverse of {@link packParams} — there is no second source of truth.
+ *
+ * The upper two channels describe the *outline / shadow layer*, not one named
+ * effect, which is why each serves two: `width` is how far outside the fill edge
+ * that layer's edge sits — an outline's thickness on a fill quad, a shadow's
+ * **spread** (silhouette dilation) on a shadow quad, whose fill is off and whose
+ * blur is centred on that same edge. `softness` blurs that layer wherever it is
+ * set, so a fill quad carrying one is an outline that glows, in one quad, with no
+ * shadow pass at all. One decode either way — no channel selects how another is
+ * read, which is the rule that keeps a per-corner ramp from straddling a
+ * threshold mid-quad.
  *
  * A **solid** quad ({@link packSolidParams}) reinterprets the upper three
  * channels: `rounded` becomes a corner radius, `outlineWidth` a border width and
@@ -103,15 +113,18 @@ export function packColor(rgb: number, alpha: number): number {
  * - `rounded` — how far the outline / shadow edge slides from `median(rgb)`
  *   towards the true SDF (MTSDF only). The shader `mix()`es on it, so the whole
  *   `[0, 1]` is meaningful and intermediate corners blend sharp into round.
- * - `outlineWidth` — the outline edge is `fillEdge - width` against a field
- *   that clamps at 0, so only `[0, 0.5]` of the range does anything. The byte
- *   covers exactly that, at double precision.
- * - `shadowSoftness` — genuinely useful over the full `[0, 1]` of the range.
+ * - `width` — the layer's edge is `fillEdge - width` against a field that clamps
+ *   at 0, so only `[0, 0.5]` of the range does anything. The byte covers exactly
+ *   that, at double precision.
+ * - `softness` — genuinely useful over the full `[0, 1]` of the range.
  *
  * @param weightNorm  Faux-bold threshold shift, as a signed fraction of `distanceRange`.
  * @param roundedNorm Sharp (`0`) to fully rounded (`1`) outline / shadow edge.
- * @param widthNorm   Outline width, as a fraction of `distanceRange` (`0` = none).
- * @param softNorm    Shadow blur, as a fraction of `distanceRange` (`0` = hard edge).
+ * @param widthNorm   How far the outline / shadow layer's edge sits outside the
+ *   fill edge, as a fraction of `distanceRange` — an outline's width, or a
+ *   shadow's spread (`0` = neither: the layer's edge is the glyph's).
+ * @param softNorm    Blur of that layer, as a fraction of `distanceRange` (`0` =
+ *   hard edge). Blurs a shadow or an outline alike.
  */
 export function packParams(weightNorm: number, roundedNorm: number, widthNorm: number, softNorm: number): number {
     const raw = toByte(weightNorm * 255 + 128);

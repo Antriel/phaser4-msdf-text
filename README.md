@@ -195,6 +195,7 @@ interface FitOptions {
 text.setOutline(1.5, 0x000000, 1.0);              // width (distance-field units), color, alpha
 text.setOutline(1.5, 0x000000, 1.0, true);        // rounded outer corners (MTSDF atlas only)
 text.setOutline(3, 0x000000, 1.0, false, true);   // layered — thick outline, no neighbour overlap
+text.setOutline(0, 0x00e5ff, 1.0, false, false, 7); // width 0 + softness = a glow, in the fill's quad
 text.clearOutline();
 text.hasOutline();                            // boolean
 
@@ -203,6 +204,7 @@ text.outlineWidth = 2;                        // distance-field units
 text.outlineColor = 0x000000;                 // packed 0xRRGGBB
 text.outlineAlpha = 1;
 text.outlineRounded = true;                   // MTSDF atlas only
+text.outlineSoftness = 4;                     // blur the outer edge; MTSDF atlas only
 text.outlineLayered = true;                   // separate silhouette pass under the fill
 
 // Two-tone: ramp the outline from outlineColor (outer edge) to a second colour
@@ -218,6 +220,13 @@ atlas with a larger `-pxrange` rather than pushing the width higher.
 `rounded` rounds the outline's outer corners; the letterforms stay sharp. It
 requires an **MTSDF** atlas (`-type mtsdf`; see [FONTS.md](FONTS.md)) — on
 plain MSDF it is ignored with a one-time warning.
+
+`outlineSoftness` blurs the outline's *outer* edge, in the same distance-field
+units as the width. The blur straddles the outline edge, so its inner half
+disappears under the opaque fill and only the outside softens. With
+`outlineWidth` at `0` the outline **is** the blur — a glow hugging the
+letterform — and because it rides the fill's own quad, that glow costs no extra
+pass and no extra quads, unlike the shadow-based glow below. MTSDF atlas only.
 
 `layered` fixes thick outlines spilling over neighbouring glyphs: every
 outline silhouette draws first, every fill on top. Costs a second set of glyph
@@ -238,6 +247,7 @@ otherwise-idle vertex attribute — but for exactly that reason it **forces
 text.setShadow(4, 4, 0x000000, 0.5);              // x, y, color, alpha
 text.setShadow(4, 4, 0x000000, 0.5, 6);           // soft shadow, 6-unit blur (MTSDF atlas only)
 text.setShadow(0, 0, 0x33ccff, 0.8, 8);           // zero offset + softness reads as a glow
+text.setShadow(5, 8, 0x1c1633, 1, 0, 3.5);        // hard + spread 3.5 = a chunky "sticker" slab
 text.clearShadow();
 text.hasShadow();
 
@@ -246,7 +256,9 @@ text.shadowX = 4;
 text.shadowY = 4;
 text.shadowColor = 0x000000;                      // packed 0xRRGGBB
 text.shadowAlpha = 0.5;
-text.shadowSoftness = 6;                          // distance-field units, MTSDF atlas only
+text.shadowSoftness = 6;                          // blur, distance-field units, MTSDF atlas only
+text.shadowSpread = 2;                            // dilation, distance-field units, any atlas
+text.shadowRounded = false;                       // default true; MTSDF atlas only
 
 // Two-tone: ramp the blur from shadowColor (outer) to a hot core at the glyph.
 text.setShadowInnerColor(0xffffff);
@@ -259,14 +271,32 @@ an **MTSDF** atlas; on plain MSDF it is ignored with a one-time warning. The
 maximum usable blur is the atlas `distanceRange` — for softer, regenerate with
 a larger `-pxrange`.
 
+`shadowSpread` **dilates the shadow's silhouette before it is blurred** —
+Photoshop's *spread* next to its *size*. It is what fattens a shadow without
+also mushing it (softness can only buy size at the cost of focus), and it is the
+only way to reach a fat **hard** shadow: spread with no softness is the chunky
+offset slab behind cartoon lettering. It dilates the same field a thick outline
+does, so unlike softness it needs no MTSDF atlas, and it saturates at the same
+place — half the atlas `distanceRange`. One bound worth knowing: a *hard* spread
+past roughly `0.3 × distanceRange` starts to fade at its outer band, where the
+shader's deep-background guard reads the raw field. Any nonzero softness lifts
+that guard entirely.
+
+`shadowRounded` (default **`true`**) takes the dilated/blurred silhouette from
+the true SDF rather than the corner-preserving `median(rgb)` the fill uses. It is
+on by default — unlike `outlineRounded` — because it does nothing at all until a
+spread or a softness lifts the shadow's edge off the glyph contour, and where it
+does bite, a sharp dilation of `median(rgb)` grows a mitre spike at every corner
+of every letter. Set it `false` if you want those spikes. MTSDF atlas only.
+
 `setShadowInnerColor` makes the blur a two-tone gradient: `shadowColor` at the
 outer edge, the inner colour at the glyph. A soft, zero-offset shadow with a
 white inner colour is the classic glow. It needs `shadowSoftness` above `0` to
 have a band to ramp across, but no layering. Per-glyph via `shadow.innerColor`
 on a `GlyphState`, per-run via a style spec.
 
-Shadow colour, alpha, offset and softness are per-glyph state, so a
-`displayCallback` or `editGlyphs` can give individual glyphs their own shadow.
+Shadow colour, alpha, offset, softness, spread and rounding are per-glyph state,
+so a `displayCallback` or `editGlyphs` can give individual glyphs their own shadow.
 The pass is skipped when the object has no shadow, so set
 **`perGlyphShadow = true`** to run it for those glyphs (rich-text runs that set
 a shadow turn the pass on automatically):
@@ -463,12 +493,14 @@ need not be unique, and an overlay whose id is currently absent is alive but
 empty — it revives when a later `setRichText` brings the id back.
 
 A `StyleSpec` accepts: `color`/`alpha` (a scalar, or a per-corner object for a
-gradient), `weight`, `outline` (`{ color?, innerColor?, alpha?, width?, rounded? }`),
-`shadow` (`{ color?, innerColor?, alpha?, x?, y?, softness? }`),
+gradient), `weight`,
+`outline` (`{ color?, innerColor?, alpha?, width?, rounded?, softness? }`),
+`shadow` (`{ color?, innerColor?, alpha?, x?, y?, softness?, spread?, rounded? }`),
 `scale`/`scaleX`/`scaleY`, `rotation`, `skew`, `underline`, `strikethrough`,
 `highlight`, `fontScale` and `font`. Only the keys you set override the
-glyph's seeded base; `weight`, `outline.width` and `shadow.softness` also take
-per-corner objects.
+glyph's seeded base; `weight` and every continuous effect channel
+(`outline.width`/`.softness`, `shadow.softness`/`.spread`) also take per-corner
+objects.
 
 - A per-run **shadow** turns the shadow pass on by itself — but it needs an
   explicit **`alpha`**: glyphs seed a shadow alpha of `0` unless the object has
@@ -477,8 +509,9 @@ per-corner objects.
 - A per-run **outline** likewise stands alone: `outline: { width: 2 }` outlines
   just that run, `width: 0` removes it from a run of an outlined text, and
   differing widths batch together.
-- `rounded` and `softness` need an **MTSDF** atlas; on plain MSDF they are
-  clamped away silently.
+- `rounded` and `softness` (on either layer) need an **MTSDF** atlas; on plain
+  MSDF they are clamped away silently. `shadow.spread` does not — it dilates the
+  same field a thick outline does.
 - `outline.color` on a run makes that run's outline **solid** in that colour —
   `innerColor` follows `color` unless set too. A run's `outline.innerColor`
   still needs the object's `outlineLayered` (or `outlineInnerColor`) for a
@@ -604,11 +637,12 @@ Each glyph exposes:
   slants as one). `setScale(v)` sets both axes, `setScale(x, y)` independently.
 - **`weight`** — per-corner faux bold, in distance-field units.
 - **`fill`** — the glyph face: `{ color: Corners, alpha: Corners }`.
-- **`shadow`** — `{ color, alpha, x, y, softness: Corners }`, independent of
-  the fill. Drawn if the text has a shadow, or `perGlyphShadow = true`.
-- **`outline`** — `{ color, alpha, width: Corners, rounded: Corners }`. A
-  `width` of `0` means "no outline", so a glyph can be outlined even when the
-  object is not.
+- **`shadow`** — `{ color, alpha, x, y, softness, spread, rounded }` (all but
+  `x`/`y` per-corner), independent of the fill. Drawn if the text has a shadow,
+  or `perGlyphShadow = true`.
+- **`outline`** — `{ color, alpha, width, rounded, softness }` (all but `color`
+  and `alpha` per-corner). No width *and* no softness means "no outline", so a
+  glyph can be outlined — or made to glow — even when the object is not.
 - read-only **`index`**, **`charCode`**, and **provenance** — `srcIndex`,
   `line`, `srcLine` (see below).
 
@@ -650,7 +684,8 @@ g.setFillAlpha(0.5);                       // fade the face, colour untouched
 g.setShadowColor(0x000033); g.setShadowAlpha(0.4);
 g.setOutlineColor(0xffd200); g.setOutlineAlpha(1);
 g.setWeight(2);                            // faux bold, distance-field units
-g.setOutlineWidth(1.5); g.setShadowSoftness(4);
+g.setOutlineWidth(1.5); g.setOutlineSoftness(3);
+g.setShadowSoftness(4); g.setShadowSpread(2); g.setShadowRounded(1);
 ```
 
 Reach into the `Corners` objects directly for a gradient:
@@ -660,11 +695,11 @@ g.fill.color.topLeft = g.fill.color.topRight = 0xff5da8;
 g.fill.color.bottomLeft = g.fill.color.bottomRight = 0x5db8ff;
 ```
 
-`weight`, `outline.width`, `outline.rounded`, `outline.innerColor`,
-`shadow.softness` and `shadow.innerColor` are per-corner too — a faux-bold
-gradient, a directional outline, a soft-on-one-side shadow all cost nothing
-extra. Interpolation is linear across the quad's bounding box, not along the
-letter contour.
+`weight`, every effect channel on both layers (`outline.width`/`.rounded`/
+`.softness`, `shadow.softness`/`.spread`/`.rounded`) and both `innerColor`s are
+per-corner too — a faux-bold gradient, a directional outline, a soft-on-one-side
+shadow, a shadow that spreads to one side all cost nothing extra. Interpolation
+is linear across the quad's bounding box, not along the letter contour.
 
 #### Persistent per-glyph state (manual mode)
 

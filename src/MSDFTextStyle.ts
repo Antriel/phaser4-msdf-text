@@ -97,10 +97,13 @@ export interface ResolvedStyle {
     outlineAlpha?: number;
     outlineWidth?: Corners;
     outlineRounded?: boolean;
+    outlineSoftness?: Corners;
     shadowColor?: number;
     shadowInnerColor?: number;
     shadowAlpha?: number;
     shadowSoftness?: Corners;
+    shadowSpread?: Corners;
+    shadowRounded?: boolean;
     shadowX?: number;
     shadowY?: number;
     scaleX?: number;
@@ -295,12 +298,15 @@ export function resolveStyle(spec: StyleSpec): ResolvedStyle {
         if (spec.outline.alpha !== undefined) r.outlineAlpha = spec.outline.alpha;
         if (spec.outline.width !== undefined) r.outlineWidth = resolveNumberCorners(spec.outline.width);
         if (spec.outline.rounded !== undefined) r.outlineRounded = !!spec.outline.rounded;
+        if (spec.outline.softness !== undefined) r.outlineSoftness = resolveNumberCorners(spec.outline.softness);
     }
     if (spec.shadow) {
         if (spec.shadow.color !== undefined) r.shadowColor = toColorInt(spec.shadow.color);
         if (spec.shadow.innerColor !== undefined) r.shadowInnerColor = toColorInt(spec.shadow.innerColor);
         if (spec.shadow.alpha !== undefined) r.shadowAlpha = spec.shadow.alpha;
         if (spec.shadow.softness !== undefined) r.shadowSoftness = resolveNumberCorners(spec.shadow.softness);
+        if (spec.shadow.spread !== undefined) r.shadowSpread = resolveNumberCorners(spec.shadow.spread);
+        if (spec.shadow.rounded !== undefined) r.shadowRounded = !!spec.shadow.rounded;
         if (spec.shadow.x !== undefined) r.shadowX = spec.shadow.x;
         if (spec.shadow.y !== undefined) r.shadowY = spec.shadow.y;
     }
@@ -375,6 +381,7 @@ export function styleHasAppearanceKeys(s: ResolvedStyle): boolean {
         s.outlineColor !== undefined || s.outlineInnerColor !== undefined ||
         s.outlineAlpha !== undefined ||
         s.outlineWidth !== undefined || s.outlineRounded !== undefined ||
+        s.outlineSoftness !== undefined ||
         s.scaleX !== undefined || s.scaleY !== undefined ||
         s.rotation !== undefined || s.skew !== undefined ||
         styleHasShadowKeys(s);
@@ -388,7 +395,9 @@ export function styleHasAppearanceKeys(s: ResolvedStyle): boolean {
 export function styleHasShadowKeys(s: ResolvedStyle): boolean {
     return s.shadowColor !== undefined || s.shadowInnerColor !== undefined ||
         s.shadowAlpha !== undefined ||
-        s.shadowSoftness !== undefined || s.shadowX !== undefined || s.shadowY !== undefined;
+        s.shadowSoftness !== undefined || s.shadowSpread !== undefined ||
+        s.shadowRounded !== undefined ||
+        s.shadowX !== undefined || s.shadowY !== undefined;
 }
 
 /** Whether a resolved style sets an underline, strikethrough or highlight (on *or* off). */
@@ -426,6 +435,7 @@ export function applyStyleToGlyph(g: GlyphState, s: ResolvedStyle): void {
     if (s.outlineAlpha !== undefined) setCorners(g.outline.alpha, s.outlineAlpha);
     if (s.outlineWidth) copyCorners(g.outline.width, s.outlineWidth);
     if (s.outlineRounded !== undefined) setCorners(g.outline.rounded, s.outlineRounded ? 1 : 0);
+    if (s.outlineSoftness) copyCorners(g.outline.softness, s.outlineSoftness);
     if (s.shadowColor !== undefined) {
         setCorners(g.shadow.color, s.shadowColor);
         setCorners(g.shadow.innerColor, s.shadowColor);
@@ -433,6 +443,8 @@ export function applyStyleToGlyph(g: GlyphState, s: ResolvedStyle): void {
     if (s.shadowInnerColor !== undefined) setCorners(g.shadow.innerColor, s.shadowInnerColor);
     if (s.shadowAlpha !== undefined) setCorners(g.shadow.alpha, s.shadowAlpha);
     if (s.shadowSoftness) copyCorners(g.shadow.softness, s.shadowSoftness);
+    if (s.shadowSpread) copyCorners(g.shadow.spread, s.shadowSpread);
+    if (s.shadowRounded !== undefined) setCorners(g.shadow.rounded, s.shadowRounded ? 1 : 0);
     if (s.shadowX !== undefined) g.shadow.x = s.shadowX;
     if (s.shadowY !== undefined) g.shadow.y = s.shadowY;
     if (s.scaleX !== undefined) g.scaleX = s.scaleX;

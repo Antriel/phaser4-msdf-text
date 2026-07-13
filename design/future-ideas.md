@@ -104,8 +104,164 @@ remap of a two-colour lerp, so almost everything an animated bias expresses is
 already reachable by animating `innerColor` / `color`, which take any hue path
 rather than sliding one boundary. Its inward end is degenerate (it pushes the hot
 core under the opaque fill), and it cannot make a ring — that needs a
-non-monotonic function, not a remap. Revisit only with a concrete effect that the
-colour endpoints demonstrably cannot express.
+non-monotonic function, not a remap.
+
+**Both arguments survive; the conclusion does not.** They are arguments about a
+*chromatic* remap, and the byte's best use turns out not to be chromatic at all.
+See **Shadow spread** below, which claims the same byte, keeps its existing
+meaning, and needs no selector. `shadowToneBias` stays rejected — but as the
+loser of a contest, not for want of a candidate.
+
+### ~~Shadow spread — and two effects the shader already has~~ — **built**
+
+All three landed together, as the sketch insisted they had to. `shadow.spread`,
+`shadow.rounded` and `outline.softness` are per-corner `Corners` on `GlyphState`,
+`shadowSpread` / `shadowRounded` / `outlineSoftness` at the object level, and
+`shadow.spread` / `shadow.rounded` / `outline.softness` on every style spec.
+
+Every claim below verified against the code as written. The shader change was the
+predicted one token — `tone`'s band went from `max(max(widthNorm, halfSoft), gAA)`
+to `max(widthNorm + halfSoft, gAA)`, which is bit-identical on every quad the old
+renderer could produce (one of the two was always zero) and one op cheaper. The
+rest was wiring.
+
+What the build settled beyond the sketch:
+
+- **`shadowRounded` defaults to `true`**, where `outlineRounded` defaults to
+  `false`. The sketch called promoting it "pure wiring" and left the default
+  unstated, but the default is the whole question: `false` would have regressed
+  every existing soft shadow to mitre spikes, and a tri-state "auto" sentinel
+  would have re-introduced the derivation it was removing. `true` is neither —
+  rounding is a **no-op until the layer's edge leaves the glyph contour** (`rounded`
+  only picks *which field* `outlineDist` reads, and `msdf` and `tsdf` agree on the
+  contour itself), which needs a spread or a softness. So `true` reproduces the old
+  derived rule (`soft ⇒ round`) exactly, is what a spread wants, and costs a hard
+  unspread shadow nothing. `false` is now opt-in spikes. It never warns on a plain
+  MSDF atlas either — a default is not a request.
+- **The `.a` byte's second life needed no new gate, but the `.b` byte's did.**
+  `outline.softness` on a *combined* quad is inert everywhere it could have leaked:
+  `softStep` only reaches `tone` (gated off by a live fill alpha) and `fade` (which
+  multiplies an outline alpha of zero on a layered fill quad). The one real change
+  was `packOutlineAspect`, exactly as predicted — its zero-width gate now spares a
+  corner with a softness. `hasOutline()` and the creator's `outline.width > 0` gate
+  had to learn the same rule, or a zero-width glow would have been dropped before
+  it reached a quad.
+- **Spread needed no MTSDF clamp, and that is load-bearing, not incidental.** It
+  rides `width`, whose meaning is identical in both lanes, so the renderer passes
+  `g.shadow.spread` straight through `packParamsAspect` while `softness` and
+  `rounded` are still clamped per binding on a plain `msdf` atlas. A spread on a
+  plain MSDF font therefore works — with the mitre spikes, since `rounded` is
+  clamped away with it.
+- **`roundedFromSoftness` is gone**, and with it the last derived channel in the
+  renderer. Every `params` channel now comes from a field the caller owns.
+
+The bounds the sketch recorded both survive as stated: a **hard** spread past
+`~0.3 × distanceRange` is eaten by the `fade` guard (any softness lifts it), and
+there is still **no choke** — the byte is unsigned and `0` = "no outline" is
+load-bearing, so erosion stays out of reach.
+
+Demos: the Style Lab's `Sticker` preset (hard + spread + rounded — the slab a
+blur cannot make) and `Halo` (width 0 + softness — a glow in the fill's own quad,
+next to `Neon`'s shadow-pass glow for contrast), plus the `Sticker pump` mode in
+the effects scene, which animates a **per-corner** spread.
+
+---
+
+*The original sketch follows, unedited.*
+
+**The byte audit.** Of the vertex format, exactly one byte is idle and
+unconstrained, and it is the one `shadowToneBias` wanted:
+
+| quad kind | `.r` | `.g` | `.b` | `.a` | `inColor` |
+| --- | --- | --- | --- | --- | --- |
+| combined fill+outline | weight | rounded | width | *pinned `0`* | fill |
+| layered silhouette | weight | rounded | width | *pinned `0`* | inner colour |
+| shadow | weight | rounded — *derived* from `.a` | **idle** | softness | inner colour |
+| solid | `255` | radius | border | blur | face |
+
+`inColor.a` on a shadow is pinned to byte `0` — it *is* the two-tone gate — and
+`inColor.rgb` and all of `inOutline` are spent. So `params.b` on a shadow quad is
+the whole of the free space. Two things the original sketch missed: `params.g` on a
+shadow is a pure function of `params.a` (`roundedFromSoftness` is `softness > 0 ? 1
+: 0`), so it carries no independent information; and `params.a` on every non-shadow
+quad is pinned to zero by the **renderer**, not by the format.
+
+#### 1. `shadow.spread` — the free byte, used geometrically
+
+**What:** dilate the shadow silhouette before blurring it — Photoshop's *spread*
+next to its *size*. Today softness is the only knob, so fattening a glow can only
+be bought by making it mushier, and a fat **hard** shadow is unreachable.
+
+**Why it is sound where `shadowToneBias` was not:** `params.b` has one invariant
+meaning across the whole glyph lane — *how far outside the fill edge the
+outline/shadow layer's edge sits* (`outlineEdge = fillEdge - widthNorm`). On a
+shadow quad, whose fill is off and whose blur is centred on `outlineEdge`, that
+meaning **already is** spread. There is no re-decode, so no selector, so the
+soft-on-one-side failure never arises. Per-corner for free, like every other
+channel. It does not need MTSDF: a hard spread dilates `median(rgb)`, exactly as a
+thick outline does.
+
+**Shader cost: one token.** Coverage is already right; only `tone`'s band length is
+wrong when width and softness are both live —
+
+```glsl
+tone = clamp((gDepth + halfSoft) / max(widthNorm + halfSoft, gAA), 0.0, 1.0);
+```
+
+The visible body runs from the outermost blur to the fill edge, which is exactly
+`widthNorm + halfSoft`. The change is **bit-identical on every quad the renderer
+produces today** (outline-only → `max(widthNorm, gAA)`; shadow-only →
+`max(halfSoft, gAA)`; hard shadow → `gAA`) and one op cheaper than the nested
+`max` it replaces.
+
+**The cheap alternative, rejected.** Spread costs *zero* shader change if you pack
+`weight + spread` into the shadow quad's weight byte: `fillEdge` moves and
+`outlineEdge` follows it. But it steals weight's range and its coarser
+quantization, it adds into a per-corner faux-bold gradient, and — the real killer —
+the shader then believes the *dilated* edge is the glyph edge, so the two-tone ramp
+is squeezed into the blur band and the whole dilated ring goes flat inner-colour.
+The free byte does it properly.
+
+#### 2. `outline.softness` — already in the shader, never exposed
+
+`params.a` is `zeroCorners` on the fill and silhouette passes, but
+`outlineCoverage = clamp(gDepth / max(softNorm, gAA) + 0.5, …)` does not care which
+pass it is in. Set it and the outline blurs; the inner half of the blur hides under
+the opaque fill, so only the outer edge softens, which is what a soft outline
+should look like. On a **combined** quad that is a glow for one quad's fill rate,
+with no shadow pass at all.
+
+One gate must relax: `packOutlineAspect` zeroes the outline alpha wherever width is
+`0`, which would make a zero-spread glow invisible. It wants `width > 0 || softness
+> 0` — the original justification ("at zero width the outline edge coincides with
+the fill edge, so it would fringe the AA edge") stops holding once the layer has a
+blurred body of its own.
+
+#### 3. `shadow.rounded` — currently derived, should be independent
+
+Because `roundedFromSoftness` binds a shadow's rounding to whether it is blurred, a
+**hard** shadow always dilates sharply, with the mitre spikes a thick `median(rgb)`
+edge grows. Promoting `GlyphShadow.rounded` to a real per-corner `Corners` (as
+`GlyphOutline.rounded` already is) is pure wiring — the byte is already there and
+already `mix()`ed.
+
+**These three are one feature, not three.** Spread + independent rounding + a hard
+edge is the fat, round, offset "sticker" shadow behind cartoon game lettering,
+which is currently unreachable; spread + softness is a glow you can fatten without
+mushing. Land them together or the payoff is invisible.
+
+#### Two bounds worth stating
+
+- **The `fade` guard caps a hard spread.** `fade = max(smoothstep(0.0, 0.2,
+  outlineDist), softStep)` reads the *raw* field, so once the layer's edge pushes
+  below `outlineDist ≈ 0.2` the guard starts eating its outer band; a hard spread
+  past `~0.3` of the range fades out. This is **not new** — a hard outline of width
+  `0.4` has the identical problem today — and any nonzero softness bypasses it via
+  `softStep`. Recorded as a bound, not fixed: the guard exists to kill deep-background
+  haze at extreme minification and should not be re-cut without that case in hand.
+- **No choke.** The byte is unsigned and `0` = "no outline" is load-bearing
+  (`packOutlineAspect` depends on it), so a *negative* spread would need a re-centred
+  encoding that breaks the outline's meaning. Erosion stays out of reach.
 
 ### ~~Highlight pills~~ — **built**
 

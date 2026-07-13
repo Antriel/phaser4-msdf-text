@@ -23,6 +23,7 @@ export class EffectsScene extends ExampleScene {
     speed: 1.5,
     amplitude: 10,
     softness: 5,
+    spread: 4,
     topColor: 0xff5da8,
     bottomColor: 0x5db8ff,
   };
@@ -47,7 +48,8 @@ export class EffectsScene extends ExampleScene {
     this.caption(
       "Each glyph is positioned, scaled and tinted independently. Corner ramp drives weight, " +
         "outline width and rounding per corner — every params channel is continuous. Glow beat " +
-        "pulses a per-glyph shadow softness.",
+        "pulses a per-glyph shadow softness; Sticker pump pulses a per-corner shadow spread, which " +
+        "fattens the shadow's silhouette instead of blurring it.",
     );
 
     this.commonTargets.push(this.text);
@@ -74,6 +76,13 @@ export class EffectsScene extends ExampleScene {
       // A soft shadow is an outline-only quad reading the true SDF, so softness
       // is per-glyph like everything else; the callback owns it entirely.
       this.text.perGlyphShadow = true;
+    } else if (effect === "sticker") {
+      // A hard, offset, rounded shadow — no softness at all. The callback then
+      // pumps its *spread*, which dilates the silhouette rather than blurring
+      // it, so the slab fattens and stays crisp. Softness cannot do this: it
+      // buys size only by mushing the edge.
+      this.text.setShadow(0, 0, 0, 1, 0, 2);
+      // this.text.setOutline(3, 0xffffff, 1, true, true);
     }
   }
 
@@ -210,6 +219,20 @@ export class EffectsScene extends ExampleScene {
           g.setShadowSoftness(this.params.softness * pulse);
           break;
         }
+
+        case "sticker": {
+          // Spread is per-corner like every other params channel, so the slab can
+          // swell unevenly: it grows most under the bottom-right, where the
+          // shadow is thrown, and stays tight at the top-left. The edge stays
+          // hard throughout — nothing here is ever blurred.
+          const pulse = 0.5 + 0.5 * Math.sin(now * 2.2 * speed - i * 0.35);
+          const grow = this.params.spread * pulse;
+          const s = g.shadow.spread;
+          s.topLeft = 1;
+          s.topRight = s.bottomLeft = 1 + grow * 0.5;
+          s.bottomRight = 1 + grow;
+          break;
+        }
       }
     }
   };
@@ -249,6 +272,10 @@ export class EffectsScene extends ExampleScene {
         mode("glowbeat", "Glow beat", (f) => {
           speed(f);
           f.addBinding(this.params, "softness", { min: 0, max: 16, step: 0.5 });
+        }),
+        mode("sticker", "Sticker pump", (f) => {
+          speed(f);
+          f.addBinding(this.params, "spread", { min: 0, max: 6, step: 0.1 });
         }),
       ],
       "wave",

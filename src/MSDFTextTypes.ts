@@ -175,7 +175,10 @@ export interface StyleSpec {
      * high weight. Bounded by half the atlas `distanceRange`, like outline width.
      */
     weight?: number | PerCorner<number>;
-    /** Outline override. `width` of `0` disables this run's outline. */
+    /**
+     * Outline override. A `width` of `0` disables this run's outline — unless a
+     * `softness` gives it a body, which makes it a glow hugging the letterform.
+     */
     outline?: {
         /** Outline colour — also the run's `innerColor` unless that is set too. */
         color?: ColorValue;
@@ -190,6 +193,14 @@ export interface StyleSpec {
         width?: number | PerCorner<number>;
         /** Round the outer corners using the true SDF (MTSDF atlas only). */
         rounded?: boolean;
+        /**
+         * Blur the outline's outer edge, in distance-field units — a scalar or a
+         * per-corner ramp (MTSDF atlas only). The blur straddles the outline
+         * edge, so its inner half hides under the fill and only the outside
+         * softens. With `width` at `0` the outline *is* the glow, and it rides
+         * the fill's own quad — no shadow pass, no second set of quads.
+         */
+        softness?: number | PerCorner<number>;
     };
     /**
      * Shadow override.
@@ -216,6 +227,18 @@ export interface StyleSpec {
         y?: number;
         /** Shadow blur in distance-field units — a scalar or a per-corner ramp (MTSDF atlas only). */
         softness?: number | PerCorner<number>;
+        /**
+         * Dilate the shadow's silhouette before blurring it, in distance-field
+         * units — a scalar or a per-corner ramp. Fattens a shadow without mushing
+         * it, and is the only route to a fat *hard* shadow. Needs no MTSDF atlas.
+         */
+        spread?: number | PerCorner<number>;
+        /**
+         * Round the dilated/blurred silhouette off the true SDF (MTSDF atlas
+         * only). Defaults **on** at the object level; set `false` for the mitre
+         * spikes a sharp dilation of `median(rgb)` grows at every corner.
+         */
+        rounded?: boolean;
     };
     /** Uniform glyph scale about the centre. */
     scale?: number;
@@ -479,7 +502,10 @@ export interface MSDFTextInstance extends
 
     // Outline — plain fields (no layout side effects), so they can be assigned
     // or tweened directly. `setOutline` is a chainable convenience wrapper.
-    /** Outline width in distance-field units. `0` disables the outline. */
+    /**
+     * Outline width in distance-field units. `0` disables the outline — unless
+     * {@link outlineSoftness} gives it a body of its own.
+     */
     outlineWidth: number;
     /** Outline color, packed `0xRRGGBB`. */
     outlineColor: number;
@@ -498,6 +524,19 @@ export interface MSDFTextInstance extends
     outlineAlpha: number;
     /** Round the outline's outer corners using the true SDF (MTSDF atlas only). */
     outlineRounded: boolean;
+    /**
+     * Blur the outline's outer edge, in distance-field units — so it scales with
+     * the text, like `outlineWidth` (MTSDF atlas only). `0` (the default) is the
+     * plain crisp edge.
+     *
+     * The blur is centred on the outline edge, so its inner half hides under the
+     * opaque fill and only the outside visibly softens — which is what a soft
+     * outline should look like. With `outlineWidth` at `0` the outline *is* the
+     * blur: a glow hugging the letterform, drawn in the fill's own quad, with no
+     * shadow pass and no second set of glyph quads. Pair it with
+     * {@link outlineInnerColor} for a neon tube.
+     */
+    outlineSoftness: number;
     /**
      * Draw the outline in two passes — every glyph's outline silhouette first,
      * then every glyph's fill on top — so a thick outline never overlaps the
@@ -535,6 +574,34 @@ export interface MSDFTextInstance extends
      * `outlineWidth` (MTSDF atlas only). `0` is a hard edge.
      */
     shadowSoftness: number;
+    /**
+     * Dilate the shadow's silhouette *before* blurring it, in distance-field
+     * units — Photoshop's *spread* next to its *size*. `0` (the default) traces
+     * the glyph exactly.
+     *
+     * This is the knob that fattens a shadow without mushing it (softness alone
+     * can only buy size at the cost of focus), and the only route to a fat *hard*
+     * shadow — spread + `shadowRounded` + no softness is the chunky "sticker"
+     * shadow behind cartoon lettering. It dilates the same field a thick outline
+     * does, so unlike softness it works on plain MSDF atlases.
+     *
+     * Bounded like `outlineWidth`, at half the atlas `distanceRange` — and, like
+     * a thick outline, a *hard* spread past roughly `0.3 × distanceRange` starts
+     * to fade at its outer band, where the shader's background-haze guard reads
+     * the raw field. Any nonzero `shadowSoftness` lifts that guard entirely.
+     */
+    shadowSpread: number;
+    /**
+     * Round the shadow's silhouette off the true SDF (MTSDF atlas only), rather
+     * than the corner-preserving `median(rgb)` the fill uses. Defaults to `true`.
+     *
+     * On by default — unlike {@link outlineRounded} — because it is a **no-op
+     * until the shadow's edge leaves the glyph contour**, which needs a
+     * {@link shadowSpread} or a {@link shadowSoftness}; and where it does bite, a
+     * sharp dilation of `median(rgb)` grows a mitre spike at every corner of every
+     * letter. Set it `false` if you want those spikes.
+     */
+    shadowRounded: boolean;
 
     /**
      * Render per-glyph shadows even when the object has no shadow of its own.
@@ -675,12 +742,12 @@ export interface MSDFTextInstance extends
     editGlyphs(): GlyphState[];
     /** Re-seed the manual glyph array to the text's current defaults. No-op unless in manual mode. */
     resetGlyphs(): this;
-    setOutline(width: number, color?: ColorValue, alpha?: number, rounded?: boolean, layered?: boolean): this;
+    setOutline(width: number, color?: ColorValue, alpha?: number, rounded?: boolean, layered?: boolean, softness?: number): this;
     /** Ramp the outline to a second colour at its inner edge. See {@link outlineInnerColor}. */
     setOutlineInnerColor(color: ColorValue | null): this;
     clearOutline(): this;
     hasOutline(): boolean;
-    setShadow(x?: number, y?: number, color?: ColorValue, alpha?: number, softness?: number): this;
+    setShadow(x?: number, y?: number, color?: ColorValue, alpha?: number, softness?: number, spread?: number): this;
     /** Ramp the shadow to a second colour at its inner edge. See {@link shadowInnerColor}. */
     setShadowInnerColor(color: ColorValue | null): this;
     clearShadow(): this;

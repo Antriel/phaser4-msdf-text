@@ -31,9 +31,17 @@ from a single texture per font. Published as the npm package
 
 **The `params` attribute** — every per-glyph effect rides one normalized
 `UNSIGNED_BYTE` vec4, `inParams`: `.r` weight (faux bold), `.g` rounded, `.b`
-outline width, `.a` shadow softness. Packing lives in `packParams`
-(`src/MSDFColor.ts`); the shader decodes with its exact inverse, and there is no
-second source of truth.
+width, `.a` softness. Packing lives in `packParams` (`src/MSDFColor.ts`); the
+shader decodes with its exact inverse, and there is no second source of truth.
+- The upper two channels describe the **outline/shadow layer**, not one named
+  effect, which is why each serves two. `.b` is *how far outside the fill edge
+  that layer's edge sits* (`outlineEdge = fillEdge - widthNorm`) — an outline's
+  **width** on a fill quad; a shadow's **spread** (silhouette dilation) on a
+  shadow quad, whose fill is off and whose blur is centred on that same edge.
+  `.a` blurs that layer wherever it is set, so a *fill* quad carrying one is an
+  outline that **glows**, in one quad, with no shadow pass. Neither is a
+  re-decode — same expression, different quad — so neither needs a selector, and
+  the soft-on-one-side failure that killed `shadowToneBias` never arises.
 - The distance-field channels are **fractions of the atlas `distanceRange`**,
   normalized on the CPU with *that glyph's* font. That is what makes them
   font-independent and what makes `distanceRange` cancel out of every shader
@@ -68,11 +76,13 @@ blending. Tradeoffs: a second set of glyph quads, and the outline now composites
 under the fill, so translucent text shows the outline through the fill. Every
 pass shares the `submitOneGlyph` helper in `MSDFTextWebGLRenderer.ts`.
 
-Outline **colour, alpha, width, rounded** and shadow **softness** are all
-per-vertex, so two texts with different outline widths — or one outlined and one
-not — batch together. A width of `0` *is* what "no outline" means; since at zero width the
-outline edge coincides with the fill edge, `packOutlineAspect` zeroes the outline
-alpha wherever the width is zero rather than branching in the shader.
+Outline **colour, alpha, width, rounded, softness** and shadow **softness,
+spread, rounded** are all per-vertex, so two texts with different outline widths —
+or one outlined and one not — batch together. "No outline" means the layer has no
+**body**: neither a width nor a softness. At zero width the outline edge coincides
+with the fill edge, so `packOutlineAspect` zeroes the outline alpha there rather
+than branching in the shader — but it now spares a corner with a softness, because
+a blurred zero-width outline *is* a visible body (a glow on the letterform).
 
 **Two-tone** — a quad with **no fill** (every shadow quad; every layered-outline
 silhouette) leaves `inColor` idle, so it carries the inner end of a colour ramp
@@ -82,11 +92,14 @@ fill" signal and the "this rgb is an inner colour" signal. No new attribute, no
 new draw call, per-corner on both colours: a glow with a white-hot core inside a
 coloured halo, a neon-tube outline.
 - `tone` is depth into the layer's own **visible** body, not `coverage` (which is
-  a 1-pixel step on a hard outline and would collapse the ramp). It normalizes by
-  `widthNorm` for an outline — the band is exactly `[outlineEdge, fillEdge]` — and
-  by **half** of `softNorm` for a shadow, because the blur is centred on the glyph
-  edge and only its outer half shows past the fill. The full blur would strand the
-  ramp at `tone = 0.5`.
+  a 1-pixel step on a hard outline and would collapse the ramp). That body runs
+  from the outermost blur to the fill edge, so its length is exactly
+  `widthNorm + halfSoft` — the blur is centred on `outlineEdge`, and `outlineEdge`
+  is `widthNorm` below `fillEdge`. Each effect is a corner of that one expression:
+  an outline sets only `widthNorm` (the band is `[outlineEdge, fillEdge]`); a soft
+  shadow sets only `halfSoft` (**half** the blur, because it is centred on the
+  glyph edge and only its outer half shows past the fill — the full blur would
+  strand the ramp at `tone = 0.5`); a *spread* shadow sets both.
 - An outline keeps that ramp **linear** (its alpha is a flat `1` across the band).
   A shadow **squares** it, because its alpha falls off over the same interval, and
   a linear ramp would strand the outer hue where the shadow has already faded out.
@@ -119,17 +132,30 @@ the alpha channel alongside the MSDF in RGB. The fill layer always uses
   per-corner `0..1` `Corners`: intermediates `mix()` sharp into round.
 - Soft shadow / glow (`setShadow(..., softness)`) — a shadow quad is an
   **outline-only quad**: fill alpha 0 (its colour slot freed for the two-tone
-  inner colour), shadow colour in the `inOutline`
-  attribute, width 0, softness in `params` — with `rounded` tracking softness
-  corner for corner, so a shadow's hard side stays crisp against the fill it
-  sits behind (uniform softness reproduces the old per-glyph flag). Softness
-  is measured in **distance-field units** (like `outlineWidth`), so the blur
-  scales with the text at any size; it is bounded by the atlas `distanceRange`,
-  with a 1-screen-pixel AA floor. A *hard* shadow keeps the `backgroundFade`
-  guard, which the old mode-0 shadow path did not have.
-- Both are clamped to zero at **pack time** on plain `msdf` atlases (the renderer
-  checks `fieldType`); `MSDFText` warns once if they are requested object-level
-  on such a font. Per-run styles clamp silently.
+  inner colour), shadow colour in the `inOutline` attribute, softness in
+  `params`. Softness is measured in **distance-field units** (like
+  `outlineWidth`), so the blur scales with the text at any size; it is bounded by
+  the atlas `distanceRange`, with a 1-screen-pixel AA floor. A *hard* shadow keeps
+  the `backgroundFade` guard, which the old mode-0 shadow path did not have.
+- Soft **outline** (`outlineSoftness`) — the same `.a` byte on a *fill* quad.
+  `outlineCoverage` never cared which pass it was in, so setting it blurs the
+  outline edge; the blur's inner half hides under the opaque fill, so only the
+  outside softens. At zero width the outline *is* the glow, hugging the
+  letterform, in one quad with no shadow pass. This is why `packOutlineAspect`'s
+  zero-width gate had to learn about softness.
+- Rounded **shadow** (`shadowRounded`, per-corner `GlyphShadow.rounded`) —
+  independent, no longer derived from softness. It defaults **on**, unlike
+  `outlineRounded`, and that is not an inconsistency: rounding is a *no-op* until
+  the shadow's edge leaves the glyph contour (which needs a spread or a softness),
+  and where it does bite, a sharp dilation of `median(rgb)` grows a mitre spike at
+  every corner. So `true` reproduces the old derived rule exactly and is what a
+  spread wants; `false` is opt-in spikes.
+- All three (both `rounded`s, both `softness`es) are clamped to zero at **pack
+  time** on plain `msdf` atlases (the renderer checks `fieldType`); `MSDFText`
+  warns once if a softness or a rounded *outline* is requested object-level on such
+  a font. Per-run styles clamp silently. `shadowRounded` never warns — it is a
+  default, not a request. **`shadow.spread` is not clamped**: it dilates
+  `median(rgb)` exactly as a thick outline does, so it needs no true SDF.
 
 **Shaders** — one über-shader, two lanes, inline string arrays in
 `src/MSDFBatchHandler.ts`:
@@ -220,11 +246,12 @@ before pills.
 **Per-glyph state** — the display callback and `editGlyphs()` both operate on an
 array of `GlyphState` (`src/MSDFGlyphState.ts`), one per renderable glyph. Each
 carries a transform, a per-corner `weight`, and three independent aspects —
-`fill`, `shadow` (+ `x`/`y`/`softness`), `outline` (+ `width`/`rounded`) — with
-per-corner `0xRRGGBB` colour and a separate `0-1` alpha (kept split so V8 holds a
-stable hidden class and SMI/double field reps across the per-glyph loop; packing
-lives in `src/MSDFColor.ts`). `shadow` and `outline` also carry a per-corner
-`innerColor` for the two-tone ramp. `MSDFText._glyphMode` picks the source:
+`fill`, `shadow` (+ `x`/`y`/`softness`/`spread`/`rounded`), `outline` (+
+`width`/`rounded`/`softness`) — with per-corner `0xRRGGBB` colour and a separate
+`0-1` alpha (kept split so V8 holds a stable hidden class and SMI/double field
+reps across the per-glyph loop; packing lives in `src/MSDFColor.ts`). `shadow` and
+`outline` also carry a per-corner `innerColor` for the two-tone ramp.
+`MSDFText._glyphMode` picks the source:
 - `static` (0) — no array; the renderer fills every quad from the object-level
   colour/alpha/outline/shadow (the cheap default; nothing per-glyph allocated).
 - `callback` (1) — `MSDFText.prepareGlyphStates` re-seeds the array from the

@@ -12,13 +12,14 @@
  * cover the common "all four corners the same" case; reach into the per-corner
  * `Corners` objects only for gradients.
  *
- * `weight`, `outline.width`, `outline.rounded` and `shadow.softness` are
+ * `weight` and every effect channel on the two layers — `outline.width` /
+ * `.rounded` / `.softness`, `shadow.softness` / `.spread` / `.rounded` — are
  * per-corner too, because they ride the same interpolated vertex attribute: a
- * faux-bold gradient, a directional outline, a soft-on-one-side shadow or an
- * outline that melts from sharp to round across the glyph all cost nothing
- * extra. The interpolation is linear across the quad's bounding box, not along
- * the letter contour, so think "directional ramp", not "contour-following
- * pulse".
+ * faux-bold gradient, a directional outline, a soft-on-one-side shadow, a shadow
+ * that spreads to one side, or an outline that melts from sharp to round across
+ * the glyph all cost nothing extra. The interpolation is linear across the quad's
+ * bounding box, not along the letter contour, so think "directional ramp", not
+ * "contour-following pulse".
  *
  * The shape is frozen and reused across frames: keep colour fields integer and
  * alpha fields fractional so V8 holds the hidden class and field representations
@@ -53,6 +54,27 @@ export interface GlyphShadow extends GlyphAspect {
      * on a plain MSDF font. Bounded by the atlas `distanceRange`.
      */
     softness: Corners;
+    /**
+     * Per-corner dilation of the shadow's silhouette before it is blurred, in
+     * distance-field units (seeded from `shadowSpread`) — Photoshop's *spread*
+     * next to its *size*. `0` traces the glyph exactly. Fattens a shadow without
+     * mushing it, which {@link softness} alone cannot do; works on plain MSDF
+     * atlases, since it dilates the same field a thick outline does. Saturates at
+     * half the atlas `distanceRange`, like `outline.width` — and, like a thick
+     * outline, a *hard* spread past ~0.3 of the range starts to be eaten by the
+     * shader's background-haze guard. Any softness at all lifts that guard.
+     */
+    spread: Corners;
+    /**
+     * Per-corner rounding of the shadow's silhouette, `0` (sharp, from
+     * `median(rgb)`) to `1` (rounded, from the true SDF). Seeded to `1` or `0`
+     * from `shadowRounded`, which **defaults on** — rounding is a no-op until
+     * {@link spread} or {@link softness} lifts the silhouette off the glyph
+     * contour, and where it does bite, a sharp dilation grows mitre spikes at
+     * every corner. Set `0` for those spikes. Needs an MTSDF atlas; forced to `0`
+     * on a plain MSDF font.
+     */
+    rounded: Corners;
 }
 
 export interface GlyphOutline extends GlyphAspect {
@@ -80,6 +102,17 @@ export interface GlyphOutline extends GlyphAspect {
      * Needs an MTSDF atlas; forced to `0` on a plain MSDF font.
      */
     rounded: Corners;
+    /**
+     * Per-corner blur of the outline's outer edge, in distance-field units
+     * (seeded from `outlineSoftness`). `0` is the plain 1-screen-pixel edge.
+     *
+     * The blur is centred on the outline edge, so its inner half hides under the
+     * opaque fill and only the outer edge visibly softens — a glow that costs no
+     * shadow pass and no second quad. With {@link width} at `0` the whole outline
+     * *is* that glow, hugging the letterform. Needs an MTSDF atlas; forced to `0`
+     * on a plain MSDF font.
+     */
+    softness: Corners;
 }
 
 export interface GlyphState {
@@ -147,16 +180,22 @@ export interface GlyphState {
     setShadowAlpha(alpha: number): void;
     /** Set the shadow softness (distance-field units) on all four corners. */
     setShadowSoftness(softness: number): void;
+    /** Set the shadow spread (distance-field units) on all four corners. */
+    setShadowSpread(spread: number): void;
+    /** Set the shadow rounding (`0` sharp to `1` round) on all four corners. */
+    setShadowRounded(rounded: number): void;
     /** Set the outline colour (`0xRRGGBB`) on all four corners. */
     setOutlineColor(rgb: number): void;
     /** Set the outline's inner-edge colour (`0xRRGGBB`) on all four corners. */
     setOutlineInnerColor(rgb: number): void;
     /** Set the outline alpha (`0-1`) on all four corners. */
     setOutlineAlpha(alpha: number): void;
-    /** Set the outline width (distance-field units) on all four corners. `0` disables it. */
+    /** Set the outline width (distance-field units) on all four corners. */
     setOutlineWidth(width: number): void;
     /** Set the outline rounding (`0` sharp to `1` round) on all four corners. */
     setOutlineRounded(rounded: number): void;
+    /** Set the outline softness (distance-field units) on all four corners. */
+    setOutlineSoftness(softness: number): void;
 }
 
 function corners(value: number): Corners {
@@ -197,6 +236,14 @@ function setShadowSoftness(this: GlyphState, softness: number): void {
     const s = this.shadow.softness;
     s.topLeft = s.topRight = s.bottomLeft = s.bottomRight = softness;
 }
+function setShadowSpread(this: GlyphState, spread: number): void {
+    const s = this.shadow.spread;
+    s.topLeft = s.topRight = s.bottomLeft = s.bottomRight = spread;
+}
+function setShadowRounded(this: GlyphState, rounded: number): void {
+    const r = this.shadow.rounded;
+    r.topLeft = r.topRight = r.bottomLeft = r.bottomRight = rounded;
+}
 function setOutlineColor(this: GlyphState, rgb: number): void {
     const t = this.outline.color;
     t.topLeft = t.topRight = t.bottomLeft = t.bottomRight = rgb;
@@ -217,6 +264,10 @@ function setOutlineRounded(this: GlyphState, rounded: number): void {
     const r = this.outline.rounded;
     r.topLeft = r.topRight = r.bottomLeft = r.bottomRight = rounded;
 }
+function setOutlineSoftness(this: GlyphState, softness: number): void {
+    const s = this.outline.softness;
+    s.topLeft = s.topRight = s.bottomLeft = s.bottomRight = softness;
+}
 
 /** Create a fresh glyph state with a stable, fully-populated shape. */
 export function createGlyphState(): GlyphState {
@@ -234,8 +285,14 @@ export function createGlyphState(): GlyphState {
         skew: 0,
         weight: corners(0),
         fill: { color: corners(0xffffff), alpha: corners(1) },
-        shadow: { color: corners(0), innerColor: corners(0), alpha: corners(1), x: 0, y: 0, softness: corners(0) },
-        outline: { color: corners(0), innerColor: corners(0), alpha: corners(1), width: corners(0), rounded: corners(0) },
+        shadow: {
+            color: corners(0), innerColor: corners(0), alpha: corners(1),
+            x: 0, y: 0, softness: corners(0), spread: corners(0), rounded: corners(0)
+        },
+        outline: {
+            color: corners(0), innerColor: corners(0), alpha: corners(1),
+            width: corners(0), rounded: corners(0), softness: corners(0)
+        },
         setScale,
         setWeight,
         setFillColor,
@@ -244,10 +301,13 @@ export function createGlyphState(): GlyphState {
         setShadowInnerColor,
         setShadowAlpha,
         setShadowSoftness,
+        setShadowSpread,
+        setShadowRounded,
         setOutlineColor,
         setOutlineInnerColor,
         setOutlineAlpha,
         setOutlineWidth,
-        setOutlineRounded
+        setOutlineRounded,
+        setOutlineSoftness
     };
 }
