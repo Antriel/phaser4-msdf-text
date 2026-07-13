@@ -46,6 +46,8 @@ export type {
     RectLike,
     FitOptions,
     DisplayCallback,
+    DecorationCallback,
+    LineInfo,
     MSDFTextInstance,
     MSDFTextStatic,
     PerCorner,
@@ -70,6 +72,7 @@ export type {
     GlyphShadow,
     GlyphOutline
 } from './MSDFGlyphState';
+export type { DecorationState } from './MSDFDecorState';
 export type { Corners } from './MSDFColor';
 export type { MSDFFontFileConfig } from './MSDFFontFile';
 export type { MSDFFontJSON, MSDFFontVariantJSON, MSDFFontSetEntry } from './MSDFFontParser';

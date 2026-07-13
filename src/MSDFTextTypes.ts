@@ -11,6 +11,7 @@
 import * as Phaser from "phaser";
 import type { MSDFFont } from './MSDFFont';
 import type { GlyphState } from './MSDFGlyphState';
+import type { DecorationState } from './MSDFDecorState';
 
 /**
  * Any value accepted by Phaser.Display.Color.ValueToColor:
@@ -510,17 +511,74 @@ export interface FitOptions {
 }
 
 /**
+ * One visual line's layout, as the last rebuild resolved it. See
+ * {@link MSDFTextInstance.lines}.
+ *
+ * All values are in the text object's local space — the same space as
+ * {@link GlyphState.x} / {@link GlyphState.y} — so a glyph can be placed against
+ * its own line without any conversion.
+ */
+export interface LineInfo {
+    /** Visual line index, counting wrapped (soft) and original (hard) breaks alike. */
+    readonly index: number;
+    /**
+     * Left edge of this line, after alignment. Always `0` when `align` is
+     * `'left'`; a centred or right-aligned line is inset from the block's left
+     * edge by the amount it is shorter than the longest line.
+     */
+    readonly x: number;
+    /** Laid-out width of this line, excluding the alignment inset. */
+    readonly width: number;
+    /**
+     * Y of this line's highest ascender — the top of its tallest glyph box, not
+     * of its ink. With mixed sizes or fonts this is the largest ascender on the
+     * line, which is the one every glyph on it is aligned against.
+     */
+    readonly top: number;
+    /** Y of the baseline every glyph on this line sits on. */
+    readonly baselineY: number;
+    /**
+     * Y of the bottom of this line's box — `top` plus the tallest `lineHeight` on
+     * the line. This is the *line box*, so for most fonts it sits a little below
+     * the deepest descender, and it excludes `lineSpacing`.
+     */
+    readonly bottom: number;
+}
+
+/**
  * Display callback signature.
  *
  * Called once per frame (not once per glyph) with the full array of per-glyph
  * {@link GlyphState} objects — already seeded with the text's effective colour,
  * alpha and layout — and the parent text object. Mutate the glyphs in place;
  * the return value is ignored. The same array instance is reused every frame.
+ *
+ * It is driven by the render function, so it does **not** run while the text is
+ * culled, invisible or off-camera. Recompute a glyph's state from a clock or a
+ * tweened field rather than integrating it inside the callback, or an
+ * off-screen text will freeze mid-animation and resume out of phase.
  */
 export type DisplayCallback = (glyphs: GlyphState[], parent: MSDFTextInstance) => void;
 
-// Re-export so consumers can type their callbacks against the glyph state.
+/**
+ * Decoration callback signature.
+ *
+ * Called once per frame with every decoration rect the text laid out — its
+ * underlines, strikethroughs and highlight pills, in one array — already seeded
+ * from the rebuild and from the text's live colour. Mutate them in place.
+ *
+ * It runs **after** {@link DisplayCallback}, so `parent.glyphs` holds the finished
+ * glyph states and a rect can follow the glyphs it was merged from
+ * ({@link DecorationState.glyphStart} / `glyphEnd` index straight into that array).
+ * Like the display callback, it is transient — the array is re-seeded every frame,
+ * so recompute from a clock rather than accumulating inside it — and it is driven
+ * by the render function, so it does not run while the text is culled or invisible.
+ */
+export type DecorationCallback = (rects: DecorationState[], parent: MSDFTextInstance) => void;
+
+// Re-export so consumers can type their callbacks against the per-quad state.
 export type { GlyphState } from './MSDFGlyphState';
+export type { DecorationState } from './MSDFDecorState';
 
 /**
  * Type interface for MSDFText instances.
@@ -720,6 +778,19 @@ export interface MSDFTextInstance extends
      */
     readonly glyphs: GlyphState[] | null;
 
+    /**
+     * Optional per-frame decoration callback. Receives every underline,
+     * strikethrough and highlight pill the text laid out, as {@link DecorationState}
+     * objects. Set via {@link setDecorationCallback}.
+     */
+    decorationCallback?: DecorationCallback;
+
+    /**
+     * The per-rect state array, or `null` when no decoration callback is set. Holds
+     * last frame's seeded values. Read-only.
+     */
+    readonly decorations: DecorationState[] | null;
+
     // Dimensions (derived from text bounds)
     readonly width: number;
     readonly height: number;
@@ -823,6 +894,27 @@ export interface MSDFTextInstance extends
     setDisplayCallback(callback: DisplayCallback | undefined): this;
     clearDisplayCallback(): this;
     /**
+     * Set the per-frame decoration callback — the lane that can see and animate
+     * underlines, strikethroughs and highlight pills, which `displayCallback`
+     * cannot (they are rects, not glyphs, and live outside the glyph array).
+     *
+     * A separate callback rather than an extra argument to `displayCallback`, on
+     * purpose: decorations exist in every glyph mode, so folding the two together
+     * would force a full per-frame re-seed of every glyph state on a text that only
+     * wanted to animate three rects.
+     *
+     * The array is transient — re-seeded from the built rects every frame, so your
+     * edits do not persist and there is no manual mode to take. That is not a
+     * limitation so much as the shape of the thing: a rect is a *merge* of adjacent
+     * characters, so it has no identity that survives a re-wrap for edits to be
+     * re-applied to. Drive the effect from a clock or a tween instead.
+     *
+     * Passing `undefined` clears it (same as {@link clearDecorationCallback}).
+     */
+    setDecorationCallback(callback: DecorationCallback | undefined): this;
+    /** Clear the decoration callback; rects return to their built appearance. */
+    clearDecorationCallback(): this;
+    /**
      * Take manual control of per-glyph state. Returns the (persistent) glyph
      * array, seeded to the text's current colour/alpha/layout, and switches the
      * text into manual mode: edits persist across frames and are *not* re-seeded
@@ -883,6 +975,17 @@ export interface MSDFTextInstance extends
             longest: number;
         };
     };
+    /**
+     * Per-line layout metrics, in the same text space as {@link GlyphState.x} /
+     * {@link GlyphState.y} — cached by the last rebuild, not recomputed on read.
+     *
+     * This is the domain a per-glyph effect written as a *field over text space*
+     * needs: normalize a glyph's `x` against its line's `x`/`width`, or its `y`
+     * against the block's height, and neighbouring glyphs land on the same curve.
+     * Reading it from a display callback is free; {@link getTextBounds} allocates
+     * and is a snapshot, so prefer this in a per-frame loop.
+     */
+    readonly lines: ReadonlyArray<LineInfo>;
 }
 
 /**

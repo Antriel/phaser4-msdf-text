@@ -2,9 +2,14 @@ import * as Phaser from "phaser";
 import type { FolderApi, Pane } from "tweakpane";
 import { ExampleScene } from "../harness/ExampleScene";
 import { addModeControls, type Mode } from "../harness/modes";
-import type { MSDFTextInstance, GlyphState } from "../../src";
+import type { MSDFTextInstance, GlyphState, DecorationState } from "../../src";
 
 const WORD = "EFFECTS";
+
+// What a decoding glyph churns through before it settles. A code the font does
+// not have falls back to the character the text actually says, so an over-broad
+// alphabet degrades quietly rather than dropping the glyph.
+const SCRAMBLE = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
 /**
  * Per-glyph animation via `setDisplayCallback`. The callback runs once per
@@ -46,16 +51,21 @@ export class EffectsScene extends ExampleScene {
       .msdfText(640, 380, "Bangers", WORD, 130)
       .setColor("#ffffff")
       .setOrigin(0.5)
-      .setDisplayCallback(this.renderChar);
+      .setDisplayCallback(this.renderChar)
+      // The second lane. Decorations are rects, not glyphs, so `displayCallback`
+      // cannot see them — this one gets the underlines and pills instead, and runs
+      // *after* the glyph callback, so it can read the finished glyph array.
+      .setDecorationCallback(this.renderDecor);
 
     this.caption(
       "Each glyph is positioned, scaled and tinted independently. Corner ramp drives weight, " +
         "outline width and rounding per corner — every params channel is continuous. Glow beat " +
         "pulses a per-glyph shadow softness; Sticker pump pulses a per-corner shadow spread, which " +
-        "fattens the shadow's silhouette instead of blurring it. The last four drive the quad's " +
-        "corners directly: Lean slides the skew pivot, while Ribbon, Keystone and Jelly write " +
-        "offsetX/offsetY, which reach shapes — trapezia, vertical shear — that no combination of " +
-        "scale, rotation and skew can produce.",
+        "fattens the shadow's silhouette instead of blurring it. Decode swaps the letterform in " +
+        "each slot without touching the layout. Lean slides the skew pivot, while Ribbon, Keystone " +
+        "and Jelly write offsetX/offsetY, which reach shapes — trapezia, vertical shear — that no " +
+        "combination of scale, rotation and skew can produce. Typewriter and Stamp add a second " +
+        "callback for the decorations, which the glyph one cannot reach.",
     );
 
     this.commonTargets.push(this.text);
@@ -71,6 +81,15 @@ export class EffectsScene extends ExampleScene {
     this.text.clearShadow();
     this.text.clearOutline();
     this.text.perGlyphShadow = false;
+    // Decorations are the decoration lane's business, but *whether there are any*
+    // is still an object-level spec — the callback animates rects, it does not
+    // conjure them.
+    this.text.setUnderline(effect === "typewriter" ? { thickness: 0.9, offset: 0.05 } : false);
+    this.text.setHighlight(
+      effect === "stamp"
+        ? { color: 0xd6304a, radius: 0.4, borderWidth: 0.12, borderColor: 0xffd23f, padding: { x: 0.16, y: 0.06 } }
+        : false,
+    );
 
     if (effect === "jump") {
       this.text.setShadow(0, 6, 0x000000, 0.55);
@@ -127,9 +146,38 @@ export class EffectsScene extends ExampleScene {
         }
 
         case "typewriter": {
-          // Reveal sweeps across the word, holds, then restarts.
-          const cycle = (now * 3 * speed) % (WORD.length + 6);
-          if (i >= cycle) g.setScale(0);
+          // Reveal sweeps across the word, holds, then restarts. `visible` — not a
+          // zero scale or a zero alpha, both of which still submit the quad and
+          // hand the GPU nothing to draw. An untyped glyph here costs no quad at
+          // all, and the underline behind it is trimmed to match in `renderDecor`.
+          if (i >= this.typedCount(now)) g.visible = false;
+          break;
+        }
+
+        case "decode": {
+          // A different letterform in the same slot. The layout is untouched — the
+          // slot keeps the original character's pen position and advance — so the
+          // word churns in place instead of breathing as the letters change width,
+          // which is what calling setText every frame would do (and it would
+          // relayout the whole text besides).
+          const settle = 0.7 + i * 0.22;
+          const t = (now * speed) % (WORD.length * 0.22 + 3);
+          if (t < settle) {
+            // Bucketed, not per-frame: 20 changes a second reads as a churn, 60
+            // reads as a strobe. Deterministic in (bucket, i), so no Math.random.
+            const bucket = Math.floor(t * 20);
+            g.setGlyph(SCRAMBLE[(bucket * 31 + i * 17) % SCRAMBLE.length]);
+            g.setFillAlpha(0.55);
+          }
+          break;
+        }
+
+        case "stamp": {
+          // The glyphs land with the pill behind them; `renderDecor` drives the
+          // pill itself. Both read the same clock — the two callbacks are separate
+          // lanes, not separate timelines.
+          const t = this.stampPhase(now);
+          g.setScale(Phaser.Math.Easing.Back.Out(t));
           break;
         }
 
@@ -310,6 +358,67 @@ export class EffectsScene extends ExampleScene {
     }
   };
 
+  /** How many glyphs the typewriter has typed by now. Shared by both callbacks. */
+  private typedCount(now: number): number {
+    return (now * 3 * this.params.speed) % (WORD.length + 6);
+  }
+
+  /** The stamp's 0..1 landing progress. Shared by both callbacks. */
+  private stampPhase(now: number): number {
+    return Math.min(1, (now * this.params.speed) % 2.6);
+  }
+
+  /**
+   * Decoration callback — the lane `displayCallback` cannot reach. It runs once a
+   * frame with every underline, strikethrough and highlight pill the text laid
+   * out, *after* the glyph callback, so `text.glyphs` is final by the time it
+   * reads it.
+   *
+   * The array is transient: re-seeded from the built rects every frame, so both
+   * effects below recompute from the clock rather than accumulating. There is no
+   * manual mode to take instead — a rect is a *merge* of adjacent characters, so
+   * it has no identity that would survive a re-wrap for edits to be re-applied to.
+   */
+  private renderDecor = (rects: DecorationState[], text: MSDFTextInstance): void => {
+    const now = this.time.now / 1000;
+
+    if (this.params.effect === "typewriter") {
+      const glyphs = text.glyphs;
+      if (!glyphs) return;
+
+      for (const r of rects) {
+        // `glyphStart`/`glyphEnd` are the window of glyphs this rect was merged
+        // from — direct indices into the array, so following your own glyphs is a
+        // loop and not a search. Trim the rule to the last one the typewriter has
+        // reached, and hide it entirely before the first.
+        let right = r.x;
+        let typed = false;
+        for (let i = r.glyphStart; i < r.glyphEnd; i++) {
+          const g = glyphs[i];
+          if (!g.visible) break;
+          right = Math.max(right, g.x + g.width);
+          typed = true;
+        }
+        r.visible = typed;
+        r.w = Math.max(0, right - r.x);
+      }
+      return;
+    }
+
+    if (this.params.effect === "stamp") {
+      const t = this.stampPhase(now);
+      for (const r of rects) {
+        // A per-rect transform, about the rect's own centre — and exact under the
+        // box SDF, because radius/border/softness are fractions of the pill's
+        // half-thickness, so they scale with it: `radius: 0.4` stays 0.4 of a
+        // pill half its size. It lands rotated slightly off-square, like a stamp.
+        r.setScale(Phaser.Math.Easing.Back.Out(t));
+        r.rotation = (1 - t) * -0.22;
+        r.setAlpha(t);
+      }
+    }
+  };
+
   protected addControls(pane: Pane): void {
     // Knobs are read live by the callback each frame, so bindings need no
     // change handlers — existing at all is what wires them.
@@ -335,7 +444,9 @@ export class EffectsScene extends ExampleScene {
           f.addBinding(this.params, "bottomColor", { label: "bottom color", view: "color" });
         }),
         mode("rainbow", "Rainbow", speed),
-        mode("typewriter", "Typewriter", speed),
+        mode("typewriter", "Typewriter + rule", speed),
+        mode("decode", "Decode (glyph swap)", speed),
+        mode("stamp", "Stamp (pill pop-in)", speed),
         mode("jitter", "Jitter", amplitude),
         mode("popin", "Pop-in", speed),
         mode("fade", "Fade", speed),

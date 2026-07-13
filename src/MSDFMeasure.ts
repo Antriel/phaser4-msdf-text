@@ -159,6 +159,10 @@ export interface LineMeasurement {
     lines: string[];
     widths: number[];
     baselines: number[];
+    /** Each line's ascent — baseline minus this is the line's highest ascender. */
+    ascents: number[];
+    /** Each line's box height (the tallest `lineHeight` on it), excluding `lineSpacing`. */
+    heights: number[];
     totalWidth: number;
     totalHeight: number;
     shortest: number;
@@ -183,6 +187,8 @@ export function measureLines(
     const lines = text.split('\n');
     const widths: number[] = [];
     const baselines: number[] = [];
+    const ascents: number[] = [];
+    const heights: number[] = [];
     let maxWidth = 0;
     let minWidth = Infinity;
 
@@ -203,6 +209,8 @@ export function measureLines(
 
         const metrics = lineMetrics(start, end, fontSize, runs);
         baselines.push(top + metrics.ascent);
+        ascents.push(metrics.ascent);
+        heights.push(metrics.height);
         top += metrics.height + lineSpacing;
 
         start = end + 1; // skip the '\n' that split() consumed
@@ -219,6 +227,8 @@ export function measureLines(
         lines,
         widths,
         baselines,
+        ascents,
+        heights,
         totalWidth: maxWidth,
         totalHeight,
         shortest: minWidth,

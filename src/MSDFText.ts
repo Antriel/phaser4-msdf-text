@@ -21,8 +21,9 @@ import * as Phaser from "phaser";
 import { MSDFFont } from './MSDFFont';
 import MSDFTextWebGLRenderer, { PASS_HIGHLIGHT, PASS_UNDERLINE, PASS_STRIKE } from './MSDFTextWebGLRenderer';
 import { createGlyphState, type GlyphState } from './MSDFGlyphState';
+import { createDecorState, type DecorationState } from './MSDFDecorState';
 import { wrapLines } from './MSDFTextWrap';
-import { measureLines, uniformRuns, type LayoutRuns } from './MSDFMeasure';
+import { measureLines, uniformRuns, type LayoutRuns, type LineMeasurement } from './MSDFMeasure';
 import {
     toColorInt,
     toRoundedAmount,
@@ -57,6 +58,8 @@ import type {
     StyleTarget,
     StyleHandle,
     DisplayCallback,
+    DecorationCallback,
+    LineInfo,
     MSDFTextStatic
 } from './MSDFTextTypes';
 
@@ -83,10 +86,13 @@ export type {
     RectLike,
     FitOptions,
     DisplayCallback,
+    DecorationCallback,
+    LineInfo,
     MSDFTextInstance,
     MSDFTextStatic
 } from './MSDFTextTypes';
 export type { GlyphState } from './MSDFGlyphState';
+export type { DecorationState } from './MSDFDecorState';
 
 // Per-glyph state mode. Static = no per-glyph array (object colour used as-is);
 // callback = array re-seeded + handed to `displayCallback` each frame; manual =
@@ -94,6 +100,25 @@ export type { GlyphState } from './MSDFGlyphState';
 const GLYPH_MODE_STATIC = 0;
 const GLYPH_MODE_CALLBACK = 1;
 const GLYPH_MODE_MANUAL = 2;
+
+// Per-rect state mode. Two, where the glyph lane has three: there is no manual
+// mode for decorations, because a rect is a merge artifact with no identity that
+// survives a rebuild — see `MSDFDecorState.ts`.
+const DECOR_MODE_STATIC = 0;
+const DECOR_MODE_CALLBACK = 1;
+
+/** Copy all four corners of `src` into `dst`. */
+function copyCorners(dst: Corners, src: Corners): void {
+    dst.topLeft = src.topLeft;
+    dst.topRight = src.topRight;
+    dst.bottomLeft = src.bottomLeft;
+    dst.bottomRight = src.bottomRight;
+}
+
+/** Write one value to all four corners of `dst`. */
+function setCorners(dst: Corners, value: number): void {
+    dst.topLeft = dst.topRight = dst.bottomLeft = dst.bottomRight = value;
+}
 
 // Phaser's published types describe these as interfaces/values that don't
 // match the runtime shape we need, so reach through `any`.
@@ -325,6 +350,11 @@ export const MSDFText: MSDFTextStatic = new Class({
         this._characters = [];
         this._width = 0;
         this._height = 0;
+        // Per-line layout, kept from the rebuild that computed it. The measure
+        // pass produces all of this anyway; retaining it is what lets a per-frame
+        // display callback ask for its line's extent without re-wrapping the text.
+        this._lines = [];
+        this._shortestLine = 0;
         this._dirty = true;
         this._mtsdfWarnings = {};
 
@@ -348,14 +378,22 @@ export const MSDFText: MSDFTextStatic = new Class({
         // ── Decorations (highlight / underline / strikethrough) ─────────────
         // Appearance lane, but glyph-independent: they resolve per *source*
         // character through the same paint order as styles, then merge into
-        // rects. Never seeded into GlyphState, so `displayCallback` can't see
-        // them. Rebuilt alongside the styled seed (rebuild / `_stylesDirty`),
-        // since they read `_characters`, which layout owns.
+        // rects. Never seeded into GlyphState — `displayCallback` can't see them,
+        // and `setDecorationCallback` is the lane that can. Rebuilt alongside the
+        // styled seed (rebuild / `_stylesDirty`), since they read `_characters`,
+        // which layout owns.
         this._underline = null;      // object-level default: ResolvedDecoration | null
         this._strikethrough = null;
         this._highlight = null;      // object-level default: ResolvedHighlight | null
         this._decorRects = [];
         this._hasDecorations = false;
+
+        // Per-rect display state. Static by default — no array is built until a
+        // decoration callback is set. Two modes, not three: rects have no identity
+        // that survives a rebuild, so there is nothing to hand a user to own.
+        this.decorationCallback = undefined;
+        this._decorMode = DECOR_MODE_STATIC;
+        this._decorStates = [];
         // The one decoration knob that is *not* resolved at rebuild: a dashed
         // rule's phase slides the rects' UV origin at submit time, so it is a
         // plain public field with no dirty flag — tween it and the ants march.
@@ -1175,6 +1213,149 @@ export const MSDFText: MSDFTextStatic = new Class({
     },
 
     /**
+     * Set the per-frame decoration callback. See
+     * {@link MSDFTextInstance.setDecorationCallback}.
+     */
+    setDecorationCallback: function (callback: DecorationCallback | undefined) {
+        this.decorationCallback = callback;
+        this._decorMode = callback ? DECOR_MODE_CALLBACK : DECOR_MODE_STATIC;
+        return this;
+    },
+
+    /** Clear the decoration callback, returning the rects to their built state. */
+    clearDecorationCallback: function () {
+        this.decorationCallback = undefined;
+        this._decorMode = DECOR_MODE_STATIC;
+        return this;
+    },
+
+    /**
+     * The per-rect state array (`null` without a decoration callback). See
+     * {@link MSDFTextInstance.decorations}.
+     */
+    decorations: {
+        get: function (this: any): DecorationState[] | null {
+            return this._decorMode === DECOR_MODE_STATIC ? null : this._decorStates;
+        }
+    },
+
+    /**
+     * Ensure the rect-state array matches the built rect count and seed every
+     * entry from the rect it mirrors. Called by the renderer each frame in
+     * decoration-callback mode, immediately before the callback runs.
+     *
+     * `_decorRects` is to `_characters` as this array is to `_glyphStates`: a
+     * pristine built array, and a mutable per-frame copy of it. There is no manual
+     * mode to complicate that — a rect is a merge artifact with no stable identity
+     * across a rebuild, so nothing here is worth persisting (and, with a handful of
+     * rects per text, nothing here is worth *not* re-seeding).
+     */
+    prepareDecorStates: function (): DecorationState[] {
+        const rects = this._decorRects;
+        const states: DecorationState[] = this._decorStates;
+        const n = rects.length;
+
+        while (states.length < n) {
+            states.push(createDecorState());
+        }
+        if (states.length > n) {
+            states.length = n;
+        }
+
+        // The object's live colour and per-corner alpha — what a rule that named
+        // no colour of its own inherits. The static submit path resolves this per
+        // rect as it goes; here it is resolved once, into the state, so a callback
+        // never sees the "absent means inherit" sentinel.
+        const cA = this._color.a;
+        const baseRgb = this.color;
+        const aTL = cA * this._alphaTL, aTR = cA * this._alphaTR;
+        const aBL = cA * this._alphaBL, aBR = cA * this._alphaBR;
+        const phase = this.dashPhase;
+
+        for (let i = 0; i < n; i++) {
+            this.seedRect(states[i], rects[i], baseRgb, aTL, aTR, aBL, aBR, phase);
+        }
+        return states;
+    },
+
+    /**
+     * Seed one rect state from the rect the rebuild merged. Mirrors `seedGlyph`:
+     * every "absent means inherit" is resolved here, so the callback sees final
+     * values and the renderer reads the state back without a fallback of its own.
+     */
+    seedRect: function (
+        s: DecorationState,
+        r: any,
+        baseRgb: number,
+        aTL: number, aTR: number, aBL: number, aBR: number,
+        phase: number
+    ): void {
+        (s as any).pass = r.pass;
+        (s as any).line = r.line;
+        (s as any).srcStart = r.srcStart;
+        (s as any).srcEnd = r.srcEnd;
+        (s as any).glyphStart = r.glyphStart;
+        (s as any).glyphEnd = r.glyphEnd;
+        (s as any).fontIdx = r.fontIdx;
+
+        s.visible = true;
+        s.x = r.x;
+        s.y = r.y;
+        s.w = r.w;
+        s.h = r.h;
+        s.scaleX = 1;
+        s.scaleY = 1;
+        s.rotation = 0;
+        s.clearOffset();
+
+        // Face colour / alpha: the rect's own, or the object's where it inherited.
+        const rgb: Corners | undefined = r.rgb;
+        const alpha: Corners | undefined = r.alpha;
+        const col = s.color;
+        col.topLeft = rgb ? rgb.topLeft : baseRgb;
+        col.topRight = rgb ? rgb.topRight : baseRgb;
+        col.bottomLeft = rgb ? rgb.bottomLeft : baseRgb;
+        col.bottomRight = rgb ? rgb.bottomRight : baseRgb;
+        const al = s.alpha;
+        al.topLeft = alpha ? alpha.topLeft : aTL;
+        al.topRight = alpha ? alpha.topRight : aTR;
+        al.bottomLeft = alpha ? alpha.bottomLeft : aBL;
+        al.bottomRight = alpha ? alpha.bottomRight : aBR;
+
+        // The two-tone inner colour, read only where the face alpha is zero. A rule
+        // has none, so it seeds the face colour and the ramp is an identity.
+        const inner: Corners | undefined = r.inner;
+        if (inner) copyCorners(s.innerColor, inner);
+        else copyCorners(s.innerColor, col);
+
+        const h: ResolvedHighlight | undefined = r.highlight;
+        const dash: ResolvedDash | undefined = r.dash;
+
+        if (h) {
+            copyCorners(s.borderColor, h.borderColor);
+            copyCorners(s.borderAlpha, h.borderAlpha);
+            copyCorners(s.borderWidth, h.borderWidth);
+            copyCorners(s.radius, h.radius);
+            copyCorners(s.softness, h.softness);
+            setCorners(s.dashDuty, 0.5);
+        } else {
+            // A rule: no ring. Its shape, if it has one, is its dash's — and a dash
+            // is uniform across the rect, so it seeds all four corners alike.
+            setCorners(s.borderColor, 0);
+            setCorners(s.borderAlpha, 1);
+            setCorners(s.borderWidth, 0);
+            setCorners(s.radius, dash ? dash.radius : 0);
+            setCorners(s.softness, dash ? dash.softness : 0);
+            // Seeded even on a solid rule, so that switching `dashCount` on in a
+            // callback yields an even dash rather than a hairline per cell.
+            setCorners(s.dashDuty, dash ? dash.duty : 0.5);
+        }
+
+        s.dashCount = r.dashCount;
+        s.dashPhase = phase;
+    },
+
+    /**
      * Consume a pending rebuild / re-seed before handing the glyph array to the
      * user. The array `editGlyphs` and `resetGlyphs` return is seeded *and*
      * styled by `prepareGlyphStates`, so a still-set `_stylesDirty` has nothing
@@ -1345,6 +1526,8 @@ export const MSDFText: MSDFTextStatic = new Class({
         (g as any).height = char.h;
         (g as any).em = char.em;
         (g as any).baselineOffset = char.baselineY - char.y;
+        g.glyph = 0;
+        g.visible = true;
         g.x = char.x;
         g.y = char.y;
         g.scaleX = 1;
@@ -1872,7 +2055,20 @@ export const MSDFText: MSDFTextStatic = new Class({
                     // A solid rule is the constant hard-edged box, so it packs
                     // nothing. A dashed one carries the dash's own shape.
                     params: dashCount > 0 ? (dash as ResolvedDash).params : undefined,
-                    dashCount: dashCount
+                    dashCount: dashCount,
+                    // Provenance, for the decoration callback. The glyph window is
+                    // free: `i`/`j` are already bracketing exactly the characters
+                    // this rect was merged from, so a callback that follows its own
+                    // glyphs indexes straight into the array instead of searching.
+                    line: line,
+                    srcStart: first.srcIndex,
+                    srcEnd: chars[j - 1].srcIndex + 1,
+                    glyphStart: i,
+                    glyphEnd: j,
+                    // The shape a state is seeded from. A rule's lives on its dash
+                    // (or nowhere, for a plain box); a pill's is the spec itself.
+                    highlight: undefined,
+                    dash: dashCount > 0 ? (dash as ResolvedDash) : undefined
                 });
             }
             i = j;
@@ -1957,7 +2153,16 @@ export const MSDFText: MSDFTextStatic = new Class({
                     // A pill is never dashed — the byte a dash spends on its duty
                     // cycle is the pill's border width. Named so both rect kinds
                     // share one hidden class.
-                    dashCount: 0
+                    dashCount: 0,
+                    // Provenance + the shape a state is seeded from; see the note
+                    // in `buildDecorRects`.
+                    line: line,
+                    srcStart: first.srcIndex,
+                    srcEnd: chars[j - 1].srcIndex + 1,
+                    glyphStart: i,
+                    glyphEnd: j,
+                    highlight: spec,
+                    dash: undefined
                 });
             }
             i = j;
@@ -2148,25 +2353,46 @@ export const MSDFText: MSDFTextStatic = new Class({
     },
 
     /**
-     * Get detailed text bounds including per-line information
+     * Per-line layout, as the last rebuild resolved it. See
+     * {@link MSDFTextInstance.lines}.
+     */
+    lines: {
+        get: function (this: any): LineInfo[] {
+            if (this._dirty) {
+                this.rebuildText();
+            }
+            return this._lines;
+        }
+    },
+
+    /**
+     * Get detailed text bounds including per-line information.
+     *
+     * Reads the layout the last rebuild cached rather than re-wrapping and
+     * re-measuring the text, which is what it used to do on every call — a full
+     * word-wrap plus a kerned pass over every character, from a method whose
+     * natural home is a per-frame display callback. {@link lines} is the
+     * allocation-free version of the same data; this stays for the snapshot shape.
      */
     getTextBounds: function () {
-        // Get text to measure (with word wrapping if enabled).
-        const wrap = this.computeWrap(this._text, this._maxWidth, this._fontSize);
+        if (this._dirty) {
+            this.rebuildText();
+        }
 
-        const lineData = measureLines(
-            wrap.text, this._fontSize, this._lineSpacing, this._letterSpacing,
-            this.wrappedRuns(wrap.srcIndex)
-        );
+        const lines: LineInfo[] = this._lines;
+        const lengths: number[] = new Array(lines.length);
+        for (let i = 0; i < lines.length; i++) {
+            lengths[i] = lines[i].width;
+        }
 
         return {
-            width: lineData.totalWidth,
-            height: lineData.totalHeight,
+            width: this._width,
+            height: this._height,
             lines: {
-                count: lineData.lines.length,
-                lengths: lineData.widths,
-                shortest: lineData.shortest,
-                longest: lineData.longest
+                count: lines.length,
+                lengths: lengths,
+                shortest: this._shortestLine,
+                longest: this._width
             }
         };
     },
@@ -2211,6 +2437,8 @@ export const MSDFText: MSDFTextStatic = new Class({
         if (!this._text || this._text.length === 0) {
             this._width = 0;
             this._height = 0;
+            this._lines.length = 0;
+            this._shortestLine = 0;
             this._dirty = false;
             this.updateDisplayOrigin();
             this.refreshGlyphs();
@@ -2316,6 +2544,11 @@ export const MSDFText: MSDFTextStatic = new Class({
                 y: charY,
                 w: charWidth,
                 h: charHeight,
+                // The pen, not the quad: `x` already has this glyph's own left
+                // bearing folded in, and a *substituted* glyph (GlyphState.glyph)
+                // has a different one. Keeping the pen is what lets the renderer
+                // draw another letterform in this slot without moving the slot.
+                penX: cursorX,
                 u0: char.u0,
                 v0: char.v1,  // Swap v0 and v1 to flip orientation
                 u1: char.u1,
@@ -2343,9 +2576,13 @@ export const MSDFText: MSDFTextStatic = new Class({
         // it reads don't re-enter rebuildText.
         this._width = lineData.totalWidth;
         this._height = lineData.totalHeight;
+        this._shortestLine = lineData.shortest;
 
-        // Apply alignment now that line widths are known.
-        this.applyAlignment(lineData);
+        // Keep the per-line layout the measure pass just produced, and apply
+        // alignment from it — a line's alignment inset *is* its `x`, so the two
+        // come from one place rather than repeating the formula.
+        this.buildLineInfo(lineData);
+        this.applyAlignment();
 
         this._dirty = false;
         this.updateDisplayOrigin();
@@ -2376,32 +2613,66 @@ export const MSDFText: MSDFTextStatic = new Class({
     },
 
     /**
+     * Retain the per-line layout the measure pass produced, resolving each line's
+     * alignment inset into its `x`. Everything here was already computed to lay
+     * the glyphs out; keeping it is what makes {@link lines} — and therefore a
+     * per-frame field over text space — cost nothing to read.
+     *
+     * Not part of the public `MSDFTextInstance` type.
+     */
+    buildLineInfo: function (lineData: LineMeasurement): void {
+        const lines: LineInfo[] = this._lines;
+        const longest = lineData.totalWidth;
+        const align = this._align;
+
+        lines.length = 0;
+        for (let i = 0; i < lineData.widths.length; i++) {
+            const width = lineData.widths[i];
+            const baselineY = lineData.baselines[i];
+            const top = baselineY - lineData.ascents[i];
+
+            let x = 0;
+            if (align === 'center') {
+                x = (longest - width) / 2;
+            } else if (align === 'right') {
+                x = longest - width;
+            }
+
+            lines.push({
+                index: i,
+                x: x,
+                width: width,
+                top: top,
+                baselineY: baselineY,
+                bottom: top + lineData.heights[i]
+            });
+        }
+    },
+
+    /**
      * Apply text alignment to character positions.
      *
      * Matches BitmapText: the text block's left edge always stays at x = 0,
      * and alignment only shifts each line *within* the block relative to the
      * longest line. Use `originX` to position the block as a whole.
      *
-     * @param lineData Per-line measurement from `MSDFFont.measureLines`.
+     * Reads the inset from {@link buildLineInfo}, which must therefore run first.
      */
-    applyAlignment: function (lineData: { widths: number[]; totalWidth: number }) {
+    applyAlignment: function () {
         if (this._align === 'left' || this._characters.length === 0) {
             return;
         }
 
-        const longest = lineData.totalWidth;
+        const lines: LineInfo[] = this._lines;
 
         for (const char of this._characters) {
-            const lineWidth = lineData.widths[char.line as number] || 0;
-            let offset = 0;
-
-            if (this._align === 'center') {
-                offset = (longest - lineWidth) / 2;
-            } else if (this._align === 'right') {
-                offset = longest - lineWidth;
+            const line = lines[char.line as number];
+            if (line) {
+                char.x += line.x;
+                // The pen moves with the quad, or a substituted glyph would be
+                // placed against the unaligned layout.
+                char.penX += line.x;
             }
-
-            char.x += offset;
         }
     },
 

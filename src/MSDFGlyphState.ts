@@ -155,6 +155,46 @@ export interface GlyphState {
      */
     readonly baselineOffset: number;
 
+    /**
+     * Draw a **different letterform** in this glyph's slot. `0` (the default) draws
+     * the character the text says it is; any other char code substitutes that
+     * glyph, taken from *this* glyph's own run font. Use {@link setGlyph}, which
+     * also accepts a string.
+     *
+     * The substitution is render-time only: the slot keeps the original's pen
+     * position and advance, so **the layout does not move**. That is the point —
+     * a scramble/decode reveal, slot-machine letters, a glitch that swaps a letter
+     * for three frames all want the letterforms to churn *in place*. Doing this by
+     * calling `setText` every frame instead would relayout the text and make the
+     * line breathe as the letters change width.
+     *
+     * The consequence of a fixed slot is that a substitute wider than the original
+     * overhangs it, and a narrower one leaves a gap. A monospaced font — or a
+     * scramble drawn from characters of similar width — hides that entirely.
+     *
+     * A code the run's font does not have falls back to the original character
+     * (never to another run's font — the no-cross-font-fallback rule holds here as
+     * everywhere). {@link width} / {@link height} keep describing the **layout
+     * box**, not the substitute's quad, so a deform written as a field over text
+     * space stays anchored to the slot while the letters churn.
+     */
+    glyph: number;
+
+    /**
+     * Whether this glyph is drawn at all. `false` skips its quad in every pass —
+     * fill, outline silhouette and shadow — before any of them is packed.
+     *
+     * Not the same as a zero alpha or a zero scale, which both still submit the
+     * quad and let the GPU blend or rasterize nothing: an unrevealed glyph in a
+     * typewriter costs three quads that way and none of them this way. Reach for
+     * alpha when the glyph is *fading*, and for this when it is *absent*.
+     *
+     * A hidden glyph keeps its layout: it does not close the gap it leaves, and
+     * the decorations under it (which follow the layout, not the glyphs) still
+     * draw. Hide those with the decoration callback.
+     */
+    visible: boolean;
+
     /** Glyph X in text space (seeded from layout). */
     x: number;
     /** Glyph Y in text space (seeded from layout). */
@@ -239,6 +279,12 @@ export interface GlyphState {
     /** Outline colour/alpha/width/rounded for this glyph. */
     outline: GlyphOutline;
 
+    /**
+     * Draw a different letterform in this slot — see {@link glyph}. Takes a
+     * character (`setGlyph('X')`) or a char code; `setGlyph(0)` restores the
+     * glyph's own character.
+     */
+    setGlyph(char: number | string): void;
     /** Set both axes of glyph scale. `setScale(v)` is uniform; `setScale(x, y)` is independent. */
     setScale(x: number, y?: number): void;
     /**
@@ -285,6 +331,9 @@ function corners(value: number): Corners {
 
 // Shared method implementations — one function object each, assigned to every
 // glyph state, so there is no per-glyph closure allocation.
+function setGlyph(this: GlyphState, char: number | string): void {
+    this.glyph = typeof char === 'string' ? (char.length > 0 ? char.charCodeAt(0) : 0) : char;
+}
 function setScale(this: GlyphState, x: number, y?: number): void {
     this.scaleX = x;
     this.scaleY = y === undefined ? x : y;
@@ -367,6 +416,8 @@ export function createGlyphState(): GlyphState {
         height: 0,
         em: 0,
         baselineOffset: 0,
+        glyph: 0,
+        visible: true,
         x: 0,
         y: 0,
         scaleX: 1,
@@ -386,6 +437,7 @@ export function createGlyphState(): GlyphState {
             color: corners(0), innerColor: corners(0), alpha: corners(1),
             width: corners(0), rounded: corners(0), softness: corners(0)
         },
+        setGlyph,
         setScale,
         clearOffset,
         setWeight,

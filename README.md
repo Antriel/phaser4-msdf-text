@@ -685,6 +685,13 @@ Each glyph exposes:
   mixed-size line slanting as one line.
 - **deform** — `offsetX` / `offsetY`, per-corner displacements of the glyph's
   quad in em. See [Deforming the quad](#deforming-the-quad).
+- **`visible`** — `false` skips the glyph's quads entirely. Not the same as a
+  zero alpha or a zero scale, which both still submit the quad (and its shadow,
+  and its outline) for the GPU to draw nothing with. Reach for alpha when a
+  glyph is *fading* and for `visible` when it is *absent* — an unrevealed
+  typewriter glyph, say.
+- **`glyph`** / `setGlyph(char)` — draw a **different letterform in this slot**.
+  See [Swapping the letterform](#swapping-the-letterform).
 - **`weight`** — per-corner faux bold, in distance-field units.
 - **`fill`** — the glyph face: `{ color: Corners, alpha: Corners }`.
 - **`shadow`** — `{ color, alpha, x, y, softness, spread, rounded }` (all but
@@ -698,6 +705,42 @@ Each glyph exposes:
   layout baseline).
 - read-only **`index`**, **`charCode`**, and **provenance** — `srcIndex`,
   `line`, `srcLine` (see below).
+
+The callback is driven by the renderer, so it does **not** run while the text is
+culled or invisible. Recompute each glyph from a clock or a tweened
+value rather than accumulating inside the callback, or an off-screen text will
+freeze and resume out of phase.
+
+#### Swapping the letterform — `setGlyph`
+
+`setGlyph` draws a different character in a glyph's slot, taken from that
+glyph's own font. It is a **render-time** substitution: the slot keeps the
+original character's pen position and advance, so **the layout does not move**.
+
+```ts
+// A decode/scramble reveal: letters churn in place, then settle.
+const SCRAMBLE = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+text.setDisplayCallback((glyphs, t) => {
+    const now = t.scene.time.now / 1000;
+    for (let i = 0; i < glyphs.length; i++) {
+        if (now < 0.7 + i * 0.2) {
+            const bucket = Math.floor(now * 20);          // churn at 20Hz, not 60
+            glyphs[i].setGlyph(SCRAMBLE[(bucket * 31 + i * 17) % SCRAMBLE.length]);
+        }
+    }
+});
+```
+
+That fixed slot is the whole point: doing this with `setText` every frame would
+relayout the text *and* make the line breathe as the substitutes' widths differ.
+The cost of it is that a wider substitute overhangs its slot and a narrower one
+leaves a gap — a monospaced font, or a scramble alphabet of similar-width
+characters, hides that entirely.
+
+`setGlyph(0)` restores the glyph's own character. A code the font doesn't have
+falls back to the original (never to another run's font). `width` / `height`
+keep describing the **layout box**, not the substitute, so a deform written as a
+field over text space stays anchored to the slot while the letters churn.
 
 #### Deforming the quad — `offsetX` / `offsetY`
 
@@ -829,6 +872,99 @@ text.on('glyphsreset', () => { /* re-apply per-glyph colours */ });
 ```
 
 Call `text.resetGlyphs()` to re-seed to the current defaults on demand.
+
+#### Line metrics — `text.lines`
+
+`text.lines` is the per-line layout the last rebuild resolved, in the same space
+as a glyph's `x`/`y`. Each entry has `index`, `x` (the alignment inset), `width`,
+`top` (the highest ascender), `baselineY` and `bottom` (the line box's bottom).
+
+It is cached, not recomputed, so reading it from a display callback is free —
+which matters, because it is the natural domain for a field over text space:
+
+```ts
+text.setDisplayCallback((glyphs, t) => {
+    for (const g of glyphs) {
+        const line = t.lines[g.line];
+        const u = (g.x - line.x) / line.width;      // 0..1 along this glyph's line
+        g.y += Math.sin(u * Math.PI * 3) * 8;
+    }
+});
+```
+
+`getTextBounds()` returns the same numbers in a snapshot shape (and allocates),
+so prefer `lines` in a per-frame loop.
+
+### Per-rect decoration callback
+
+Underlines, strikethroughs and highlight pills are **rects, not glyphs** — they
+resolve per *source character* and merge into one quad per run, so they live
+outside the glyph array and `displayCallback` cannot see them.
+`setDecorationCallback` is the lane that can:
+
+```ts
+text.setDecorationCallback((rects, text) => {
+    for (const r of rects) r.rotation = 0.05;
+});
+
+text.clearDecorationCallback();
+```
+
+It runs **once per frame** with every rect the text laid out, and **after** the
+display callback — so `text.glyphs` is final by the time it reads it, and a rule
+can follow the glyphs it was merged from:
+
+```ts
+// A typewriter whose underline draws itself in behind the words.
+text.setDisplayCallback((glyphs) => {
+    for (const g of glyphs) if (g.index >= typed) g.visible = false;
+});
+text.setDecorationCallback((rects, t) => {
+    const glyphs = t.glyphs!;
+    for (const r of rects) {
+        let right = r.x, any = false;
+        // glyphStart/glyphEnd are direct indices into the glyph array.
+        for (let i = r.glyphStart; i < r.glyphEnd; i++) {
+            if (!glyphs[i].visible) break;
+            right = Math.max(right, glyphs[i].x + glyphs[i].width);
+            any = true;
+        }
+        r.visible = any;
+        r.w = Math.max(0, right - r.x);
+    }
+});
+```
+
+Each rect exposes:
+
+- read-only **provenance** — `pass` (`PASS_HIGHLIGHT` / `PASS_UNDERLINE` /
+  `PASS_STRIKE`), `line`, `srcStart` / `srcEnd` (the source characters it
+  covers) and `glyphStart` / `glyphEnd` (its window into the glyph array).
+- **`visible`**, and **geometry** — `x`, `y`, `w`, `h`, plus `scaleX`, `scaleY`
+  and `rotation` about the rect's centre.
+- **deform** — `offsetX` / `offsetY`, per-corner, in **pixels** (a rect has no
+  em to normalize against).
+- **appearance**, all per-corner — `color`, `alpha`, `innerColor`,
+  `borderColor`, `borderAlpha`, `borderWidth`, `radius`, `softness`.
+- **dash** — `dashCount` (`0` is solid; setting it dashes a rule outright),
+  `dashDuty` and a per-rect `dashPhase`, so two rules can march at different
+  speeds.
+
+Two things to know:
+
+- **The array is transient.** It is re-seeded from the built rects every frame,
+  so edits don't persist and there is no `editDecorations()` to take. That is
+  the shape of the thing rather than an omission: a rect is a *merge* of
+  adjacent characters, so it has no identity that survives a re-wrap for edits
+  to be re-applied to. Drive the effect from a clock or a tween instead. (It is
+  also why this costs nothing — a text has a handful of rects.)
+- **A rect is one quad, so you can reach any parallelogram and no curve.** A
+  rule can be moved, scaled, tilted, tapered and skewed; it can follow a line of
+  text sheared or rotated *as a line*, exactly. It cannot bend along a per-glyph
+  wave. A strong taper also warps the box SDF's units, since `radius`,
+  `borderWidth` and `softness` are fractions of the local half-thickness — so a
+  tapering pill's corner radius follows its thickness, which is usually what you
+  wanted anyway.
 
 ## Loading details
 

@@ -60,11 +60,14 @@ import type { MSDFBatchHandlerInstance } from './MSDFBatchHandler';
 import {
     packColor,
     packParams,
+    packSolidParams,
+    packDashParams,
     SOLID_PARAMS,
     type Corners,
     type PackedCorners
 } from './MSDFColor';
 import type { GlyphState } from './MSDFGlyphState';
+import type { DecorationState } from './MSDFDecorState';
 
 const GetCalcMatrix = (Phaser as any).GameObjects.GetCalcMatrix;
 const TransformMatrix = (Phaser as any).GameObjects.Components.TransformMatrix;
@@ -72,6 +75,9 @@ const TransformMatrix = (Phaser as any).GameObjects.Components.TransformMatrix;
 // Per-glyph mode flags — mirror the constants in MSDFText.
 const GLYPH_MODE_STATIC = 0;
 const GLYPH_MODE_CALLBACK = 1;
+
+// Per-rect mode flag — mirrors MSDFText. There is no manual mode for rects.
+const DECOR_MODE_CALLBACK = 1;
 
 // Reusable packed-corner buffers. A pass uses at most three at once (fill +
 // outline + params), and passes run sequentially, so one set plus a constant
@@ -100,6 +106,10 @@ const baseAlpha: Corners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight
 // no blur. A highlight pill and a dashed rule carry their own packed params.
 const rectParams: PackedCorners = { topLeft: SOLID_PARAMS, topRight: SOLID_PARAMS, bottomLeft: SOLID_PARAMS, bottomRight: SOLID_PARAMS };
 const rectColor: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
+// A rect state packs its own border and shape every frame (the built rect packed
+// them once, at rebuild); these are where they land.
+const stateBorder: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
+const stateParams: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 // A rect spans the full 0..1 of its own UV box. Originally just so
 // `fwidth(texCoord)` stayed nonzero, but the shader now reads those derivatives
 // as the rect's screen size in pixels — which is the whole of the box SDF's
@@ -121,6 +131,59 @@ export const PASS_STRIKE = 2;
 const tempCharData = { x: 0, y: 0, w: 0, h: 0, u0: 0, v0: 0, u1: 0, v1: 0 };
 const tempCharMatrix = new TransformMatrix();
 
+// A substituted glyph's quad (`GlyphState.glyph`). Reused: every pass submits
+// immediately, so one buffer serves them all. Carries `em` and `baselineY` too,
+// because `submitOneGlyph` reads both for the deform and the skew pivot.
+const swapChar = { x: 0, y: 0, w: 0, h: 0, u0: 0, v0: 0, u1: 0, v1: 0, em: 0, baselineY: 0 };
+// How far the substitute's quad sits from the original's, i.e. the difference in
+// their left/top bearings. Written by `resolveGlyphQuad`, added to the glyph's
+// position by its caller so that `g.x`/`g.y` keep meaning "where the *slot* is".
+let swapDX = 0;
+let swapDY = 0;
+
+/**
+ * The quad to draw for one glyph: its own, or a substitute's if the glyph state
+ * asked for one (`GlyphState.glyph`).
+ *
+ * The substitution is render-time only. The slot — its pen position, and therefore
+ * every advance after it — belongs to the character the text was laid out with, so
+ * the letterform can churn (a scramble, a slot machine, a glitch) without the line
+ * reflowing. What changes is only the quad: the substitute's own bearings, size and
+ * UVs, taken from *this glyph's run font*, never from another's.
+ *
+ * The bearing difference comes back in `swapDX`/`swapDY` rather than being folded
+ * in here, because the caller adds it to the glyph state's (user-movable) position
+ * rather than to the layout's.
+ */
+function resolveGlyphQuad(char: any, code: number, font: any): any {
+    swapDX = 0;
+    swapDY = 0;
+    if (code === 0 || code === char.charCode) return char;
+
+    const sub = font.getChar(code);
+    // Absent from this run's font: draw what the text actually says, rather than
+    // borrowing a letterform from a font this glyph is not set in.
+    if (!sub) return char;
+
+    const em = char.em;
+    swapChar.x = char.penX + sub.xOffset * em;
+    swapChar.y = char.baselineY + sub.yOffset * em;
+    swapChar.w = sub.normalizedWidth * em;
+    swapChar.h = sub.normalizedHeight * em;
+    // Same v-swap the character build applies — the parser's UVs are pre-flipped
+    // for Phaser's Shader GameObject, and the batched quad wants them back.
+    swapChar.u0 = sub.u0;
+    swapChar.v0 = sub.v1;
+    swapChar.u1 = sub.u1;
+    swapChar.v1 = sub.v0;
+    swapChar.em = em;
+    swapChar.baselineY = char.baselineY;
+
+    swapDX = swapChar.x - char.x;
+    swapDY = swapChar.y - char.y;
+    return swapChar;
+}
+
 /**
  * Everything the passes need from one font, hoisted out of the per-glyph loops.
  * `unitX`/`unitY` are the `uUnitRange` this font's atlas wants; `invRange`
@@ -130,6 +193,8 @@ const tempCharMatrix = new TransformMatrix();
  */
 interface FontBinding {
     texture: any;
+    /** The font itself — only `GlyphState.glyph` needs it, to look a substitute up. */
+    font: any;
     unitX: number;
     unitY: number;
     invRange: number;
@@ -154,7 +219,7 @@ function resolveBindings(src: any, baseTexture: any): number {
 
     while (bindings.length < count) {
         bindings.push({
-            texture: null, unitX: 0, unitY: 0, invRange: 0, isMtsdf: false,
+            texture: null, font: null, unitX: 0, unitY: 0, invRange: 0, isMtsdf: false,
             staticParams: 0, staticShadowParams: 0
         });
     }
@@ -166,6 +231,7 @@ function resolveBindings(src: any, baseTexture: any): number {
         const b = bindings[i];
 
         b.texture = i === 0 ? baseTexture : (frame ? frame.glTexture : baseTexture);
+        b.font = runFonts[i];
         b.unitX = range / data.atlasWidth;
         b.unitY = range / data.atlasHeight;
         b.invRange = 1 / range;
@@ -488,6 +554,138 @@ function submitDecorations(
     }
 }
 
+/**
+ * Submit the decoration rects of one pass from their **per-rect state**, which a
+ * decoration callback has just had its hands on.
+ *
+ * The static path above is left exactly as it was — it is the common case and it
+ * resolves inheritance as it goes. This one never has to: `seedRect` resolved every
+ * "absent means inherit" into the state before the callback ran, so everything here
+ * is a straight read and a pack.
+ *
+ * Three things the built rects cannot do and a state can: a **transform** (scale
+ * and rotation about the rect's centre, on a per-rect matrix, exactly as a glyph
+ * gets one), a **per-corner deform** (in pixels — a rect has no em), and a
+ * **per-rect dash phase**. The deform is what lets a rule follow a line of text
+ * that was sheared or rotated as a line; it cannot bend, because a rect is one quad.
+ */
+function submitDecorationStates(
+    drawingContext: any,
+    batchHandler: MSDFBatchHandlerInstance,
+    states: DecorationState[],
+    pass: number,
+    multiFont: boolean,
+    calcMatrix: any,
+    originOffsetX: number,
+    originOffsetY: number
+): void {
+    for (let i = 0; i < states.length; i++) {
+        const s = states[i];
+        if (s.pass !== pass || !s.visible) continue;
+
+        const b = bindings[s.fontIdx];
+        if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY);
+
+        // A dashed rect spans one unit of U per dash; the phase slides that origin.
+        // Wrapped into [0, 1) — exact, since the pattern repeats every unit — so a
+        // for-ever-accumulating tween keeps U small.
+        const count = s.dashCount;
+        const phase = s.dashPhase - Math.floor(s.dashPhase);
+        const u0 = count > 0 ? -phase : 0;
+        const u1 = count > 0 ? count - phase : 1;
+
+        packRectStateColor(rectColor, s);
+        packRectStateBorder(stateBorder, s);
+        packRectStateParams(stateParams, s);
+
+        if (s.scaleX !== 1 || s.scaleY !== 1 || s.rotation !== 0) {
+            // Per-rect matrix, pivoting the rect's centre — the same shape
+            // `submitOneGlyph` builds, and safe under the box SDF: the shader reads
+            // the rect's pixel size off its UV derivatives, which a rotation leaves
+            // invariant and a scale scales, so radius/border/softness (fractions of
+            // the half-thickness) scale with the pill exactly as they should.
+            const centerX = s.w / 2;
+            const centerY = s.h / 2;
+
+            tempCharMatrix.copyFrom(calcMatrix);
+            tempCharMatrix.translate(s.x + centerX + originOffsetX, s.y + centerY + originOffsetY);
+            if (s.rotation !== 0) tempCharMatrix.rotate(s.rotation);
+            if (s.scaleX !== 1 || s.scaleY !== 1) tempCharMatrix.scale(s.scaleX, s.scaleY);
+
+            tempCharData.x = -centerX;
+            tempCharData.y = -centerY;
+            tempCharData.w = s.w;
+            tempCharData.h = s.h;
+            tempCharData.u0 = u0;
+            tempCharData.v0 = 0;
+            tempCharData.u1 = u1;
+            tempCharData.v1 = 1;
+            BatchMSDFChar(drawingContext, batchHandler, b.texture, tempCharData, 0, 0, tempCharMatrix,
+                rectColor, stateBorder, stateParams, s.offsetX, s.offsetY, 1);
+        } else {
+            rectQuad.x = s.x;
+            rectQuad.y = s.y;
+            rectQuad.w = s.w;
+            rectQuad.h = s.h;
+            rectQuad.u0 = u0;
+            rectQuad.u1 = u1;
+            // The deform is in pixels, not em — a rect has no letterform to
+            // normalize against — so it rides the same corner offsets with a unit
+            // scale.
+            BatchMSDFChar(drawingContext, batchHandler, b.texture, rectQuad,
+                originOffsetX, originOffsetY, calcMatrix, rectColor, stateBorder, stateParams,
+                s.offsetX, s.offsetY, 1);
+        }
+    }
+}
+
+/** A rect state's face colour, with the same zero-alpha two-tone handover as a built rect. */
+function packRectStateColor(buf: PackedCorners, s: DecorationState): void {
+    const c = s.color, a = s.alpha, inner = s.innerColor;
+    buf.topLeft = packRectCorner(c.topLeft, a.topLeft, inner.topLeft);
+    buf.topRight = packRectCorner(c.topRight, a.topRight, inner.topRight);
+    buf.bottomLeft = packRectCorner(c.bottomLeft, a.bottomLeft, inner.bottomLeft);
+    buf.bottomRight = packRectCorner(c.bottomRight, a.bottomRight, inner.bottomRight);
+}
+
+/**
+ * A rect state's border ring, zeroing its alpha wherever the width is zero — the
+ * rule `packBorder` applies at build time, and `packOutlineAspect` applies to a
+ * glyph's outline, for the same reason: at zero width the ring has no body and
+ * would only fringe the rect's antialiased edge.
+ */
+function packRectStateBorder(buf: PackedCorners, s: DecorationState): void {
+    const c = s.borderColor, a = s.borderAlpha, w = s.borderWidth;
+    buf.topLeft = packColor(c.topLeft, w.topLeft > 0 ? a.topLeft : 0);
+    buf.topRight = packColor(c.topRight, w.topRight > 0 ? a.topRight : 0);
+    buf.bottomLeft = packColor(c.bottomLeft, w.bottomLeft > 0 ? a.bottomLeft : 0);
+    buf.bottomRight = packColor(c.bottomRight, w.bottomRight > 0 ? a.bottomRight : 0);
+}
+
+/**
+ * A rect state's shape bytes. `dashCount` is the fork the format already has: at
+ * `> 0` the middle channel is the dash's duty cycle rather than a border width, and
+ * the quad takes the `254` sentinel instead of `255`. It is a per-*quad* decision
+ * written to all four corners, which is exactly what makes re-decoding that channel
+ * legal here and nowhere else.
+ */
+function packRectStateParams(buf: PackedCorners, s: DecorationState): void {
+    const r = s.radius, sf = s.softness;
+    if (s.dashCount > 0) {
+        const d = s.dashDuty;
+        buf.topLeft = packDashParams(r.topLeft, d.topLeft, sf.topLeft);
+        buf.topRight = packDashParams(r.topRight, d.topRight, sf.topRight);
+        buf.bottomLeft = packDashParams(r.bottomLeft, d.bottomLeft, sf.bottomLeft);
+        buf.bottomRight = packDashParams(r.bottomRight, d.bottomRight, sf.bottomRight);
+    } else {
+        const w = s.borderWidth;
+        buf.topLeft = packSolidParams(r.topLeft, w.topLeft, sf.topLeft);
+        buf.topRight = packSolidParams(r.topRight, w.topRight, sf.topRight);
+        buf.bottomLeft = packSolidParams(r.bottomLeft, w.bottomLeft, sf.bottomLeft);
+        buf.bottomRight = packSolidParams(r.bottomRight, w.bottomRight, sf.bottomRight);
+    }
+}
+
 function MSDFTextWebGLRenderer(
     _renderer: any,
     src: any,
@@ -620,6 +818,20 @@ function MSDFTextWebGLRenderer(
     }
     const perGlyph = glyphs !== null;
 
+    // ── Resolve per-rect state ──────────────────────────────────────────────
+    // After the glyphs, deliberately: the callback sees the *finished* glyph array
+    // (`parent.glyphs`), so a rule can follow the glyphs it was merged from — its
+    // `glyphStart`/`glyphEnd` index straight into it. Transient and re-seeded every
+    // frame, with no manual mode, because a rect has no identity that survives a
+    // rebuild (see `MSDFDecorState.ts`). Nothing to animate ⇒ nothing to seed.
+    let decorStates: DecorationState[] | null = null;
+    if (hasDecorations && src._decorMode === DECOR_MODE_CALLBACK) {
+        decorStates = src.prepareDecorStates();
+        if (src.decorationCallback) {
+            src.decorationCallback(decorStates, src);
+        }
+    }
+
     // A layered outline needs its own silhouette loop. Per-glyph widths mean a
     // glyph can have an outline even when the object has none, so the gate opens
     // for any per-glyph text that asked for layering.
@@ -630,8 +842,13 @@ function MSDFTextWebGLRenderer(
 
     // ── Highlight pass — pills behind everything, the shadow included. ───────
     if (hasDecorations) {
-        submitDecorations(drawingContext, batchHandler, decorations, PASS_HIGHLIGHT, multiFont,
-            calcMatrix, originOffsetX, originOffsetY, src.color, baseAlpha, dashPhase);
+        if (decorStates) {
+            submitDecorationStates(drawingContext, batchHandler, decorStates, PASS_HIGHLIGHT, multiFont,
+                calcMatrix, originOffsetX, originOffsetY);
+        } else {
+            submitDecorations(drawingContext, batchHandler, decorations, PASS_HIGHLIGHT, multiFont,
+                calcMatrix, originOffsetX, originOffsetY, src.color, baseAlpha, dashPhase);
+        }
     }
 
     // ── Shadow pass — render shadow behind the text. ────────────────────────
@@ -648,12 +865,14 @@ function MSDFTextWebGLRenderer(
         for (let i = 0; i < characterCount; i++) {
             const char = characters[i];
             if (!char || char.w === 0 || char.h === 0) continue;
+            if (perGlyph && !glyphs![i].visible) continue;
 
             const b = bindings[char.fontIdx];
             if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY);
 
             if (perGlyph) {
                 const g = glyphs![i];
+                const quad = resolveGlyphQuad(char, g.glyph, b.font);
                 // Blurring and rounding both read the true SDF. Spread does not —
                 // it dilates the same median(rgb) edge a thick outline does — so
                 // it rides `width`, the one channel a shadow quad leaves idle, and
@@ -663,8 +882,9 @@ function MSDFTextWebGLRenderer(
                 packAspect(shadowBuf, g.shadow.color, g.shadow.alpha);
                 packToneAspect(shadowToneBuf, g.shadow.innerColor);
                 packParamsAspect(shadowParams, g.weight, rounded, g.shadow.spread, softness, b.invRange);
-                submitOneGlyph(drawingContext, batchHandler, b.texture, char,
-                    g.x + g.shadow.x, g.y + g.shadow.y, g.scaleX, g.scaleY, g.rotation, g.skew,
+                submitOneGlyph(drawingContext, batchHandler, b.texture, quad,
+                    g.x + swapDX + g.shadow.x, g.y + swapDY + g.shadow.y,
+                    g.scaleX, g.scaleY, g.rotation, g.skew,
                     g.skewPivot, g.offsetX, g.offsetY,
                     calcMatrix, originOffsetX, originOffsetY, shadowToneBuf, shadowBuf, shadowParams);
             } else {
@@ -682,19 +902,21 @@ function MSDFTextWebGLRenderer(
         for (let i = 0; i < characterCount; i++) {
             const char = characters[i];
             if (!char || char.w === 0 || char.h === 0) continue;
+            if (perGlyph && !glyphs![i].visible) continue;
 
             const b = bindings[char.fontIdx];
             if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY);
 
             if (perGlyph) {
                 const g = glyphs![i];
+                const quad = resolveGlyphQuad(char, g.glyph, b.font);
                 const rounded = b.isMtsdf ? g.outline.rounded : zeroCorners;
                 const softness = b.isMtsdf ? g.outline.softness : zeroCorners;
                 packOutlineAspect(outlineBuf, g.outline.color, g.outline.alpha, g.outline.width, softness);
                 packToneAspect(outlineToneBuf, g.outline.innerColor);
                 packParamsAspect(glyphParams, g.weight, rounded, g.outline.width, softness, b.invRange);
-                submitOneGlyph(drawingContext, batchHandler, b.texture, char,
-                    g.x, g.y, g.scaleX, g.scaleY, g.rotation, g.skew,
+                submitOneGlyph(drawingContext, batchHandler, b.texture, quad,
+                    g.x + swapDX, g.y + swapDY, g.scaleX, g.scaleY, g.rotation, g.skew,
                     g.skewPivot, g.offsetX, g.offsetY,
                     calcMatrix, originOffsetX, originOffsetY, outlineToneBuf, outlineBuf, glyphParams);
             } else {
@@ -708,8 +930,13 @@ function MSDFTextWebGLRenderer(
 
     // ── Underline pass — under the glyphs, over the shadows and silhouettes. ─
     if (hasDecorations) {
-        submitDecorations(drawingContext, batchHandler, decorations, PASS_UNDERLINE, multiFont,
-            calcMatrix, originOffsetX, originOffsetY, src.color, baseAlpha, dashPhase);
+        if (decorStates) {
+            submitDecorationStates(drawingContext, batchHandler, decorStates, PASS_UNDERLINE, multiFont,
+                calcMatrix, originOffsetX, originOffsetY);
+        } else {
+            submitDecorations(drawingContext, batchHandler, decorations, PASS_UNDERLINE, multiFont,
+                calcMatrix, originOffsetX, originOffsetY, src.color, baseAlpha, dashPhase);
+        }
     }
 
     // ── Text pass — fill, with the outline composited under it in the same ───
@@ -718,12 +945,14 @@ function MSDFTextWebGLRenderer(
     for (let i = 0; i < characterCount; i++) {
         const char = characters[i];
         if (!char || char.w === 0 || char.h === 0) continue;
+        if (perGlyph && !glyphs![i].visible) continue;
 
         const b = bindings[char.fontIdx];
         if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY);
 
         if (perGlyph) {
             const g = glyphs![i];
+            const quad = resolveGlyphQuad(char, g.glyph, b.font);
             const rounded = b.isMtsdf ? g.outline.rounded : zeroCorners;
             const softness = b.isMtsdf ? g.outline.softness : zeroCorners;
             let outlineData = zeroColor;
@@ -738,8 +967,8 @@ function MSDFTextWebGLRenderer(
             // quad's outline alpha is zero, so its width and softness are inert
             // here — passed anyway, so both branches share one pack.
             packParamsAspect(glyphParams, g.weight, rounded, g.outline.width, softness, b.invRange);
-            submitOneGlyph(drawingContext, batchHandler, b.texture, char,
-                g.x, g.y, g.scaleX, g.scaleY, g.rotation, g.skew,
+            submitOneGlyph(drawingContext, batchHandler, b.texture, quad,
+                g.x + swapDX, g.y + swapDY, g.scaleX, g.scaleY, g.rotation, g.skew,
                 g.skewPivot, g.offsetX, g.offsetY,
                 calcMatrix, originOffsetX, originOffsetY, fillBuf, outlineData, glyphParams);
         } else {
@@ -753,8 +982,13 @@ function MSDFTextWebGLRenderer(
 
     // ── Strikethrough pass — over the glyphs, matching browsers. ─────────────
     if (hasDecorations) {
-        submitDecorations(drawingContext, batchHandler, decorations, PASS_STRIKE, multiFont,
-            calcMatrix, originOffsetX, originOffsetY, src.color, baseAlpha, dashPhase);
+        if (decorStates) {
+            submitDecorationStates(drawingContext, batchHandler, decorStates, PASS_STRIKE, multiFont,
+                calcMatrix, originOffsetX, originOffsetY);
+        } else {
+            submitDecorations(drawingContext, batchHandler, decorations, PASS_STRIKE, multiFont,
+                calcMatrix, originOffsetX, originOffsetY, src.color, baseAlpha, dashPhase);
+        }
     }
 }
 

@@ -492,7 +492,44 @@ it is CPU-side too.
 rects live outside `_characters` and no `GlyphState` owns one. Same wall as the
 per-rect state object below, and it now has one more reason to exist.
 
-## From `vertex-params.md` — decorations in the display callback
+## ~~From `vertex-params.md` — decorations in the display callback~~ — **built**
+
+`setDecorationCallback` — see `callback-surface.md`, which took this entry as its
+second half and is now built in full. The sketch below is left unedited; two of its
+guesses were wrong, and both are worth keeping:
+
+- **Not "seeded and read back the same way glyphs are."** Rects have no identity —
+  a rect is a *merge artifact* ("consecutive chars, same line, same resolved spec,
+  same font, same inherited colour"), so a wrap-width change turns one into two and
+  there is nothing for a user to re-apply edits to. Hence **no manual mode**: a
+  transient per-frame callback and nothing else. The cost argument for manual mode
+  evaporates too — a text has a handful of rects, so seeding all of them costs less
+  than seeding one glyph.
+- **A second callback, not an extra argument.** Decorations live in *every* glyph
+  mode, so folding them into `displayCallback` would force a full per-frame re-seed
+  of every glyph state on a text that only wanted to animate three rects.
+
+It also came out **more capable** than the typewriter case that justified it: the
+state carries a per-rect transform and per-corner deform, so a rule follows a line
+sheared or rotated *as a line* exactly — which closes **Deformable decorations**
+above, in its common case. What stays out of reach is a *curve*: a rect is one quad,
+so a rule cannot bend along a per-glyph wave. The escape hatch for that is a
+build-side "one rect per character" spec key, not more callback power — not built,
+and not to be built until someone actually wants the wave.
+
+The same doc's first half — a completeness pass over `GlyphState` — landed
+`text.lines` (a cached per-line layout; `getTextBounds()` had been re-wrapping and
+re-measuring the *whole text* on every call, from the one place it is most natural
+to call), `GlyphState.visible` (a zero alpha or zero scale still submitted every
+quad), and `GlyphState.setGlyph` (the one hole in the vertex format — `inTexCoord`
+— and with it the scramble/decode family). Still open from it, both cheap sugar and
+neither built: **`pivotX`/`pivotY`** for scale/rotation (reachable today via the
+deform, at the cost of writing the trig yourself) and **`shadow.scale`** (the one
+factor missing from a "letter lifts off the page"). Explicitly rejected there:
+per-glyph blend modes (a state change is a draw-call break) and per-glyph z-order
+(the glyph array must stay `srcIndex`-sorted for `applyRun`'s binary search).
+
+*The original sketch follows, unedited.*
 
 **What:** `displayCallback` and `GlyphState` cannot see or animate
 underline/strikethrough — decorations resolve once (per source character,

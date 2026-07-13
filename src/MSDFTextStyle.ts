@@ -48,10 +48,17 @@ export function toRoundedAmount(value: number | boolean): number {
  * whole number of them across each rect); `params` is the dash's shape — the
  * `254` sentinel plus its duty cycle, cap radius and blur — packed once here,
  * since none of the three varies per corner.
+ *
+ * The three shape values are kept unpacked alongside it as well, because the
+ * decoration callback seeds a `DecorationState` from them and packs per corner at
+ * submit; `params` stays for the static path, which never unpacks anything.
  */
 export interface ResolvedDash {
     period: number;         // em-relative (× the run's size): length + gap
     params: PackedCorners;  // the dash sentinel + radius / duty / softness
+    radius: number;         // cap rounding, 0-1 of the dash's half-thickness
+    duty: number;           // dash length as a fraction of the period
+    softness: number;       // edge blur, 0-1 of the half-thickness
 }
 
 /**
@@ -244,8 +251,16 @@ function resolveDash(spec: boolean | DashSpec | undefined): ResolvedDash | undef
     // Not per-corner, unlike a pill's — a rule's three shape bytes describe the
     // dash, and a dash is one cell of a rect that may hold a hundred of them, so
     // there is no corner for an interpolant to be anchored to.
-    const p = packDashParams(s.radius !== undefined ? s.radius : 0, duty, s.softness !== undefined ? s.softness : 0);
-    return { period, params: { topLeft: p, topRight: p, bottomLeft: p, bottomRight: p } };
+    const radius = s.radius !== undefined ? s.radius : 0;
+    const softness = s.softness !== undefined ? s.softness : 0;
+    const p = packDashParams(radius, duty, softness);
+    return {
+        period,
+        params: { topLeft: p, topRight: p, bottomLeft: p, bottomRight: p },
+        radius,
+        duty,
+        softness
+    };
 }
 
 /**

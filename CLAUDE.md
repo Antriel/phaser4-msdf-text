@@ -228,6 +228,40 @@ quad and batches with the glyphs; each carries a `pass` (`PASS_HIGHLIGHT` /
 back-to-front submission order — pills behind everything, the text's own drop
 shadow included; underlines before the fill loop; strikethroughs after.
 
+- **The decoration callback** (`setDecorationCallback`, `DecorationState` in
+  `src/MSDFDecorState.ts`) is the lane that *can* animate them. `_decorRects` is to
+  `_characters` as `_decorStates` is to `_glyphStates`: a pristine built array, and
+  a per-frame mutable copy seeded from it (`seedRect` ≈ `seedGlyph` — it resolves
+  the "absent means inherit" colour exactly as `seedGlyph` resolves the `-1`
+  `innerColor` sentinel, so a callback never sees a sentinel). It runs **after**
+  `displayCallback`, so `parent.glyphs` is final and a rect's `glyphStart`/
+  `glyphEnd` — free, since `buildDecorRects` already brackets exactly those
+  indices — index straight into it.
+- **A second callback, not a third argument to `displayCallback`.** Decorations
+  live in *every* glyph mode (`rebuildDecorations` reads `_characters`, not the
+  glyph array), so folding the two together would force a full per-frame re-seed of
+  every glyph state on a text that only wanted to animate three rects.
+- **Two modes, not three: there is no manual mode for rects.** A glyph has an
+  identity (`srcIndex`) that survives a re-wrap, which is what makes `editGlyphs`
+  meaningful. A rect is a *merge artifact* — "consecutive chars, same line, same
+  resolved spec, same font, same inherited colour" — so a wrap-width change turns
+  one rect into two and there is nothing stable for a user to re-apply edits to. The
+  cost argument for manual mode evaporates anyway: a text has a handful of rects, so
+  seeding all of them costs less than seeding one glyph.
+- **`dashCount` is the state's one selector**, and legally so: it is per-*quad*, so
+  it may re-decode the middle channel (border width → dash duty) for the same reason
+  the `solid` sentinel may. Setting it on a solid rule dashes it at runtime, which is
+  why `dashDuty` is seeded to `0.5` even on rules that have no dash spec.
+- **A rect is one quad, so a callback reaches any parallelogram and no curve.** A
+  rule follows a line sheared or rotated *as a line* exactly (a linear map of its
+  baseline is a parallelogram) but cannot bend along a per-glyph wave. Translate,
+  scale and rotate are exact under the box SDF; a **non-parallelogram** deform makes
+  `screenTexSize` vary across the quad, so `radius`/`borderWidth`/`softness` — being
+  fractions of the *local* half-thickness — drift along the taper. Recorded, not
+  fixed: a tapering pill whose radius follows its thickness is what you'd have asked
+  for. The escape hatch for a genuine wave is a build-side "one rect per character"
+  spec key, not more callback power; it is not built.
+
 - **Underline / strikethrough** (`buildDecorRects`) split at line breaks,
   `fontScale` and `font` boundaries, and — when the colour is inherited — resolved
   fill colour/alpha changes. An inherited colour is resolved at *submit* time, so
@@ -331,6 +365,26 @@ a per-corner `weight`, and three independent aspects —
 `0-1` alpha (kept split so V8 holds a stable hidden class and SMI/double field
 reps across the per-glyph loop; packing lives in `src/MSDFColor.ts`). `shadow` and
 `outline` also carry a per-corner `innerColor` for the two-tone ramp.
+
+Two fields are not vertex data:
+- **`visible`** — the renderer's three glyph loops `continue` on it, so a hidden
+  glyph costs no quad. It exists because a zero alpha and a zero scale *both still
+  submit* (the loops gate on `char.w`, the layout box, never on the state): an
+  unrevealed typewriter glyph was costing up to three quads of nothing.
+- **`glyph`** / `setGlyph(char)` — the **one hole in the vertex format**, since
+  `inTexCoord` was the only slot `GlyphState` could not reach. It substitutes a
+  letterform at *render* time: `resolveGlyphQuad` (renderer) rebuilds the quad from
+  the substitute's own bearings/size/UVs at the original's **pen**, so the slot —
+  and therefore every advance after it — is untouched and the word churns *in
+  place*. That is what `setText`-per-frame cannot do (it relayouts, and the line
+  breathes as the substitutes' widths differ). It needs one field on the char quad,
+  `penX` (`x` already has the *original's* left bearing folded in), which
+  `applyAlignment` must shift alongside `x`. The bearing delta comes back out of
+  band in `swapDX`/`swapDY` so that `g.x`/`g.y` keep meaning "where the slot is".
+  A code the run's font lacks falls back to the original — never to another font.
+  `width`/`height` keep describing the layout box, so a deform field stays anchored
+  to the slot.
+
 `MSDFText._glyphMode` picks the source:
 - `static` (0) — no array; the renderer fills every quad from the object-level
   colour/alpha/outline/shadow (the cheap default; nothing per-glyph allocated).
@@ -418,6 +472,17 @@ are, so single-font layout is bit-identical to before). `rebuildText` places eve
 glyph on that shared baseline — mixed sizes *and* mixed fonts align by
 **baseline**, not by top.
 
+`rebuildText` **keeps** what that measure produced, in `_lines` (public readonly
+`text.lines`: per line `index` / `x` / `width` / `top` / `baselineY` / `bottom`) —
+it used to throw all but the baselines away, and `getTextBounds()` then re-ran the
+whole wrap *and* measure on every call. That is a per-frame relayout from the one
+place it is most natural to call: a display callback, since a deform written as a
+field over text space needs a domain to normalize against. `getTextBounds()` now
+reads the cache (rebuilding only when `_dirty`), and a line's alignment inset **is**
+its `LineInfo.x`, so `applyAlignment` reads it from there rather than repeating the
+formula. (One behaviour change: on *empty* text `getTextBounds()` reports zero lines
+rather than one, which now agrees with `text.width`/`.height`, both already `0`.)
+
 `measureSpan`, `wrapLines` and `rebuildText` must make **identical** advance and
 kerning calls or wrapped lines mismeasure. The two shared rules: a character
 missing from *its run's* font is skipped (no advance, and **no cross-font
@@ -468,6 +533,7 @@ src/
   MSDFTextStyle.ts         # Rich-text style engine (resolve, match, apply) — no instance state
   MSDFTextWrap.ts          # Pure word-wrap + source-index map
   MSDFGlyphState.ts        # Per-glyph state type + factory (callback / editGlyphs)
+  MSDFDecorState.ts        # Per-rect state type + factory (decoration callback)
   MSDFColor.ts             # Vertex-attribute packing (packColor, packParams, flag bits)
   MSDFTextFactory.ts       # add.msdfText factory
   MSDFTextCreator.ts       # make.msdfText creator
