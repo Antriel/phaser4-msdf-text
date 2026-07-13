@@ -296,6 +296,14 @@ export interface StyleSpec {
     rotation?: number;
     /** Baseline shear (`dx/dy`) — faux italic. Positive leans right. */
     skew?: number;
+    /**
+     * Where {@link skew} pivots, as an offset from the layout baseline in **em**,
+     * positive down. `0` (the default) pivots on the baseline; a small positive
+     * value puts the pivot under the descenders, shearing each glyph about its
+     * visual base. Measured from the line's shared baseline, so any value keeps a
+     * mixed-size line slanting as one line.
+     */
+    skewPivot?: number;
     /** Underline this run. `true` inherits everything; see {@link DecorationSpec}. */
     underline?: boolean | DecorationSpec;
     /** Strike this run through. `true` inherits everything; see {@link DecorationSpec}. */

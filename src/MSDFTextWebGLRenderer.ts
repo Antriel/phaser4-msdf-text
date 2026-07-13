@@ -339,6 +339,11 @@ function applyBaselineShear(m: any, k: number, yb: number): void {
  * rotated or sheared, in which case it builds a per-glyph matrix. Scale/rotation
  * pivot the glyph centre; skew is a baseline shear composed onto `calcMatrix`
  * first (so a mixed-scale line still slants as one line).
+ *
+ * A per-corner deform (`deformX`/`deformY`, em-relative, `null` when unset) needs
+ * **no** matrix and so does not force the slow path — it displaces the quad's
+ * corners in whichever local space the chosen path already works in, which is why
+ * it composes with the glyph transform for free.
  */
 function submitOneGlyph(
     drawingContext: any,
@@ -351,6 +356,9 @@ function submitOneGlyph(
     scaleY: number,
     rotation: number,
     skew: number,
+    skewPivot: number,
+    deformX: Corners | null,
+    deformY: Corners | null,
     calcMatrix: any,
     originOffsetX: number,
     originOffsetY: number,
@@ -364,12 +372,15 @@ function submitOneGlyph(
 
         tempCharMatrix.copyFrom(calcMatrix);
         if (skew !== 0) {
-            // Pivot on this glyph's absolute layout baseline. `char.baselineY -
-            // char.y` is the glyph top → baseline offset (constant per glyph),
-            // added to the glyph's current top `y` so a moved glyph shears about
-            // its own baseline. Per-glyph scale (centre pivot below) deliberately
-            // does not move this pivot — that keeps a mixed-scale line coherent.
-            applyBaselineShear(tempCharMatrix, skew, y + (char.baselineY - char.y) + originOffsetY);
+            // Pivot on this glyph's absolute layout baseline, shifted down by
+            // `skewPivot` em. `char.baselineY - char.y` is the glyph top →
+            // baseline offset (constant per glyph), added to the glyph's current
+            // top `y` so a moved glyph shears about its own baseline. Per-glyph
+            // scale (centre pivot below) deliberately does not move this pivot —
+            // that keeps a mixed-scale line coherent, and so does measuring the
+            // pivot from the line's shared baseline rather than the glyph's box.
+            const pivotY = y + (char.baselineY - char.y) + skewPivot * char.em + originOffsetY;
+            applyBaselineShear(tempCharMatrix, skew, pivotY);
         }
         tempCharMatrix.translate(x + centerX + originOffsetX, y + centerY + originOffsetY);
         if (rotation !== 0) tempCharMatrix.rotate(rotation);
@@ -383,12 +394,14 @@ function submitOneGlyph(
         tempCharData.v0 = char.v0;
         tempCharData.u1 = char.u1;
         tempCharData.v1 = char.v1;
-        BatchMSDFChar(drawingContext, batchHandler, texture, tempCharData, 0, 0, tempCharMatrix, colorData, outlineData, params);
+        BatchMSDFChar(drawingContext, batchHandler, texture, tempCharData, 0, 0, tempCharMatrix,
+            colorData, outlineData, params, deformX, deformY, char.em);
     } else {
         // Reuse the char's geometry directly; fold the position delta into the offset.
         const offX = x - char.x + originOffsetX;
         const offY = y - char.y + originOffsetY;
-        BatchMSDFChar(drawingContext, batchHandler, texture, char, offX, offY, calcMatrix, colorData, outlineData, params);
+        BatchMSDFChar(drawingContext, batchHandler, texture, char, offX, offY, calcMatrix,
+            colorData, outlineData, params, deformX, deformY, char.em);
     }
 }
 
@@ -467,9 +480,11 @@ function submitDecorations(
         rectColor.bottomLeft = packRectCorner(rBL, alpha ? alpha.bottomLeft : baseAlpha.bottomLeft, inner ? inner.bottomLeft : rBL);
         rectColor.bottomRight = packRectCorner(rBR, alpha ? alpha.bottomRight : baseAlpha.bottomRight, inner ? inner.bottomRight : rBR);
 
+        // Rects take no deform: they live outside `_characters`, so no `GlyphState`
+        // owns one (see the decorations note in CLAUDE.md).
         BatchMSDFChar(drawingContext, batchHandler, b.texture, rectQuad,
             originOffsetX, originOffsetY, calcMatrix, rectColor,
-            r.border || zeroColor, r.params || rectParams);
+            r.border || zeroColor, r.params || rectParams, null, null, 0);
     }
 }
 
@@ -650,11 +665,12 @@ function MSDFTextWebGLRenderer(
                 packParamsAspect(shadowParams, g.weight, rounded, g.shadow.spread, softness, b.invRange);
                 submitOneGlyph(drawingContext, batchHandler, b.texture, char,
                     g.x + g.shadow.x, g.y + g.shadow.y, g.scaleX, g.scaleY, g.rotation, g.skew,
+                    g.skewPivot, g.offsetX, g.offsetY,
                     calcMatrix, originOffsetX, originOffsetY, shadowToneBuf, shadowBuf, shadowParams);
             } else {
                 if (multiFont) fillCorners(shadowParams, b.staticShadowParams);
                 submitOneGlyph(drawingContext, batchHandler, b.texture, char,
-                    char.x + dsx, char.y + dsy, 1, 1, 0, 0,
+                    char.x + dsx, char.y + dsy, 1, 1, 0, 0, 0, null, null,
                     calcMatrix, originOffsetX, originOffsetY, shadowToneBuf, shadowBuf, shadowParams);
             }
         }
@@ -679,11 +695,12 @@ function MSDFTextWebGLRenderer(
                 packParamsAspect(glyphParams, g.weight, rounded, g.outline.width, softness, b.invRange);
                 submitOneGlyph(drawingContext, batchHandler, b.texture, char,
                     g.x, g.y, g.scaleX, g.scaleY, g.rotation, g.skew,
+                    g.skewPivot, g.offsetX, g.offsetY,
                     calcMatrix, originOffsetX, originOffsetY, outlineToneBuf, outlineBuf, glyphParams);
             } else {
                 if (multiFont) fillCorners(glyphParams, b.staticParams);
                 submitOneGlyph(drawingContext, batchHandler, b.texture, char,
-                    char.x, char.y, 1, 1, 0, 0,
+                    char.x, char.y, 1, 1, 0, 0, 0, null, null,
                     calcMatrix, originOffsetX, originOffsetY, outlineToneBuf, outlineBuf, glyphParams);
             }
         }
@@ -723,11 +740,12 @@ function MSDFTextWebGLRenderer(
             packParamsAspect(glyphParams, g.weight, rounded, g.outline.width, softness, b.invRange);
             submitOneGlyph(drawingContext, batchHandler, b.texture, char,
                 g.x, g.y, g.scaleX, g.scaleY, g.rotation, g.skew,
+                g.skewPivot, g.offsetX, g.offsetY,
                 calcMatrix, originOffsetX, originOffsetY, fillBuf, outlineData, glyphParams);
         } else {
             if (multiFont) fillCorners(glyphParams, b.staticParams);
             submitOneGlyph(drawingContext, batchHandler, b.texture, char,
-                char.x, char.y, 1, 1, 0, 0,
+                char.x, char.y, 1, 1, 0, 0, 0, null, null,
                 calcMatrix, originOffsetX, originOffsetY, fillBuf,
                 combined && hasOutline ? outlineBuf : zeroColor, glyphParams);
         }

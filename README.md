@@ -536,7 +536,8 @@ A `StyleSpec` accepts: `color`/`alpha` (a scalar, or a per-corner object for a
 gradient), `weight`,
 `outline` (`{ color?, innerColor?, alpha?, width?, rounded?, softness? }`),
 `shadow` (`{ color?, innerColor?, alpha?, x?, y?, softness?, spread?, rounded? }`),
-`scale`/`scaleX`/`scaleY`, `rotation`, `skew`, `underline`, `strikethrough`,
+`scale`/`scaleX`/`scaleY`, `rotation`, `skew`, `skewPivot`, `underline`,
+`strikethrough`,
 `highlight`, `fontScale` and `font`. Only the keys you set override the
 glyph's seeded base; `weight` and every continuous effect channel
 (`outline.width`/`.softness`, `shadow.softness`/`.spread`) also take per-corner
@@ -575,7 +576,7 @@ once/tick).
 
 | key lane | keys | cost |
 |---|---|---|
-| appearance | `color`, `alpha`, `weight`, `outline`, `shadow`, `scale`, `rotation`, `skew` | one coalesced per-glyph re-seed |
+| appearance | `color`, `alpha`, `weight`, `outline`, `shadow`, `scale`, `rotation`, `skew`, `skewPivot` | one coalesced per-glyph re-seed |
 | decoration | `underline`, `strikethrough`, `highlight` | one coalesced rect rebuild |
 | structural | `fontScale`, `font` | a **relayout** |
 
@@ -673,8 +674,12 @@ Each glyph exposes:
 
 - **transform** — `x`, `y`, `scaleX`, `scaleY`, `rotation` (about the glyph
   centre; scale `0` hides it) and `skew`, a baseline shear (faux italic;
-  positive leans the top right, pivoting on the layout baseline so a whole line
-  slants as one). `setScale(v)` sets both axes, `setScale(x, y)` independently.
+  positive leans the top right). `setScale(v)` sets both axes, `setScale(x, y)`
+  independently. `skewPivot` slides the shear's pivot below the baseline, in em
+  — measured from the baseline, which a line *shares*, so any value keeps a
+  mixed-size line slanting as one line.
+- **deform** — `offsetX` / `offsetY`, per-corner displacements of the glyph's
+  quad in em. See [Deforming the quad](#deforming-the-quad).
 - **`weight`** — per-corner faux bold, in distance-field units.
 - **`fill`** — the glyph face: `{ color: Corners, alpha: Corners }`.
 - **`shadow`** — `{ color, alpha, x, y, softness, spread, rounded }` (all but
@@ -683,8 +688,65 @@ Each glyph exposes:
 - **`outline`** — `{ color, alpha, width, rounded, softness }` (all but `color`
   and `alpha` per-corner). No width *and* no softness means "no outline", so a
   glyph can be outlined — or made to glow — even when the object is not.
+- read-only **layout** — `width`, `height` (the quad, before scale), `em` (this
+  glyph's effective font size) and `baselineOffset` (`y + baselineOffset` is the
+  layout baseline).
 - read-only **`index`**, **`charCode`**, and **provenance** — `srcIndex`,
   `line`, `srcLine` (see below).
+
+#### Deforming the quad — `offsetX` / `offsetY`
+
+`scale`, `rotation` and `skew` are affine, and **any affine map of a rectangle
+is a parallelogram** — so between them they can only ever move the quad's four
+corners subject to opposite edges staying parallel. `offsetX` / `offsetY` drop
+that constraint: they are per-corner displacements, in `em`, applied in the
+glyph's own local frame (so its scale and rotation apply on top).
+
+That reaches shapes the transform lane provably cannot — trapezia and keystones,
+jelly wobble, drooping or melting glyphs, even a pure *vertical* shear. It also
+subsumes `skew` at every `skewPivot`, since a shear just moves corner *i* by
+`-k·(yᵢ - pivot)`, which is a constant per corner. No shader change, no extra
+draw call, and no matrix — a deform alone doesn't even take the per-glyph
+transform path.
+
+```ts
+// Squeeze the top of the word toward its centre: a word-level keystone.
+text.setDisplayCallback((glyphs, t) => {
+    const cx = t.width / 2, h = t.height;
+    for (const g of glyphs) {
+        const dx = (x: number, y: number) => (cx - x) * 0.4 * (1 - y / h) / g.em;
+        g.offsetX.topLeft     = dx(g.x,           g.y);
+        g.offsetX.topRight    = dx(g.x + g.width, g.y);
+        g.offsetX.bottomLeft  = dx(g.x,           g.y + g.height);
+        g.offsetX.bottomRight = dx(g.x + g.width, g.y + g.height);
+    }
+});
+```
+
+Two things to know:
+
+- **The offsets are em-relative, not box-relative**, so one value displaces a
+  narrow `i` and a wide `W` by the same number of pixels. That is what lets you
+  write a deform as a **field over text space** — evaluate `f(x, y)` at each
+  corner's *absolute* position, as above — and have the whole line warp as one
+  continuous shape: adjacent glyphs' corners land on the same curve without
+  being matched up by hand. `width` / `height` / `em` / `baselineOffset` are
+  exposed for exactly this.
+- **A non-parallelogram creases.** The quad is two triangles and UVs interpolate
+  affinely across each, so a strongly tapered deform kinks the letterform along
+  the quad's diagonal (the classic PS1 texture warp). It is invisible on a mild
+  or moving deform and obvious on a hard, static keystone. There is no
+  per-vertex perspective divide; correcting it would need a homogeneous `q` on
+  every vertex of every quad, which was deliberately not paid for.
+
+Like `rotation`, a deform is a render-time displacement: it does not move the
+layout, the text's bounds, or its decorations, so a wobbling glyph can escape
+the text box.
+
+The deform lives on the glyph array only — `displayCallback` and `editGlyphs` —
+and is deliberately **not** a `StyleSpec` key: applying the same four corner
+offsets to every glyph of a run just repeats one shape, and the interesting
+deforms are all functions of where a glyph *landed*, which is layout output.
 
 #### Glyph provenance — `srcIndex` / `line` / `srcLine`
 

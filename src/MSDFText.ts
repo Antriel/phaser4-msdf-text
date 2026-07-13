@@ -1337,12 +1337,20 @@ export const MSDFText: MSDFTextStatic = new Class({
         (g as any).srcIndex = char.srcIndex;
         (g as any).line = char.line;
         (g as any).srcLine = char.srcLine;
+        // Layout facts, readonly to the caller: a deform written as a field over
+        // text space needs the quad's size and the glyph's em to place its corners.
+        (g as any).width = char.w;
+        (g as any).height = char.h;
+        (g as any).em = char.em;
+        (g as any).baselineOffset = char.baselineY - char.y;
         g.x = char.x;
         g.y = char.y;
         g.scaleX = 1;
         g.scaleY = 1;
         g.rotation = 0;
         g.skew = 0;
+        g.skewPivot = 0;
+        g.clearOffset();
 
         const w = g.weight, ow = this.weight;
         w.topLeft = w.topRight = w.bottomLeft = w.bottomRight = ow;
@@ -2309,6 +2317,8 @@ export const MSDFText: MSDFTextStatic = new Class({
                 srcIndex: srcMap[i],          // Index into the original text (provenance)
                 srcLine: srcLineIndex,        // Source paragraph index (provenance)
                 baselineY: baselineY,         // Layout baseline (used by the skew feature)
+                em: size,                     // This char's effective font size — the unit a
+                                              // skew pivot and a per-corner deform are measured in
                 fontIdx: fontIdx              // Slot in `_runFonts` — the renderer's texture + unitRange
             });
 

@@ -21,6 +21,11 @@
  * bounding box, not along the letter contour, so think "directional ramp", not
  * "contour-following pulse".
  *
+ * The transform lane is likewise per-corner at its far end: `offsetX` / `offsetY`
+ * displace the quad's four corners directly, which is strictly more than `scale`,
+ * `rotation` and `skew` can express between them (they only ever produce
+ * parallelograms). See `offsetX` for what that buys and the one artifact it costs.
+ *
  * The shape is frozen and reused across frames: keep colour fields integer and
  * alpha fields fractional so V8 holds the hidden class and field representations
  * stable across the (potentially thousands of) per-glyph iterations.
@@ -131,6 +136,25 @@ export interface GlyphState {
     /** Source paragraph index: how many original `'\n'` precede this glyph (soft breaks don't count). */
     readonly srcLine: number;
 
+    /** Width of this glyph's quad in text-space pixels (before {@link scaleX}). */
+    readonly width: number;
+    /** Height of this glyph's quad in text-space pixels (before {@link scaleY}). */
+    readonly height: number;
+    /**
+     * This glyph's effective font size in pixels — the object's `fontSize` times
+     * its run's `fontScale`. The unit {@link offsetX} / {@link offsetY} /
+     * {@link skewPivot} are measured in, and the scale factor to reach for when a
+     * deform should read the same on every glyph of a run regardless of how wide
+     * the letter is.
+     */
+    readonly em: number;
+    /**
+     * Distance from this glyph's quad top ({@link y}) down to its layout baseline,
+     * in pixels. `y + baselineOffset` is the baseline a shear pivots on at
+     * `skewPivot === 0`; the whole line shares that value.
+     */
+    readonly baselineOffset: number;
+
     /** Glyph X in text space (seeded from layout). */
     x: number;
     /** Glyph Y in text space (seeded from layout). */
@@ -144,10 +168,61 @@ export interface GlyphState {
     /**
      * Horizontal baseline shear (`dx/dy`) — faux italic. Positive leans the top
      * of the glyph to the right. Stored as a raw factor (not radians / degrees)
-     * to avoid a per-glyph `tan`. The pivot is the glyph's *layout* baseline, so
-     * a whole line slants consistently. Seeded to `0`; animatable like rotation.
+     * to avoid a per-glyph `tan`. The pivot is the glyph's *layout* baseline (see
+     * {@link skewPivot}), so a whole line slants consistently. Seeded to `0`;
+     * animatable like rotation.
      */
     skew: number;
+    /**
+     * Where {@link skew} pivots, as an offset from the layout baseline in
+     * {@link em} units, positive **down**. `0` (the default) pivots on the
+     * baseline itself; `0.2` or so puts it under the descenders, which shears a
+     * glyph about its visual base rather than its baseline.
+     *
+     * Measured from the baseline rather than as a fraction of the glyph's own box
+     * on purpose: the baseline is the one anchor a line *shares*, so any constant
+     * value keeps every glyph on a line pivoting about the same horizontal line
+     * and the line slants as one. A fraction of the box would pivot a `g` and an
+     * `x` about different lines and shear them apart — and could not name the
+     * baseline at all, since the baseline sits at a different fraction of every
+     * glyph's box.
+     */
+    skewPivot: number;
+    /**
+     * Per-corner X displacement of this glyph's quad, in {@link em} units. Applied
+     * in the glyph's own local frame, so {@link scaleX} / {@link scaleY} /
+     * {@link rotation} apply *on top of* it — the deform is part of the letterform,
+     * not part of the transform.
+     *
+     * This is the general primitive under the transform lane: any affine map of a
+     * rectangle is a parallelogram, so scale, rotation and skew together only ever
+     * move these four corners *subject to opposite edges staying parallel*. Writing
+     * the corners directly drops that constraint — trapezia, keystones, jelly
+     * wobble, drooping/melting glyphs, per-glyph jitter. It subsumes {@link skew}
+     * at every {@link skewPivot} (a shear moves corner *i* by `-k·(yᵢ - pivot)`,
+     * which is a constant per corner), and even the vertical shear the transform
+     * lane cannot reach at all.
+     *
+     * **The quad stays two triangles**, and UVs interpolate affinely across each,
+     * so a *non-parallelogram* deform creases the texture along the quad's diagonal
+     * — the letterform's straight strokes kink where the triangles meet. It is
+     * invisible on a mild or moving deform and obvious on a hard static keystone.
+     * There is no perspective correction here; that would need a homogeneous `q`
+     * per vertex, and it was deliberately not built.
+     *
+     * Em-relative (not box-relative) so that one value displaces a narrow `i` and a
+     * wide `W` by the same number of pixels — which is what lets a deform written as
+     * a *field over text space* (evaluate `f(x, y)` at each corner's absolute
+     * position) warp a whole line coherently, since adjacent glyphs' corners then
+     * land on the same curve without having to be matched up by hand.
+     *
+     * The deform is a render-time displacement: it does not move the layout, the
+     * text's bounds or its decorations, so a wobbling glyph can escape the text box
+     * exactly as a rotated one can.
+     */
+    offsetX: Corners;
+    /** Per-corner Y displacement of this glyph's quad, in {@link em} units. See {@link offsetX}. */
+    offsetY: Corners;
     /**
      * Per-corner faux bold, in distance-field units — it shifts the glyph's
      * distance threshold, so positive fattens and negative thins. The outline and
@@ -166,6 +241,12 @@ export interface GlyphState {
 
     /** Set both axes of glyph scale. `setScale(v)` is uniform; `setScale(x, y)` is independent. */
     setScale(x: number, y?: number): void;
+    /**
+     * Clear the per-corner deform ({@link offsetX} / {@link offsetY}) back to zero.
+     * There is deliberately no "set all four corners" helper: displacing every
+     * corner equally is just a translate, which {@link x} / {@link y} already do.
+     */
+    clearOffset(): void;
     /** Set the faux-bold weight on all four corners. */
     setWeight(weight: number): void;
     /** Set the fill colour (`0xRRGGBB`) on all four corners. */
@@ -207,6 +288,11 @@ function corners(value: number): Corners {
 function setScale(this: GlyphState, x: number, y?: number): void {
     this.scaleX = x;
     this.scaleY = y === undefined ? x : y;
+}
+function clearOffset(this: GlyphState): void {
+    const x = this.offsetX, y = this.offsetY;
+    x.topLeft = x.topRight = x.bottomLeft = x.bottomRight = 0;
+    y.topLeft = y.topRight = y.bottomLeft = y.bottomRight = 0;
 }
 function setWeight(this: GlyphState, weight: number): void {
     const w = this.weight;
@@ -277,12 +363,19 @@ export function createGlyphState(): GlyphState {
         srcIndex: 0,
         line: 0,
         srcLine: 0,
+        width: 0,
+        height: 0,
+        em: 0,
+        baselineOffset: 0,
         x: 0,
         y: 0,
         scaleX: 1,
         scaleY: 1,
         rotation: 0,
         skew: 0,
+        skewPivot: 0,
+        offsetX: corners(0),
+        offsetY: corners(0),
         weight: corners(0),
         fill: { color: corners(0xffffff), alpha: corners(1) },
         shadow: {
@@ -294,6 +387,7 @@ export function createGlyphState(): GlyphState {
             width: corners(0), rounded: corners(0), softness: corners(0)
         },
         setScale,
+        clearOffset,
         setWeight,
         setFillColor,
         setFillAlpha,

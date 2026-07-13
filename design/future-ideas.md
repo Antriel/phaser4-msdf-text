@@ -406,22 +406,91 @@ reason `solid` is safe — both are constant across their quad by construction, 
 there is nothing to interpolate. (At `mediump` near `1.0` they are ~8 ULP apart
 anyway.)
 
-## From `rich-text-styling.md` — skew alternatives
+## ~~From `rich-text-styling.md` — skew alternatives~~ — **built, and generalized**
 
-**Bottom-pivot skew variant.** Today's skew always pivots on the layout
-baseline (`Yb = baselineY`), which is the deliberate default (see
-`rich-text-styling.md`'s "Skew + per-glyph scale" note — keeps a mixed-scale
-line slanting as one line). The doc notes the same formula with `Yb = charY +
-h` gives a bottom-pivot variant instead, which some callers may want (e.g.
-skewing about a glyph's own visual base rather than the shared line baseline).
-Not built; no API surface sketched (would need a mode flag or a second
-`skewPivot` field on `GlyphState`).
+The bottom-pivot variant landed as **`skewPivot`**, and the question "could the
+pivot be a *factor*?" turned out to be the tip of a much larger one, which landed
+with it: **`GlyphState.offsetX` / `offsetY`**, per-corner displacements of the
+glyph's quad in em.
+
+What the build settled:
+
+- **The pivot is an offset from the baseline, not a fraction of the box.** The
+  obvious `0..1` factor over the glyph's own quad (0 = top, 1 = bottom) *cannot
+  reproduce today's default*: the baseline sits at a different fraction of every
+  glyph's box (`g` with a descender vs. `x`), so no constant factor names it, and
+  any constant factor pivots each glyph about a *different* line — shearing a
+  mixed line apart, which is exactly what the baseline default existed to prevent.
+  Measuring from the baseline (the one anchor a line *shares*) inverts that: line
+  coherence stops being a property of one blessed default and becomes an invariant
+  of the knob, true at **every** value.
+- **Skew is only the quad's corners — and so is everything else.** Any affine map
+  of a rectangle is a parallelogram, so `scale` + `rotation` + `skew` between them
+  only ever move four corners under a parallelism constraint. Dropping the
+  constraint is the whole feature, and it costs nothing but eight floats: vertex
+  *position* is already per-vertex CPU float data, so unlike every `params` byte
+  in this codebase, no space had to be fought for.
+- **The transform lane is not even complete for affine**, which was a surprise and
+  killed a `skewY` knob before it was written. The linear part is
+  `Shear · Rotate · Scale`, and `Rotate · Scale` is precisely the column-orthogonal
+  matrices, so `M` is reachable iff some real `k` makes `Shear(-k)·M`
+  column-orthogonal. For a pure vertical shear `[[1,0],[1,1]]` that condition is
+  `k² + k + 1 = 0`, whose discriminant is `-3`. **A vertical shear is unreachable.**
+  The deform reaches it, and subsumes `skew` at every pivot besides (a shear moves
+  corner *i* by `-k·(yᵢ - pivot)`, a constant per corner) — so `skew` / `skewPivot`
+  survive as *sugar*, not capability, and no further skew modes should be grown.
+- **Em-relative beat box-relative**, and that is what makes the feature composable
+  rather than a per-glyph confetti generator. One value moves a narrow `i` and a
+  wide `W` by the same pixels, so a deform can be written as a **field over text
+  space** — `f(x, y)` sampled at each corner's absolute position — and adjacent
+  glyphs' corners then land on the same curve *automatically*, warping a whole line
+  as one continuous ribbon with nothing matched up by hand. That is what forced the
+  readonly `width` / `height` / `em` / `baselineOffset` onto `GlyphState`; without
+  them the caller cannot locate its own corners.
+- **The affine UV crease is the price, and it was paid knowingly.** A quad is two
+  triangles, each with its own affine UV map, so a *non-parallelogram* kinks the
+  letterform along the shared diagonal — the PS1 texture warp. Confirmed in the
+  demos: visible on a hard static `Keystone`, invisible on `Jelly`, which moves.
+  Perspective-correct texturing needs a homogeneous `q` per vertex (texcoord
+  `vec2 → vec3`, so a 28 → 32 byte vertex, plus a divide in the fragment shader);
+  **deferred, not rejected** — see below.
+- **No matrix, so no slow path.** `BatchMSDFChar` displaces the corners *before*
+  the transform, in whichever local space the chosen path already works in, so a
+  deform alone does not push a glyph onto `submitOneGlyph`'s per-glyph-matrix
+  branch and composes with scale/rotation/skew for free.
+- **Not a `StyleSpec` key.** The same four offsets on every glyph of a run is one
+  shape repeated; every deform worth writing is a function of where the glyph
+  *landed*. It is glyph-array-only (`displayCallback` / `editGlyphs`), which is the
+  "specs are layout inputs, the glyph array is layout output" boundary doing its
+  job rather than an omission.
+
+Demos: `Lean` (slides the skew pivot live), `Ribbon wave` (a field over text
+space — and incidentally the vertical shear the transform lane cannot reach),
+`Keystone` (a word-level trapezium, and an honest look at the crease) and `Jelly`
+(four corners, four phases) in the effects scene.
+
+### Still open
+
+**Perspective-correct deform (the `q` divide).** The only thing standing between
+the deform and a *static* keystone that looks right. Costs a `vec3` texcoord —
+28 → 32 bytes per vertex on **every** quad in the library, deformed or not — plus
+`uv = texCoord.xy / texCoord.z` in the fragment shader, and a CPU-side homography
+solve (intersect the quad's diagonals) per deformed glyph, valid only while the
+quad stays convex. Worth noting before flinching at the vertex cost: **28 is not a
+power-of-two stride and 32 is**, so the real cost may be nil or negative — that is
+a measurement, not an assumption. Gated on someone actually wanting a hard static
+keystone; animated deforms hide the crease.
 
 **Shader-based skew.** Today's skew is a CPU-side matrix compose in
 `submitOneGlyph`/`BatchMSDFChar`, chosen so no shader change was needed. A
 shader-based version (skew factor riding a vertex attribute) stays possible if
 we ever want skew decoupled from the CPU transform path — no concrete reason to
-want that today.
+want that today, and now less than ever: the deform is the general primitive, and
+it is CPU-side too.
+
+**Deformable decorations.** A deformed glyph's underline stays straight, because
+rects live outside `_characters` and no `GlyphState` owns one. Same wall as the
+per-rect state object below, and it now has one more reason to exist.
 
 ## From `vertex-params.md` — decorations in the display callback
 

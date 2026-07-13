@@ -11,7 +11,7 @@
  */
 
 import type { MSDFBatchHandlerInstance } from './MSDFBatchHandler';
-import type { PackedCorners } from './MSDFColor';
+import type { Corners, PackedCorners } from './MSDFColor';
 
 interface CharQuad {
     x: number;
@@ -33,6 +33,16 @@ interface CalcMatrix {
     f: number;
 }
 
+/**
+ * `deformX`/`deformY` (with `em`) displace the four corners *before* the matrix,
+ * so a deform lands in the quad's own local space and the glyph's scale/rotation
+ * apply on top of it. `null` is the undeformed case and skips the work entirely.
+ *
+ * Moving the corners independently is what takes the quad off the affine
+ * manifold — the two triangles keep their own affine UV maps, so a
+ * non-parallelogram creases the texture along the shared diagonal. That is a
+ * known, accepted cost (see `GlyphState.offsetX`), not an oversight.
+ */
 function BatchMSDFChar(
     drawingContext: any,
     batchHandler: MSDFBatchHandlerInstance,
@@ -43,7 +53,10 @@ function BatchMSDFChar(
     calcMatrix: CalcMatrix,
     colorData: PackedCorners,
     outlineData: PackedCorners,
-    params: PackedCorners
+    params: PackedCorners,
+    deformX: Corners | null,
+    deformY: Corners | null,
+    em: number
 ): void {
     const x = char.x + offsetX;
     const y = char.y + offsetY;
@@ -52,14 +65,28 @@ function BatchMSDFChar(
 
     const { a, b, c, d, e, f } = calcMatrix;
 
-    const tx0 = x * a + y * c + e;
-    const ty0 = x * b + y * d + f;
-    const tx1 = x * a + yh * c + e;
-    const ty1 = x * b + yh * d + f;
-    const tx2 = xw * a + yh * c + e;
-    const ty2 = xw * b + yh * d + f;
-    const tx3 = xw * a + y * c + e;
-    const ty3 = xw * b + y * d + f;
+    // Untransformed corners: TL, BL, BR, TR.
+    let x0 = x, y0 = y;
+    let x1 = x, y1 = yh;
+    let x2 = xw, y2 = yh;
+    let x3 = xw, y3 = y;
+
+    if (deformX !== null) {
+        const dy = deformY!;
+        x0 += deformX.topLeft * em; y0 += dy.topLeft * em;
+        x1 += deformX.bottomLeft * em; y1 += dy.bottomLeft * em;
+        x2 += deformX.bottomRight * em; y2 += dy.bottomRight * em;
+        x3 += deformX.topRight * em; y3 += dy.topRight * em;
+    }
+
+    const tx0 = x0 * a + y0 * c + e;
+    const ty0 = x0 * b + y0 * d + f;
+    const tx1 = x1 * a + y1 * c + e;
+    const ty1 = x1 * b + y1 * d + f;
+    const tx2 = x2 * a + y2 * c + e;
+    const ty2 = x2 * b + y2 * d + f;
+    const tx3 = x3 * a + y3 * c + e;
+    const ty3 = x3 * b + y3 * d + f;
 
     // MSDFBatchHandler expects: BL, TL, TR, BR
     batchHandler.batch(

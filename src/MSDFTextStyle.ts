@@ -123,6 +123,7 @@ export interface ResolvedStyle {
     scaleY?: number;
     rotation?: number;
     skew?: number;
+    skewPivot?: number;
     underline?: ResolvedDecoration | null;      // decoration lane
     strikethrough?: ResolvedDecoration | null;  // decoration lane
     highlight?: ResolvedHighlight | null;       // decoration lane
@@ -367,6 +368,7 @@ export function resolveStyle(spec: StyleSpec): ResolvedStyle {
     if (sy !== undefined) r.scaleY = sy;
     if (spec.rotation !== undefined) r.rotation = spec.rotation;
     if (spec.skew !== undefined) r.skew = spec.skew;
+    if (spec.skewPivot !== undefined) r.skewPivot = spec.skewPivot;
 
     const underline = resolveDecoration(spec.underline);
     if (underline !== undefined) r.underline = underline;
@@ -410,7 +412,7 @@ export function hasStyleKeys(spec: StyleSpec): boolean {
     return spec.color !== undefined || spec.alpha !== undefined || spec.weight !== undefined ||
         spec.outline !== undefined || spec.shadow !== undefined ||
         spec.scale !== undefined || spec.scaleX !== undefined || spec.scaleY !== undefined ||
-        spec.rotation !== undefined || spec.skew !== undefined ||
+        spec.rotation !== undefined || spec.skew !== undefined || spec.skewPivot !== undefined ||
         spec.underline !== undefined || spec.strikethrough !== undefined ||
         spec.highlight !== undefined ||
         spec.fontScale !== undefined || spec.font !== undefined;
@@ -430,7 +432,7 @@ export function styleHasAppearanceKeys(s: ResolvedStyle): boolean {
         s.outlineWidth !== undefined || s.outlineRounded !== undefined ||
         s.outlineSoftness !== undefined ||
         s.scaleX !== undefined || s.scaleY !== undefined ||
-        s.rotation !== undefined || s.skew !== undefined ||
+        s.rotation !== undefined || s.skew !== undefined || s.skewPivot !== undefined ||
         styleHasShadowKeys(s);
 }
 
@@ -498,6 +500,7 @@ export function applyStyleToGlyph(g: GlyphState, s: ResolvedStyle): void {
     if (s.scaleY !== undefined) g.scaleY = s.scaleY;
     if (s.rotation !== undefined) g.rotation = s.rotation;
     if (s.skew !== undefined) g.skew = s.skew;
+    if (s.skewPivot !== undefined) g.skewPivot = s.skewPivot;
 }
 
 // ============================================================================

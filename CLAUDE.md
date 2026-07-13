@@ -270,9 +270,56 @@ Because the solid lane's coverage is now the box SDF's, **underlines are
 antialiased**: at a rect's boundary coverage is `0.5`, not the flat `1.0` it was
 before pills.
 
+**Quad deform** — `GlyphState.offsetX` / `offsetY` are per-corner displacements
+of the glyph's quad, in **em**, applied in the quad's local frame (so the glyph's
+scale/rotation compose on top). They are the general primitive under the
+transform lane, and the reasoning is worth keeping:
+- Any affine map of a rectangle is a **parallelogram**, so `scale` + `rotation` +
+  `skew` can only move the four corners subject to opposite edges staying
+  parallel. Writing the corners drops that constraint — trapezia, jelly, melt.
+- The current transform set is *not even complete for affine*: its linear part is
+  `Shear · Rotate · Scale`, and `Rotate · Scale` is exactly the column-orthogonal
+  matrices, so a target `M` is reachable only if some `k` makes `Shear(-k)·M`
+  column-orthogonal. For a pure **vertical shear** `[[1,0],[1,1]]` that condition
+  is `k² + k + 1 = 0` — no real root. The deform reaches it; the transform lane
+  cannot. This is why no `skewY` knob was added: the primitive subsumes it.
+- It likewise subsumes `skew` at **every** pivot (a shear moves corner *i* by
+  `-k·(yᵢ - pivot)`, a constant per corner), so `skew`/`skewPivot` survive purely
+  as sugar, not as capability.
+- **Cost: the affine UV crease.** A quad is two triangles with an affine UV map
+  each, so a non-parallelogram kinks the letterform along the shared diagonal
+  (the PS1 warp). Accepted, not overlooked: correcting it needs a homogeneous `q`
+  per vertex (28 → 32 byte vertex, a divide in the fragment shader), and it is
+  invisible under motion or mild taper. Verified in the `Keystone` / `Jelly`
+  demos — the crease shows on a hard static taper and hides under animation.
+- Em-relative, not box-relative, so one value moves a narrow `i` and a wide `W`
+  by the same pixels — which is what lets a deform be written as a **field over
+  text space** (`f(x, y)` at each corner's absolute position) and warp a line
+  coherently, since neighbouring quads' corners then land on the same curve for
+  free. `GlyphState` exposes readonly `width` / `height` / `em` / `baselineOffset`
+  for exactly that.
+- **No matrix, so no slow path.** `BatchMSDFChar` displaces the four corners
+  before the transform; a deform alone does not push a glyph onto
+  `submitOneGlyph`'s per-glyph-matrix branch. Decoration rects pass `null` — no
+  `GlyphState` owns one.
+- **Not a `StyleSpec` key**, deliberately: the same four offsets on every glyph of
+  a run is one shape repeated, and every interesting deform is a function of where
+  the glyph *landed* — i.e. layout output, which is the glyph array's side of the
+  hard boundary below.
+
+**`skewPivot`** — where `skew` shears from, as an em offset **below the layout
+baseline** (`0` = the baseline; the old, only behaviour). Parametrized from the
+baseline rather than as a fraction of the glyph's box because the baseline is the
+one anchor a *line* shares: any constant value then keeps every glyph on a line
+pivoting about the same horizontal line, so the "a mixed-scale line slants as one
+line" invariant holds at **every** value instead of only at the default. A 0–1
+fraction of the box could not even name the baseline — it sits at a different
+fraction of every glyph's box (`g` vs `x`) — and would shear a mixed line apart.
+
 **Per-glyph state** — the display callback and `editGlyphs()` both operate on an
 array of `GlyphState` (`src/MSDFGlyphState.ts`), one per renderable glyph. Each
-carries a transform, a per-corner `weight`, and three independent aspects —
+carries a transform (incl. `skew`/`skewPivot` and the `offsetX`/`offsetY` deform),
+a per-corner `weight`, and three independent aspects —
 `fill`, `shadow` (+ `x`/`y`/`softness`/`spread`/`rounded`), `outline` (+
 `width`/`rounded`/`softness`) — with per-corner `0xRRGGBB` colour and a separate
 `0-1` alpha (kept split so V8 holds a stable hidden class and SMI/double field
@@ -294,7 +341,8 @@ glyph's shadow/outline are independent of its fill.
 from `addStyle`; painted in that order — and within the overlays, plain creation
 order, so the style added last wins — then `displayCallback`) split into three
 key lanes:
-- **Appearance** — colour/alpha/weight/outline/shadow/scale/rotation/skew. Seeds
+- **Appearance** — colour/alpha/weight/outline/shadow/scale/rotation/skew/skewPivot
+  (but *not* the quad deform — see above). Seeds
   `GlyphState`. `_hasAppearance` gates the per-glyph array and `applyStyleRuns`.
   A change sets `_stylesDirty` (one coalesced re-seed before the next render).
 - **Decoration** — `underline`/`strikethrough`/`highlight`. Appearance-lane timing
