@@ -197,8 +197,8 @@ function packStaticParams(src: any, count: number): void {
         const inv = b.invRange;
         const outSoft = b.isMtsdf ? src.outlineSoftness : 0;
         const shSoft = b.isMtsdf ? src.shadowSoftness : 0;
-        const outRound = (b.isMtsdf && src.outlineRounded) ? 1 : 0;
-        const shRound = (b.isMtsdf && src.shadowRounded) ? 1 : 0;
+        const outRound = b.isMtsdf ? src.outlineRounded : 0;
+        const shRound = b.isMtsdf ? src.shadowRounded : 0;
         b.staticParams = packParams(weight * inv, outRound, outlineWidth * inv, outSoft * inv);
         b.staticShadowParams = packParams(weight * inv, shRound, shadowSpread * inv, shSoft * inv);
     }

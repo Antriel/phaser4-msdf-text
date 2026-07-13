@@ -34,6 +34,16 @@ export function toColorInt(value: ColorValue): number {
 }
 
 /**
+ * Normalise a `rounded` input to the `0..1` the shader mixes with. The knob was
+ * a boolean before it was a range, and `true`/`false` remain the ends of that
+ * range, so both spellings land on the same two values.
+ */
+export function toRoundedAmount(value: number | boolean): number {
+    const v = +value;
+    return v <= 0 || v !== v ? 0 : v >= 1 ? 1 : v;
+}
+
+/**
  * A dash pattern, pre-parsed. `period` is what the rect builder needs (it fits a
  * whole number of them across each rect); `params` is the dash's shape — the
  * `254` sentinel plus its duty cycle, cap radius and blur — packed once here,
@@ -109,14 +119,14 @@ export interface ResolvedStyle {
     outlineInnerColor?: number;
     outlineAlpha?: number;
     outlineWidth?: Corners;
-    outlineRounded?: boolean;
+    outlineRounded?: Corners;   // 0 (sharp) - 1 (round) per corner
     outlineSoftness?: Corners;
     shadowColor?: number;
     shadowInnerColor?: number;
     shadowAlpha?: number;
     shadowSoftness?: Corners;
     shadowSpread?: Corners;
-    shadowRounded?: boolean;
+    shadowRounded?: Corners;    // 0 (sharp) - 1 (round) per corner
     shadowX?: number;
     shadowY?: number;
     scaleX?: number;
@@ -279,6 +289,14 @@ function uniformCorners(v: number): Corners {
 }
 
 /**
+ * Resolve a `rounded` key — a boolean, a `0..1` amount, or a per-corner ramp of
+ * them — into clamped corners, the same shape `width` and `softness` resolve to.
+ */
+function resolveRoundedCorners(value: boolean | number | PerCorner<number>): Corners {
+    return clampCorners(resolveNumberCorners(typeof value === 'boolean' ? +value : value));
+}
+
+/**
  * Parse a highlight spec. Tri-state like {@link resolveDecoration}: `undefined`
  * means the layer says nothing, `false` is an explicit off (`null`), `true` is
  * the plain marker default.
@@ -345,7 +363,7 @@ export function resolveStyle(spec: StyleSpec): ResolvedStyle {
         if (spec.outline.innerColor !== undefined) r.outlineInnerColor = toColorInt(spec.outline.innerColor);
         if (spec.outline.alpha !== undefined) r.outlineAlpha = spec.outline.alpha;
         if (spec.outline.width !== undefined) r.outlineWidth = resolveNumberCorners(spec.outline.width);
-        if (spec.outline.rounded !== undefined) r.outlineRounded = !!spec.outline.rounded;
+        if (spec.outline.rounded !== undefined) r.outlineRounded = resolveRoundedCorners(spec.outline.rounded);
         if (spec.outline.softness !== undefined) r.outlineSoftness = resolveNumberCorners(spec.outline.softness);
     }
     if (spec.shadow) {
@@ -354,7 +372,7 @@ export function resolveStyle(spec: StyleSpec): ResolvedStyle {
         if (spec.shadow.alpha !== undefined) r.shadowAlpha = spec.shadow.alpha;
         if (spec.shadow.softness !== undefined) r.shadowSoftness = resolveNumberCorners(spec.shadow.softness);
         if (spec.shadow.spread !== undefined) r.shadowSpread = resolveNumberCorners(spec.shadow.spread);
-        if (spec.shadow.rounded !== undefined) r.shadowRounded = !!spec.shadow.rounded;
+        if (spec.shadow.rounded !== undefined) r.shadowRounded = resolveRoundedCorners(spec.shadow.rounded);
         if (spec.shadow.x !== undefined) r.shadowX = spec.shadow.x;
         if (spec.shadow.y !== undefined) r.shadowY = spec.shadow.y;
     }
@@ -483,7 +501,7 @@ export function applyStyleToGlyph(g: GlyphState, s: ResolvedStyle): void {
     if (s.outlineInnerColor !== undefined) setCorners(g.outline.innerColor, s.outlineInnerColor);
     if (s.outlineAlpha !== undefined) setCorners(g.outline.alpha, s.outlineAlpha);
     if (s.outlineWidth) copyCorners(g.outline.width, s.outlineWidth);
-    if (s.outlineRounded !== undefined) setCorners(g.outline.rounded, s.outlineRounded ? 1 : 0);
+    if (s.outlineRounded) copyCorners(g.outline.rounded, s.outlineRounded);
     if (s.outlineSoftness) copyCorners(g.outline.softness, s.outlineSoftness);
     if (s.shadowColor !== undefined) {
         setCorners(g.shadow.color, s.shadowColor);
@@ -493,7 +511,7 @@ export function applyStyleToGlyph(g: GlyphState, s: ResolvedStyle): void {
     if (s.shadowAlpha !== undefined) setCorners(g.shadow.alpha, s.shadowAlpha);
     if (s.shadowSoftness) copyCorners(g.shadow.softness, s.shadowSoftness);
     if (s.shadowSpread) copyCorners(g.shadow.spread, s.shadowSpread);
-    if (s.shadowRounded !== undefined) setCorners(g.shadow.rounded, s.shadowRounded ? 1 : 0);
+    if (s.shadowRounded) copyCorners(g.shadow.rounded, s.shadowRounded);
     if (s.shadowX !== undefined) g.shadow.x = s.shadowX;
     if (s.shadowY !== undefined) g.shadow.y = s.shadowY;
     if (s.scaleX !== undefined) g.scaleX = s.scaleX;

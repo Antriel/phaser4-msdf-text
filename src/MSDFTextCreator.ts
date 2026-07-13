@@ -28,8 +28,11 @@ export interface MSDFTextOutlineConfig {
     color?: ColorValue;
     /** Outline alpha (0-1). Defaults to 1. */
     alpha?: number;
-    /** Round the outer corners using the true SDF (requires an MTSDF atlas). Defaults to false. */
-    rounded?: boolean;
+    /**
+     * How far to round the outer corners off the true SDF, `0` (sharp) to `1`
+     * (round), or a boolean for those ends. Requires an MTSDF atlas. Defaults to 0.
+     */
+    rounded?: number | boolean;
     /** Draw outline silhouettes under the fills, so thick outlines never cover neighbouring glyphs. Defaults to false. */
     layered?: boolean;
     /**
@@ -60,10 +63,11 @@ export interface MSDFTextShadowConfig {
      */
     spread?: number;
     /**
-     * Round the dilated / blurred silhouette off the true SDF (requires an MTSDF
-     * atlas). Defaults to `true` — see `MSDFTextInstance.shadowRounded`.
+     * How far to round the dilated / blurred silhouette off the true SDF, `0`
+     * (sharp) to `1` (round), or a boolean. Requires an MTSDF atlas. Defaults to
+     * `1` — see `MSDFTextInstance.shadowRounded`.
      */
-    rounded?: boolean;
+    rounded?: number | boolean;
 }
 
 /**
@@ -160,7 +164,7 @@ GameObjectCreator.register('msdfText', function (
     if (outline && ((outline.width || 0) > 0 || (outline.softness || 0) > 0)) {
         msdfText.setOutline(
             outline.width || 0, outline.color, outline.alpha,
-            !!outline.rounded, !!outline.layered, outline.softness || 0
+            outline.rounded || 0, !!outline.layered, outline.softness || 0
         );
     }
 
@@ -174,7 +178,7 @@ GameObjectCreator.register('msdfText', function (
             shadow.softness || 0,
             shadow.spread || 0
         );
-        // Defaults to `true` on the object, so only an explicit key overrides it.
+        // Fully on by default on the object, so only an explicit key overrides it.
         if (shadow.rounded !== undefined) {
             msdfText.shadowRounded = shadow.rounded;
         }

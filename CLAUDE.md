@@ -131,9 +131,14 @@ the alpha channel alongside the MSDF in RGB. The fill layer always uses
 *outline* would also round its glyph's *fill* — and the outline/shadow layer uses
 `mix(median, tsdf, rounded)`:
 - Rounded outline (`setOutline(..., rounded)`) — the outline edge comes from the
-  alpha SDF, which rounds outer corners; the letterform edge stays sharp. The
-  object-level flag seeds `0` or `1`, but `GlyphState.outline.rounded` is a
-  per-corner `0..1` `Corners`: intermediates `mix()` sharp into round.
+  alpha SDF, which rounds outer corners; the letterform edge stays sharp. It is an
+  **amount, not a flag**, at every level: `0..1` object-level (`toRoundedAmount`
+  in `MSDFTextStyle.ts` is the one coercion, in the setter, so nothing downstream
+  ever sees a boolean), `0..1`-or-`PerCorner` in a `StyleSpec`, and a per-corner
+  `Corners` on `GlyphState.outline.rounded`. Intermediates `mix()` sharp into
+  round. `true`/`false` are still accepted everywhere and land on the two ends —
+  they were the whole API before the byte turned out to have been continuous all
+  along.
 - Soft shadow / glow (`setShadow(..., softness)`) — a shadow quad is an
   **outline-only quad**: fill alpha 0 (its colour slot freed for the two-tone
   inner colour), shadow colour in the `inOutline` attribute, softness in
@@ -147,13 +152,14 @@ the alpha channel alongside the MSDF in RGB. The fill layer always uses
   outside softens. At zero width the outline *is* the glow, hugging the
   letterform, in one quad with no shadow pass. This is why `packOutlineAspect`'s
   zero-width gate had to learn about softness.
-- Rounded **shadow** (`shadowRounded`, per-corner `GlyphShadow.rounded`) —
-  independent, no longer derived from softness. It defaults **on**, unlike
-  `outlineRounded`, and that is not an inconsistency: rounding is a *no-op* until
-  the shadow's edge leaves the glyph contour (which needs a spread or a softness),
-  and where it does bite, a sharp dilation of `median(rgb)` grows a mitre spike at
-  every corner. So `true` reproduces the old derived rule exactly and is what a
-  spread wants; `false` is opt-in spikes.
+- Rounded **shadow** (`shadowRounded`, per-corner `GlyphShadow.rounded`) — the
+  same `0..1` amount, independent, no longer derived from softness. It defaults to
+  `1`, unlike `outlineRounded`, and that is not an inconsistency: rounding is a
+  *no-op* until the shadow's edge leaves the glyph contour (which needs a spread or
+  a softness), and where it does bite, a sharp dilation of `median(rgb)` grows a
+  mitre spike at every corner. So `1` reproduces the old derived rule exactly and is
+  what a spread wants; `0` is opt-in spikes, and the range between files them down
+  by degrees.
 - All three (both `rounded`s, both `softness`es) are clamped to zero at **pack
   time** on plain `msdf` atlases (the renderer checks `fieldType`); `MSDFText`
   warns once if a softness or a rounded *outline* is requested object-level on such

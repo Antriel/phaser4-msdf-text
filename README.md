@@ -193,9 +193,9 @@ interface FitOptions {
 
 ```ts
 text.setOutline(1.5, 0x000000, 1.0);              // width (distance-field units), color, alpha
-text.setOutline(1.5, 0x000000, 1.0, true);        // rounded outer corners (MTSDF atlas only)
-text.setOutline(3, 0x000000, 1.0, false, true);   // layered — thick outline, no neighbour overlap
-text.setOutline(0, 0x00e5ff, 1.0, false, false, 7); // width 0 + softness = a glow, in the fill's quad
+text.setOutline(1.5, 0x000000, 1.0, 1);           // rounded outer corners, 0-1 (MTSDF atlas only)
+text.setOutline(3, 0x000000, 1.0, 0, true);       // layered — thick outline, no neighbour overlap
+text.setOutline(0, 0x00e5ff, 1.0, 0, false, 7);   // width 0 + softness = a glow, in the fill's quad
 text.clearOutline();
 text.hasOutline();                            // boolean
 
@@ -203,7 +203,7 @@ text.hasOutline();                            // boolean
 text.outlineWidth = 2;                        // distance-field units
 text.outlineColor = 0x000000;                 // packed 0xRRGGBB
 text.outlineAlpha = 1;
-text.outlineRounded = true;                   // MTSDF atlas only
+text.outlineRounded = 0.5;                    // 0 sharp - 1 round; MTSDF atlas only
 text.outlineSoftness = 4;                     // blur the outer edge; MTSDF atlas only
 text.outlineLayered = true;                   // separate silhouette pass under the fill
 
@@ -217,9 +217,12 @@ Practical widths are roughly 0.5–3.0 — the shader saturates around
 `distanceRange / 2` distance-field units. For thicker outlines, regenerate the
 atlas with a larger `-pxrange` rather than pushing the width higher.
 
-`rounded` rounds the outline's outer corners; the letterforms stay sharp. It
-requires an **MTSDF** atlas (`-type mtsdf`; see [FONTS.md](FONTS.md)) — on
-plain MSDF it is ignored with a one-time warning.
+`rounded` rounds the outline's outer corners; the letterforms stay sharp. It is
+an **amount, not a flag** — `0` (sharp, the default) through `1` (fully rounded),
+with everything between blending the two edges, so it tweens and can be ramped
+per corner. `true` / `false` are accepted as its two ends. It requires an
+**MTSDF** atlas (`-type mtsdf`; see [FONTS.md](FONTS.md)) — on plain MSDF it is
+ignored with a one-time warning.
 
 `outlineSoftness` blurs the outline's *outer* edge, in the same distance-field
 units as the width. The blur straddles the outline edge, so its inner half
@@ -258,7 +261,7 @@ text.shadowColor = 0x000000;                      // packed 0xRRGGBB
 text.shadowAlpha = 0.5;
 text.shadowSoftness = 6;                          // blur, distance-field units, MTSDF atlas only
 text.shadowSpread = 2;                            // dilation, distance-field units, any atlas
-text.shadowRounded = false;                       // default true; MTSDF atlas only
+text.shadowRounded = 0;                           // 0 sharp - 1 round; default 1; MTSDF atlas only
 
 // Two-tone: ramp the blur from shadowColor (outer) to a hot core at the glyph.
 text.setShadowInnerColor(0xffffff);
@@ -282,12 +285,13 @@ past roughly `0.3 × distanceRange` starts to fade at its outer band, where the
 shader's deep-background guard reads the raw field. Any nonzero softness lifts
 that guard entirely.
 
-`shadowRounded` (default **`true`**) takes the dilated/blurred silhouette from
-the true SDF rather than the corner-preserving `median(rgb)` the fill uses. It is
-on by default — unlike `outlineRounded` — because it does nothing at all until a
-spread or a softness lifts the shadow's edge off the glyph contour, and where it
-does bite, a sharp dilation of `median(rgb)` grows a mitre spike at every corner
-of every letter. Set it `false` if you want those spikes. MTSDF atlas only.
+`shadowRounded` (an amount like `outlineRounded`, but defaulting to **`1`**) takes
+the dilated/blurred silhouette from the true SDF rather than the corner-preserving
+`median(rgb)` the fill uses. It is fully on by default — unlike `outlineRounded` —
+because it does nothing at all until a spread or a softness lifts the shadow's edge
+off the glyph contour, and where it does bite, a sharp dilation of `median(rgb)`
+grows a mitre spike at every corner of every letter. Wind it down towards `0` if you
+want those spikes. MTSDF atlas only.
 
 `setShadowInnerColor` makes the blur a two-tone gradient: `shadowColor` at the
 outer edge, the inner colour at the glyph. A soft, zero-offset shadow with a
@@ -540,8 +544,9 @@ gradient), `weight`,
 `strikethrough`,
 `highlight`, `fontScale` and `font`. Only the keys you set override the
 glyph's seeded base; `weight` and every continuous effect channel
-(`outline.width`/`.softness`, `shadow.softness`/`.spread`) also take per-corner
-objects.
+(`outline.width`/`.rounded`/`.softness`, `shadow.softness`/`.spread`/`.rounded`)
+also take per-corner objects — so an outline can melt from sharp to round across
+a glyph.
 
 - A per-run **shadow** turns the shadow pass on by itself — but it needs an
   explicit **`alpha`**: glyphs seed a shadow alpha of `0` unless the object has

@@ -35,7 +35,7 @@ interface LabParams {
   outlineWidth: number;
   outlineColor: string;
   outlineAlpha: number;
-  outlineRounded: boolean;
+  outlineRounded: number;
   outlineSoftness: number;
   outlineLayered: boolean;
   outlineTwoTone: boolean;
@@ -46,7 +46,7 @@ interface LabParams {
   shadowAlpha: number;
   shadowSoftness: number;
   shadowSpread: number;
-  shadowRounded: boolean;
+  shadowRounded: number;
   shadowTwoTone: boolean;
   shadowInner: string;
   pulse: boolean;
@@ -58,7 +58,7 @@ const PRESETS: Record<string, Partial<LabParams>> = {
   Plain: {
     fill: "#ffffff", weight: 0,
     outlineWidth: 0, outlineSoftness: 0, outlineTwoTone: false,
-    shadowAlpha: 0, shadowSpread: 0, shadowRounded: true,
+    shadowAlpha: 0, shadowSpread: 0, shadowRounded: 1,
     shadowTwoTone: false, pulse: false,
   },
   // The payoff of spread: a *hard* shadow, dilated well past the letterform and
@@ -68,9 +68,9 @@ const PRESETS: Record<string, Partial<LabParams>> = {
   Sticker: {
     fill: "#ffd23f", weight: 1.2,
     outlineWidth: 3.5, outlineColor: "#ffffff", outlineAlpha: 1,
-    outlineRounded: true, outlineSoftness: 0, outlineLayered: true, outlineTwoTone: false,
+    outlineRounded: 1, outlineSoftness: 0, outlineLayered: true, outlineTwoTone: false,
     shadowX: 5, shadowY: 8, shadowColor: "#1c1633", shadowAlpha: 1,
-    shadowSoftness: 0, shadowSpread: 3.5, shadowRounded: true,
+    shadowSoftness: 0, shadowSpread: 3.5, shadowRounded: 1,
     shadowTwoTone: false, pulse: false,
   },
   // Glow via the shadow pass — a second set of quads, but it can be offset and
@@ -79,7 +79,7 @@ const PRESETS: Record<string, Partial<LabParams>> = {
     fill: "#ffffff", weight: 0,
     outlineWidth: 0, outlineSoftness: 0, outlineTwoTone: false,
     shadowX: 0, shadowY: 0, shadowColor: "#ff2d95", shadowAlpha: 1,
-    shadowSoftness: 12, shadowSpread: 2, shadowRounded: true,
+    shadowSoftness: 12, shadowSpread: 2, shadowRounded: 1,
     shadowTwoTone: true, shadowInner: "#ffd6ef", pulse: true,
   },
   // Glow via the *outline*, at width 0: the blur is centred on the glyph edge,
@@ -88,33 +88,33 @@ const PRESETS: Record<string, Partial<LabParams>> = {
   Halo: {
     fill: "#ffffff", weight: 0,
     outlineWidth: 0, outlineColor: "#00e5ff", outlineAlpha: 1,
-    outlineRounded: false, outlineSoftness: 7, outlineLayered: false, outlineTwoTone: false,
-    shadowAlpha: 0, shadowSpread: 0, shadowRounded: true,
+    outlineRounded: 0, outlineSoftness: 7, outlineLayered: false, outlineTwoTone: false,
+    shadowAlpha: 0, shadowSpread: 0, shadowRounded: 1,
     shadowTwoTone: false, pulse: false,
   },
   Ember: {
     fill: "#ffd23f", weight: 0.6,
     outlineWidth: 2, outlineColor: "#3a0d00", outlineAlpha: 1,
-    outlineRounded: false, outlineSoftness: 0, outlineLayered: false, outlineTwoTone: false,
+    outlineRounded: 0, outlineSoftness: 0, outlineLayered: false, outlineTwoTone: false,
     shadowX: 0, shadowY: 0, shadowColor: "#ff5a1e", shadowAlpha: 0.9,
-    shadowSoftness: 8, shadowSpread: 1.5, shadowRounded: true,
+    shadowSoftness: 8, shadowSpread: 1.5, shadowRounded: 1,
     shadowTwoTone: true, shadowInner: "#ffe69c", pulse: false,
   },
   Ice: {
     fill: "#eaf6ff", weight: 0,
     outlineWidth: 3, outlineColor: "#0b2a4a", outlineAlpha: 1,
-    outlineRounded: true, outlineSoftness: 0, outlineLayered: true,
+    outlineRounded: 1, outlineSoftness: 0, outlineLayered: true,
     outlineTwoTone: true, outlineInner: "#7fd4ff",
     shadowX: 0, shadowY: 4, shadowColor: "#7fd4ff", shadowAlpha: 0.5,
-    shadowSoftness: 6, shadowSpread: 0, shadowRounded: true,
+    shadowSoftness: 6, shadowSpread: 0, shadowRounded: 1,
     shadowTwoTone: false, pulse: false,
   },
   Comic: {
     fill: "#ffd23f", weight: 1.5,
     outlineWidth: 4, outlineColor: "#1a1030", outlineAlpha: 1,
-    outlineRounded: true, outlineSoftness: 0, outlineLayered: true, outlineTwoTone: false,
+    outlineRounded: 1, outlineSoftness: 0, outlineLayered: true, outlineTwoTone: false,
     shadowX: 5, shadowY: 5, shadowColor: "#1a1030", shadowAlpha: 1,
-    shadowSoftness: 0, shadowSpread: 0, shadowRounded: true,
+    shadowSoftness: 0, shadowSpread: 0, shadowRounded: 1,
     shadowTwoTone: false, pulse: false,
   },
 };
@@ -131,7 +131,7 @@ export class StyleLabScene extends ExampleScene {
     outlineWidth: 0,
     outlineColor: "#101018",
     outlineAlpha: 1,
-    outlineRounded: false,
+    outlineRounded: 0,
     outlineSoftness: 0,
     outlineLayered: false,
     outlineTwoTone: false,
@@ -142,7 +142,7 @@ export class StyleLabScene extends ExampleScene {
     shadowAlpha: 0,
     shadowSoftness: 0,
     shadowSpread: 0,
-    shadowRounded: true,
+    shadowRounded: 1,
     shadowTwoTone: false,
     shadowInner: "#ffffff",
     pulse: false,
@@ -244,7 +244,10 @@ export class StyleLabScene extends ExampleScene {
     o.addBinding(this.params, "outlineWidth", { label: "width", min: 0, max: 8, step: 0.1 }).on("change", apply);
     o.addBinding(this.params, "outlineColor", { label: "color", view: "color" }).on("change", apply);
     o.addBinding(this.params, "outlineAlpha", { label: "alpha", min: 0, max: 1, step: 0.05 }).on("change", apply);
-    o.addBinding(this.params, "outlineRounded", { label: "rounded corners" }).on("change", apply);
+    // Continuous, not a flag: the outline edge is `mix(median(rgb), tsdf, rounded)`,
+    // so anything between 0 and 1 is a mitre being filed down by degrees. The
+    // glyph's own fill stays sharp throughout.
+    o.addBinding(this.params, "outlineRounded", { label: "rounded corners", min: 0, max: 1, step: 0.05 }).on("change", apply);
     // Drop width to 0 and raise this: the outline becomes a glow on the
     // letterform, still inside the fill's own quad.
     o.addBinding(this.params, "outlineSoftness", { label: "softness (glow)", min: 0, max: 16, step: 0.5 }).on("change", apply);
@@ -264,8 +267,8 @@ export class StyleLabScene extends ExampleScene {
     // background-haze guard reads the raw field, and any softness lifts it.
     s.addBinding(this.params, "shadowSpread", { label: "spread (fatten)", min: 0, max: 8, step: 0.1 }).on("change", apply);
     // A no-op until spread or softness lifts the shadow's edge off the glyph
-    // contour; turn it off there to see the mitre spikes a sharp dilation grows.
-    s.addBinding(this.params, "shadowRounded", { label: "rounded" }).on("change", apply);
+    // contour; wind it down there to grow the mitre spikes a sharp dilation makes.
+    s.addBinding(this.params, "shadowRounded", { label: "rounded", min: 0, max: 1, step: 0.05 }).on("change", apply);
     s.addBinding(this.params, "shadowTwoTone", { label: "two-tone" }).on("change", apply);
     s.addBinding(this.params, "shadowInner", { label: "inner color", view: "color" }).on("change", apply);
     // Re-apply on toggle so the slider values are restored when pulse stops.

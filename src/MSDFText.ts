@@ -25,6 +25,7 @@ import { wrapLines } from './MSDFTextWrap';
 import { measureLines, uniformRuns, type LayoutRuns } from './MSDFMeasure';
 import {
     toColorInt,
+    toRoundedAmount,
     resolveStyle,
     resolveTarget,
     resolveDecoration,
@@ -291,7 +292,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         this._outlineWidth = 0;
         this._outlineColor = 0x000000;
         this._outlineAlpha = 1;
-        this._outlineRounded = false;
+        this._outlineRounded = 0;
         this._outlineSoftness = 0;
         this.outlineLayered = false;
         // Inner end of the outline's colour ramp. `-1` means "inherit
@@ -306,12 +307,13 @@ export const MSDFText: MSDFTextStatic = new Class({
         this._shadowAlpha = 0.5;
         this._shadowSoftness = 0;
         this._shadowSpread = 0;
-        // Default *on*, unlike `outlineRounded`. Rounding only bites once the
-        // shadow's edge leaves the glyph contour — which needs a spread or a
+        // Default fully *on*, unlike `outlineRounded`. Rounding only bites once
+        // the shadow's edge leaves the glyph contour — which needs a spread or a
         // softness — and where it does, a sharp dilation grows a mitre spike at
-        // every corner. So `true` reproduces the old derived behaviour exactly
-        // (soft ⇒ round) and is what a spread wants; `false` is opt-in spikes.
-        this._shadowRounded = true;
+        // every corner. So `1` reproduces the old derived behaviour exactly
+        // (soft ⇒ round) and is what a spread wants; `0` is opt-in spikes, and
+        // the range between them files the mitres down by degrees.
+        this._shadowRounded = 1;
         this._shadowInnerColor = -1;
 
         // Force the shadow pass in per-glyph modes (callback / manual) even when
@@ -1387,7 +1389,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         ss.topLeft = ss.topRight = ss.bottomLeft = ss.bottomRight = sSoft;
         const ssp = g.shadow.spread, sSpread = this.shadowSpread;
         ssp.topLeft = ssp.topRight = ssp.bottomLeft = ssp.bottomRight = sSpread;
-        const srd = g.shadow.rounded, sRound = this.shadowRounded ? 1 : 0;
+        const srd = g.shadow.rounded, sRound = this.shadowRounded;
         srd.topLeft = srd.topRight = srd.bottomLeft = srd.bottomRight = sRound;
 
         const ot = g.outline.color, oa = g.outline.alpha;
@@ -1403,8 +1405,8 @@ export const MSDFText: MSDFTextStatic = new Class({
         // the renderer needs.
         const owd = g.outline.width, oWidth = this.outlineWidth;
         owd.topLeft = owd.topRight = owd.bottomLeft = owd.bottomRight = oWidth;
-        // Rounding is continuous per corner; the object-level flag seeds its ends.
-        const ord = g.outline.rounded, oRound = this.outlineRounded ? 1 : 0;
+        // Rounding is continuous per corner; the object-level amount seeds it.
+        const ord = g.outline.rounded, oRound = this.outlineRounded;
         ord.topLeft = ord.topRight = ord.bottomLeft = ord.bottomRight = oRound;
         const osf = g.outline.softness, oSoft = this.outlineSoftness;
         osf.topLeft = osf.topRight = osf.bottomLeft = osf.bottomRight = oSoft;
@@ -1427,8 +1429,11 @@ export const MSDFText: MSDFTextStatic = new Class({
      * @param width   Outline width in distance field units.
      * @param color   Outline color (number, hex/rgb string, or {r,g,b,a?} object). Defaults to black.
      * @param alpha   Outline alpha (0-1). Defaults to 1.
-     * @param rounded Round the outer corners using the true SDF. Requires an
-     *   MTSDF atlas; ignored with a one-time warning on a plain MSDF font.
+     * @param rounded How far to round the outer corners off the true SDF: `0`
+     *   (sharp, the default) to `1` (fully rounded), or the equivalent boolean.
+     *   Intermediate values blend the two edges, so this is a continuous knob and
+     *   tweens. Requires an MTSDF atlas; ignored with a one-time warning on a
+     *   plain MSDF font.
      * @param layered Draw the outline as a separate silhouette pass under the
      *   fill so a thick outline does not overlap the neighbouring glyph. See
      *   {@link MSDFTextInstance.outlineLayered} for the cost and the
@@ -1440,14 +1445,14 @@ export const MSDFText: MSDFTextStatic = new Class({
      *   own quad with no shadow pass. Requires an MTSDF atlas; ignored with a
      *   one-time warning on a plain MSDF font.
      */
-    setOutline: function (width: number, color: ColorValue = 0x000000, alpha: number = 1, rounded: boolean = false, layered: boolean = false, softness: number = 0) {
+    setOutline: function (width: number, color: ColorValue = 0x000000, alpha: number = 1, rounded: number | boolean = 0, layered: boolean = false, softness: number = 0) {
         this.outlineWidth = width;
         this.outlineColor = toColorInt(color);
         this.outlineAlpha = alpha;
-        this.outlineRounded = !!rounded;
+        this.outlineRounded = rounded;
         this.outlineLayered = !!layered;
         this.outlineSoftness = Math.max(0, softness);
-        if (this.outlineRounded && width > 0) {
+        if (this.outlineRounded > 0 && width > 0) {
             warnNeedsMtsdf(this, 'rounded outline');
         }
         if (this.outlineSoftness > 0) {
@@ -1481,7 +1486,7 @@ export const MSDFText: MSDFTextStatic = new Class({
      */
     clearOutline: function () {
         this.outlineWidth = 0;
-        this.outlineRounded = false;
+        this.outlineRounded = 0;
         this.outlineSoftness = 0;
         return this;
     },
@@ -1520,10 +1525,13 @@ export const MSDFText: MSDFTextStatic = new Class({
             this._markAppearanceDirty();
         }
     },
+    // The setter is where a `rounded` amount is normalised, so everything
+    // downstream — seeding, the static pack path, a tween reading it back — sees
+    // a clean `0..1` and never a boolean.
     outlineRounded: {
-        get: function (this: any): boolean { return this._outlineRounded; },
-        set: function (this: any, value: boolean) {
-            this._outlineRounded = value;
+        get: function (this: any): number { return this._outlineRounded; },
+        set: function (this: any, value: number | boolean) {
+            this._outlineRounded = toRoundedAmount(value);
             this._markAppearanceDirty();
         }
     },
@@ -1666,9 +1674,9 @@ export const MSDFText: MSDFTextStatic = new Class({
         }
     },
     shadowRounded: {
-        get: function (this: any): boolean { return this._shadowRounded; },
-        set: function (this: any, value: boolean) {
-            this._shadowRounded = value;
+        get: function (this: any): number { return this._shadowRounded; },
+        set: function (this: any, value: number | boolean) {
+            this._shadowRounded = toRoundedAmount(value);
             this._markAppearanceDirty();
         }
     },

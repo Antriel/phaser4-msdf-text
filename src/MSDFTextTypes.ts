@@ -237,8 +237,13 @@ export interface StyleSpec {
         alpha?: number;
         /** Outline width in distance-field units — a scalar or a per-corner ramp. */
         width?: number | PerCorner<number>;
-        /** Round the outer corners using the true SDF (MTSDF atlas only). */
-        rounded?: boolean;
+        /**
+         * How far to round the outer corners off the true SDF (MTSDF atlas
+         * only): `0` (sharp) to `1` (round), a boolean for those two ends, or a
+         * per-corner ramp — an outline melting from sharp to round across a
+         * glyph.
+         */
+        rounded?: number | boolean | PerCorner<number>;
         /**
          * Blur the outline's outer edge, in distance-field units — a scalar or a
          * per-corner ramp (MTSDF atlas only). The blur straddles the outline
@@ -280,11 +285,13 @@ export interface StyleSpec {
          */
         spread?: number | PerCorner<number>;
         /**
-         * Round the dilated/blurred silhouette off the true SDF (MTSDF atlas
-         * only). Defaults **on** at the object level; set `false` for the mitre
-         * spikes a sharp dilation of `median(rgb)` grows at every corner.
+         * How far to round the dilated/blurred silhouette off the true SDF
+         * (MTSDF atlas only): `0` (sharp) to `1` (round), a boolean, or a
+         * per-corner ramp. Defaults **on** at the object level; drop it towards
+         * `0` for the mitre spikes a sharp dilation of `median(rgb)` grows at
+         * every corner.
          */
-        rounded?: boolean;
+        rounded?: number | boolean | PerCorner<number>;
     };
     /** Uniform glyph scale about the centre. */
     scale?: number;
@@ -576,8 +583,18 @@ export interface MSDFTextInstance extends
     outlineInnerColor: number;
     /** Outline alpha, 0-1. */
     outlineAlpha: number;
-    /** Round the outline's outer corners using the true SDF (MTSDF atlas only). */
-    outlineRounded: boolean;
+    /**
+     * How far to round the outline's outer corners off the true SDF, from `0`
+     * (sharp — the corner-preserving `median(rgb)` the fill uses, and the
+     * default) to `1` (fully rounded). MTSDF atlas only.
+     *
+     * A continuous knob, not a flag: intermediates blend the two edges, so it
+     * tweens. Assigning a boolean is accepted and lands on the same two ends.
+     * The letterform's *fill* stays sharp at every value — only the outline's
+     * own edge rounds.
+     */
+    get outlineRounded(): number;
+    set outlineRounded(value: number | boolean);
     /**
      * Blur the outline's outer edge, in distance-field units — so it scales with
      * the text, like `outlineWidth` (MTSDF atlas only). `0` (the default) is the
@@ -646,16 +663,19 @@ export interface MSDFTextInstance extends
      */
     shadowSpread: number;
     /**
-     * Round the shadow's silhouette off the true SDF (MTSDF atlas only), rather
-     * than the corner-preserving `median(rgb)` the fill uses. Defaults to `true`.
+     * How far to round the shadow's silhouette off the true SDF, from `0` (sharp
+     * — the corner-preserving `median(rgb)` the fill uses) to `1` (fully
+     * rounded). MTSDF atlas only; continuous and tweenable, like
+     * {@link outlineRounded}, and a boolean is accepted for its two ends.
      *
-     * On by default — unlike {@link outlineRounded} — because it is a **no-op
-     * until the shadow's edge leaves the glyph contour**, which needs a
+     * Defaults to `1`, fully on — unlike {@link outlineRounded} — because it is a
+     * **no-op until the shadow's edge leaves the glyph contour**, which needs a
      * {@link shadowSpread} or a {@link shadowSoftness}; and where it does bite, a
      * sharp dilation of `median(rgb)` grows a mitre spike at every corner of every
-     * letter. Set it `false` if you want those spikes.
+     * letter. Drop it towards `0` to file those spikes back in.
      */
-    shadowRounded: boolean;
+    get shadowRounded(): number;
+    set shadowRounded(value: number | boolean);
 
     /**
      * Slide every dashed rule on this text along its own length, in **dash
@@ -813,7 +833,7 @@ export interface MSDFTextInstance extends
     editGlyphs(): GlyphState[];
     /** Re-seed the manual glyph array to the text's current defaults. No-op unless in manual mode. */
     resetGlyphs(): this;
-    setOutline(width: number, color?: ColorValue, alpha?: number, rounded?: boolean, layered?: boolean, softness?: number): this;
+    setOutline(width: number, color?: ColorValue, alpha?: number, rounded?: number | boolean, layered?: boolean, softness?: number): this;
     /** Ramp the outline to a second colour at its inner edge. See {@link outlineInnerColor}. */
     setOutlineInnerColor(color: ColorValue | null): this;
     clearOutline(): this;
