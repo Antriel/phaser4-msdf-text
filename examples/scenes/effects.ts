@@ -23,12 +23,15 @@ const SCRAMBLE = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
  */
 export class EffectsScene extends ExampleScene {
   private text!: MSDFTextInstance;
+  private captionText!: MSDFTextInstance;
   private params = {
     effect: "wave",
     speed: 1.5,
     amplitude: 10,
     softness: 5,
     spread: 4,
+    cornerWeight: 3.6,
+    cornerWidth: 3.0,
     taper: 0.45,
     skew: 0.3,
     skewPivot: 0,
@@ -57,16 +60,8 @@ export class EffectsScene extends ExampleScene {
       // *after* the glyph callback, so it can read the finished glyph array.
       .setDecorationCallback(this.renderDecor);
 
-    this.caption(
-      "Each glyph is positioned, scaled and tinted independently. Corner ramp drives weight, " +
-        "outline width and rounding per corner — every params channel is continuous. Glow beat " +
-        "pulses a per-glyph shadow softness; Sticker pump pulses a per-corner shadow spread, which " +
-        "fattens the shadow's silhouette instead of blurring it. Decode swaps the letterform in " +
-        "each slot without touching the layout. Lean slides the skew pivot, while Ribbon, Keystone " +
-        "and Jelly write offsetX/offsetY, which reach shapes — trapezia, vertical shear — that no " +
-        "combination of scale, rotation and skew can produce. Typewriter and Stamp add a second " +
-        "callback for the decorations, which the glyph one cannot reach.",
-    );
+    // Retexted per mode from `activate()` — the initial mode fills it in.
+    this.captionText = this.caption("");
 
     this.commonTargets.push(this.text);
   }
@@ -80,14 +75,25 @@ export class EffectsScene extends ExampleScene {
     this.params.effect = effect;
     this.text.clearShadow();
     this.text.clearOutline();
+    // Not part of clearOutline: the inner colour has no body of its own, so a
+    // stray one only shows once another mode sets an outline — clear it here.
+    this.text.setOutlineInnerColor(null);
     this.text.perGlyphShadow = false;
     // Decorations are the decoration lane's business, but *whether there are any*
     // is still an object-level spec — the callback animates rects, it does not
     // conjure them.
-    this.text.setUnderline(effect === "typewriter" ? { thickness: 0.9, offset: 0.05 } : false);
+    this.text.setUnderline(
+      effect === "typewriter" ? { thickness: 0.9, offset: 0.05 } : false,
+    );
     this.text.setHighlight(
       effect === "stamp"
-        ? { color: 0xd6304a, radius: 0.4, borderWidth: 0.12, borderColor: 0xffd23f, padding: { x: 0.16, y: 0.06 } }
+        ? {
+            color: 0xd6304a,
+            radius: 0.4,
+            borderWidth: 0.12,
+            borderColor: 0xffd23f,
+            padding: { x: 0.16, y: 0.06 },
+          }
         : false,
     );
 
@@ -108,6 +114,17 @@ export class EffectsScene extends ExampleScene {
       // buys size only by mushing the edge.
       this.text.setShadow(0, 0, 0, 1, 0, 2);
       // this.text.setOutline(3, 0xffffff, 1, true, true);
+    } else if (effect === "orbit") {
+      // A hard shadow with some spread, so a wide band of it shows past the
+      // glyph; the callback aims the offset and ramps the per-corner softness
+      // so only the far side of the throw blurs.
+      this.text.setShadow(0, 0, 0x100c1c, 0.8, 0, 2);
+    } else if (effect === "aurora") {
+      // A zero-width layered outline with softness is a glow silhouette pass
+      // under the fill; the inner colour makes it two-tone. The callback then
+      // re-writes all of its per-corner channels every frame.
+      this.text.setOutline(0, 0xffffff, 1, 1, true, 6);
+      this.text.setOutlineInnerColor(0xffffff);
     }
   }
 
@@ -209,7 +226,8 @@ export class EffectsScene extends ExampleScene {
           // Different colour per corner; alpha untouched. Both pickers are read
           // live, every frame.
           g.fill.color.topLeft = g.fill.color.topRight = this.params.topColor;
-          g.fill.color.bottomLeft = g.fill.color.bottomRight = this.params.bottomColor;
+          g.fill.color.bottomLeft = g.fill.color.bottomRight =
+            this.params.bottomColor;
           break;
         }
 
@@ -253,11 +271,11 @@ export class EffectsScene extends ExampleScene {
           // right as the width grows.
           const phase = Math.sin(now * 1.5 * speed + i * 0.25) * 0.5 + 0.5;
           const w = g.weight;
-          w.topLeft = w.topRight = 3.6 * phase;
+          w.topLeft = w.topRight = this.params.cornerWeight * phase;
           w.bottomLeft = w.bottomRight = 0;
           const o = g.outline.width;
           o.topLeft = o.bottomLeft = 0.2;
-          o.topRight = o.bottomRight = 3.0;
+          o.topRight = o.bottomRight = this.params.cornerWidth;
           const r = g.outline.rounded;
           r.topLeft = r.bottomLeft = 0;
           r.topRight = r.bottomRight = 1;
@@ -285,6 +303,71 @@ export class EffectsScene extends ExampleScene {
           s.topLeft = 1;
           s.topRight = s.bottomLeft = 1 + grow * 0.5;
           s.bottomRight = 1 + grow;
+          break;
+        }
+
+        case "orbit": {
+          // A light orbiting the word. The shadow is thrown opposite it, and
+          // the per-corner softness ramps across the quad so the penumbra
+          // widens toward the throw's far side while the near edge stays hard
+          // against the glyph — the soft-on-one-side shadow one softness value
+          // cannot express. The ramp sweeps through every diagonal as the
+          // light passes the corners.
+          const ang = now * 1.1 * speed;
+          const dx = Math.cos(ang),
+            dy = Math.sin(ang);
+          g.shadow.x = -dx * 12;
+          g.shadow.y = -dy * 12;
+          const soft = this.params.softness;
+          // Each corner follows the throw angle directly, then shaped with a dead zone so
+          // the near side still reaches a visibly hard 0-softness edge.
+          const HARD = 0.12;
+          const FULL = Math.SQRT1_2;
+          const throwAng = ang + Math.PI;
+          const c = (cornerAng: number) => {
+            const facing = Math.cos(throwAng - cornerAng);
+            const t = Phaser.Math.Clamp((facing - HARD) / (FULL - HARD), 0, 1);
+            return soft * t * t * (3 - 2 * t);
+          };
+          const s = g.shadow.softness;
+          s.topLeft = c((-3 * Math.PI) / 4);
+          s.topRight = c(-Math.PI / 4);
+          s.bottomLeft = c((3 * Math.PI) / 4);
+          s.bottomRight = c(Math.PI / 4);
+          break;
+        }
+
+        case "aurora": {
+          // Every per-corner channel of the outline layer at once, on the
+          // zero-width layered glow set up in applyEffectSetup: the outer
+          // colour, the two-tone ramp's *inner* colour (per-corner as well —
+          // four ramps meeting mid-glyph), and the softness, which swings the
+          // glow from one side of each letter to the other. The fill's
+          // per-corner alpha dips on the glowing side, so the glow bleeds
+          // through the letterform — the layered-outline translucency
+          // tradeoff, spent on purpose.
+          const o = g.outline;
+          const drift = now * 0.1 * speed + i * 0.04;
+          const outer = o.color,
+            inner = o.innerColor;
+          outer.topLeft = this.hue(drift);
+          outer.topRight = this.hue(drift + 0.12);
+          outer.bottomRight = this.hue(drift + 0.24);
+          outer.bottomLeft = this.hue(drift + 0.36);
+          // Opposite hues, desaturated toward white — a pale core distinct
+          // from its own corner's halo.
+          inner.topLeft = this.hue(drift + 0.5, 0.35);
+          inner.topRight = this.hue(drift + 0.62, 0.35);
+          inner.bottomRight = this.hue(drift + 0.74, 0.35);
+          inner.bottomLeft = this.hue(drift + 0.86, 0.35);
+          const swing = 0.5 + 0.5 * Math.sin(now * 1.4 * speed + i * 0.35);
+          const soft = this.params.softness;
+          const s = o.softness;
+          s.topLeft = s.bottomLeft = soft * (1 - swing);
+          s.topRight = s.bottomRight = soft * swing;
+          const a = g.fill.alpha;
+          a.topLeft = a.bottomLeft = 1 - 0.35 * (1 - swing);
+          a.topRight = a.bottomRight = 1 - 0.35 * swing;
           break;
         }
 
@@ -327,12 +410,15 @@ export class EffectsScene extends ExampleScene {
           // along the quad diagonal. There is no per-vertex perspective divide here.
           const cx = this.text.width / 2;
           const h = this.text.height || 1;
-          const taper = this.params.taper * (0.5 + 0.5 * Math.sin(now * 1.2 * speed));
+          const taper =
+            this.params.taper * (0.5 + 0.5 * Math.sin(now * 1.2 * speed));
           // Shrink toward `cx` by `taper` at the top, not at all at the bottom.
           const dx = (x: number, y: number) => (cx - x) * taper * (1 - y / h);
           const ox = g.offsetX;
-          const xl = g.x, xr = g.x + g.width;
-          const yt = g.y, yb = g.y + g.height;
+          const xl = g.x,
+            xr = g.x + g.width;
+          const yt = g.y,
+            yb = g.y + g.height;
           ox.topLeft = dx(xl, yt) / g.em;
           ox.topRight = dx(xr, yt) / g.em;
           ox.bottomLeft = dx(xl, yb) / g.em;
@@ -346,17 +432,32 @@ export class EffectsScene extends ExampleScene {
           // most frames. The deform is em-relative, so it reads identically on a
           // narrow `I` and a wide `W`, and it survives a font-size change.
           const amp = (amplitude / 130) * 1.4;
-          const ox = g.offsetX, oy = g.offsetY;
+          const ox = g.offsetX,
+            oy = g.offsetY;
           const p = (k: number) => Math.sin(now * 4 * speed - i * 0.5 + k);
-          ox.topLeft = amp * p(0);       oy.topLeft = amp * p(1.7);
-          ox.topRight = amp * p(2.1);    oy.topRight = amp * p(3.9);
-          ox.bottomLeft = amp * p(4.2);  oy.bottomLeft = amp * p(0.8);
-          ox.bottomRight = amp * p(5.5); oy.bottomRight = amp * p(2.8);
+          ox.topLeft = amp * p(0);
+          oy.topLeft = amp * p(1.7);
+          ox.topRight = amp * p(2.1);
+          oy.topRight = amp * p(3.9);
+          ox.bottomLeft = amp * p(4.2);
+          oy.bottomLeft = amp * p(0.8);
+          ox.bottomRight = amp * p(5.5);
+          oy.bottomRight = amp * p(2.8);
           break;
         }
       }
     }
   };
+
+  /** `0..1` hue (+ optional saturation) to `0xRRGGBB`, for per-corner colour ramps. */
+  private hue(h: number, s = 1): number {
+    const c = Phaser.Display.Color.HSVToRGB(
+      ((h % 1) + 1) % 1,
+      s,
+      1,
+    ) as Phaser.Types.Display.ColorObject;
+    return Phaser.Display.Color.GetColor(c.r, c.g, c.b);
+  }
 
   /** How many glyphs the typewriter has typed by now. Shared by both callbacks. */
   private typedCount(now: number): number {
@@ -379,7 +480,10 @@ export class EffectsScene extends ExampleScene {
    * manual mode to take instead — a rect is a *merge* of adjacent characters, so
    * it has no identity that would survive a re-wrap for edits to be re-applied to.
    */
-  private renderDecor = (rects: DecorationState[], text: MSDFTextInstance): void => {
+  private renderDecor = (
+    rects: DecorationState[],
+    text: MSDFTextInstance,
+  ): void => {
     const now = this.time.now / 1000;
 
     if (this.params.effect === "typewriter") {
@@ -422,66 +526,214 @@ export class EffectsScene extends ExampleScene {
   protected addControls(pane: Pane): void {
     // Knobs are read live by the callback each frame, so bindings need no
     // change handlers — existing at all is what wires them.
-    const speed = (f: FolderApi) => f.addBinding(this.params, "speed", { min: 0.1, max: 3, step: 0.1 });
-    const amplitude = (f: FolderApi) => f.addBinding(this.params, "amplitude", { min: 0, max: 40, step: 1 });
+    const speed = (f: FolderApi) =>
+      f.addBinding(this.params, "speed", { min: 0.1, max: 3, step: 0.1 });
+    const amplitude = (f: FolderApi) =>
+      f.addBinding(this.params, "amplitude", { min: 0, max: 40, step: 1 });
+    const softness = (f: FolderApi) =>
+      f.addBinding(this.params, "softness", { min: 0, max: 16, step: 0.5 });
 
-    const mode = (key: string, label: string, controls?: (f: FolderApi) => void): Mode => ({
+    const mode = (
+      key: string,
+      label: string,
+      caption: string,
+      controls?: (f: FolderApi) => void,
+    ): Mode => ({
       key,
       label,
-      activate: () => this.applyEffectSetup(key),
+      activate: () => {
+        this.applyEffectSetup(key);
+        this.captionText.setText(caption);
+      },
       controls,
     });
 
     addModeControls(
       pane,
       [
-        mode("wave", "Wave", (f) => {
-          speed(f);
-          amplitude(f);
-        }),
-        mode("gradient", "Gradient", (f) => {
-          f.addBinding(this.params, "topColor", { label: "top color", view: "color" });
-          f.addBinding(this.params, "bottomColor", { label: "bottom color", view: "color" });
-        }),
-        mode("rainbow", "Rainbow", speed),
-        mode("typewriter", "Typewriter + rule", speed),
-        mode("decode", "Decode (glyph swap)", speed),
-        mode("stamp", "Stamp (pill pop-in)", speed),
-        mode("jitter", "Jitter", amplitude),
-        mode("popin", "Pop-in", speed),
-        mode("fade", "Fade", speed),
-        mode("jump", "Jump", speed),
-        mode("outline", "Outline", speed),
-        mode("cornerramp", "Corner ramp", speed),
-        mode("glowbeat", "Glow beat", (f) => {
-          speed(f);
-          f.addBinding(this.params, "softness", { min: 0, max: 16, step: 0.5 });
-        }),
-        mode("sticker", "Sticker pump", (f) => {
-          speed(f);
-          f.addBinding(this.params, "spread", { min: 0, max: 6, step: 0.1 });
-        }),
-        mode("lean", "Lean (skew pivot)", (f) => {
-          f.addBinding(this.params, "skew", { min: -0.6, max: 0.6, step: 0.01 });
-          f.addBinding(this.params, "skewPivot", {
-            label: "pivot (em)",
-            min: -1,
-            max: 1,
-            step: 0.01,
-          });
-        }),
-        mode("ribbon", "Ribbon wave", (f) => {
-          speed(f);
-          amplitude(f);
-        }),
-        mode("keystone", "Keystone", (f) => {
-          speed(f);
-          f.addBinding(this.params, "taper", { min: 0, max: 0.9, step: 0.01 });
-        }),
-        mode("jelly", "Jelly", (f) => {
-          speed(f);
-          amplitude(f);
-        }),
+        mode(
+          "wave",
+          "Wave",
+          "Per-glyph position: the callback runs once per frame with the whole glyph array, and moving a glyph never touches the layout.",
+          (f) => {
+            speed(f);
+            amplitude(f);
+          },
+        ),
+        mode(
+          "gradient",
+          "Gradient",
+          "A different colour per corner of every quad — plain tinting cannot do that. Both pickers are read live each frame.",
+          (f) => {
+            f.addBinding(this.params, "topColor", {
+              label: "top color",
+              view: "color",
+            });
+            f.addBinding(this.params, "bottomColor", {
+              label: "bottom color",
+              view: "color",
+            });
+          },
+        ),
+        mode(
+          "rainbow",
+          "Rainbow",
+          "Per-glyph fill colour, two hues per quad, drifting along the word.",
+          speed,
+        ),
+        mode(
+          "typewriter",
+          "Typewriter + rule",
+          "glyph.visible skips the quad entirely — no zero-alpha submissions. A second, decoration callback trims the underline to the typed glyphs, which the glyph callback cannot reach.",
+          speed,
+        ),
+        mode(
+          "decode",
+          "Decode (glyph swap)",
+          "setGlyph draws a different letterform in a fixed slot: the layout keeps the original pen position and advance, so the word churns in place instead of breathing.",
+          speed,
+        ),
+        mode(
+          "stamp",
+          "Stamp (pill pop-in)",
+          "The decoration callback scales and rotates the highlight pill about its own centre; glyphs and pill land on the same clock, in separate lanes.",
+          speed,
+        ),
+        mode(
+          "jitter",
+          "Jitter",
+          "Per-glyph position, re-randomized every frame — the glyph array is re-seeded from the object before each callback, so nothing accumulates.",
+          amplitude,
+        ),
+        mode(
+          "popin",
+          "Pop-in",
+          "Per-glyph scale with a stagger. A glyph at scale 0 keeps its slot — the layout never reflows.",
+          speed,
+        ),
+        mode(
+          "fade",
+          "Fade",
+          "Per-glyph fill alpha, separate from colour — one call, no bit-packing.",
+          speed,
+        ),
+        mode(
+          "jump",
+          "Jump",
+          "Independent scaleX/scaleY squash-and-stretch, plus a per-glyph shadow: its offset and alpha track each glyph's own hop, independent of the fill.",
+          speed,
+        ),
+        mode(
+          "outline",
+          "Outline",
+          "Outline colour and alpha are per-glyph vertex data, so every glyph cycles its own hue — and it all stays one draw call.",
+          speed,
+        ),
+        mode(
+          "cornerramp",
+          "Corner ramp",
+          "Every params channel is continuous, so all are per-corner: bold fades in at the top, the outline thickens toward the right and melts from sharp to rounded as it grows.",
+          (f) => {
+            speed(f);
+            f.addBinding(this.params, "cornerWeight", {
+              label: "weight (top)",
+              min: 0,
+              max: 4,
+              step: 0.1,
+            });
+            f.addBinding(this.params, "cornerWidth", {
+              label: "outline (right)",
+              min: 0,
+              max: 4,
+              step: 0.1,
+            });
+          },
+        ),
+        mode(
+          "glowbeat",
+          "Glow beat",
+          "Per-glyph shadow softness with a zero offset reads as a glow — each glyph pulses on its own beat, in the same draw call.",
+          (f) => {
+            speed(f);
+            softness(f);
+          },
+        ),
+        mode(
+          "sticker",
+          "Sticker pump",
+          "Shadow spread dilates the silhouette without blurring it — softness cannot do that. It is per-corner, so the slab swells toward the bottom-right and stays crisp.",
+          (f) => {
+            speed(f);
+            f.addBinding(this.params, "spread", { min: 0, max: 6, step: 0.1 });
+          },
+        ),
+        mode(
+          "orbit",
+          "Orbit light (soft-side shadow)",
+          "Shadow softness is per-corner: the penumbra widens only on the side away from the light and stays hard against the glyph — a soft-on-one-side shadow no single value can express.",
+          (f) => {
+            speed(f);
+            softness(f);
+          },
+        ),
+        mode(
+          "aurora",
+          "Aurora (two-tone corners)",
+          "A zero-width layered glow with every per-corner channel live: outer colour, two-tone inner colour and softness, which swings the glow from side to side. The fill's per-corner alpha dips so the glow bleeds through the letterform.",
+          (f) => {
+            speed(f);
+            softness(f);
+          },
+        ),
+        mode(
+          "lean",
+          "Lean (skew pivot)",
+          "skew shears about the layout baseline; skewPivot slides that pivot down in em. The baseline is the one line a whole line shares, so any pivot keeps the text slanting as one.",
+          (f) => {
+            f.addBinding(this.params, "skew", {
+              min: -0.6,
+              max: 0.6,
+              step: 0.01,
+            });
+            f.addBinding(this.params, "skewPivot", {
+              label: "pivot (em)",
+              min: -1,
+              max: 1,
+              step: 0.01,
+            });
+          },
+        ),
+        mode(
+          "ribbon",
+          "Ribbon wave",
+          "offsetY written as a field over text space: neighbouring corners sample the same wave, so the word bends as one continuous ribbon — a vertical shear scale/rotation/skew cannot produce.",
+          (f) => {
+            speed(f);
+            amplitude(f);
+          },
+        ),
+        mode(
+          "keystone",
+          "Keystone",
+          "offsetX makes a trapezium — impossible for any affine transform, which only ever maps a rectangle to a parallelogram. The honest cost: letterforms crease along the quad diagonal at a hard taper.",
+          (f) => {
+            speed(f);
+            f.addBinding(this.params, "taper", {
+              min: 0,
+              max: 0.9,
+              step: 0.01,
+            });
+          },
+        ),
+        mode(
+          "jelly",
+          "Jelly",
+          "Four corners, four phases — a non-parallelogram wobble beyond the transform lane. Em-relative, so a narrow I and a wide W wobble alike.",
+          (f) => {
+            speed(f);
+            amplitude(f);
+          },
+        ),
       ],
       "wave",
     );

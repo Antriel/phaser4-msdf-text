@@ -23,11 +23,30 @@ export interface Mode {
 export function addModeControls(pane: Pane, modes: Mode[], initial: string): void {
   const options = Object.fromEntries(modes.map((m) => [m.label, m.key]));
   const params = { mode: initial };
+  let current: string | undefined;
+
+  // The selector block goes in *before* the per-mode folder, so the dropdown
+  // and the prev/next buttons keep their place at the top of the pane no
+  // matter how many knobs the selected mode adds below them.
+  const binding = pane.addBinding(params, "mode", { options });
+
+  const step = (dir: number): void => {
+    const i = modes.findIndex((m) => m.key === params.mode);
+    params.mode = modes[(i + dir + modes.length) % modes.length].key;
+    binding.refresh();
+    select(params.mode);
+  };
+  pane.addButton({ title: "◀ prev" }).on("click", () => step(-1));
+  pane.addButton({ title: "next ▶" }).on("click", () => step(1));
 
   const first = modes.find((m) => m.key === initial) ?? modes[0];
   const folder = pane.addFolder({ title: first.label });
 
   const select = (key: string): void => {
+    // `step()` refreshes the binding, which may itself fire the change handler
+    // — the guard makes the explicit follow-up call a no-op either way.
+    if (key === current) return;
+    current = key;
     const mode = modes.find((m) => m.key === key) ?? modes[0];
     mode.activate();
     folder.title = mode.label;
@@ -40,7 +59,7 @@ export function addModeControls(pane: Pane, modes: Mode[], initial: string): voi
     mode.controls?.(folder);
   };
 
-  pane.addBinding(params, "mode", { options }).on("change", (e) => select(e.value as string));
+  binding.on("change", (e) => select(e.value as string));
   select(initial);
 }
 

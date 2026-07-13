@@ -46,10 +46,11 @@ export abstract class ExampleScene extends Phaser.Scene {
 
   /**
    * Add a centred caption near the bottom of the design area — one short
-   * explanatory line. Drawn behind the scene content (`depth -1`).
+   * explanatory line. Drawn behind the scene content (`depth -1`). Returned so
+   * a scene can retext it (e.g. per mode); most callers ignore it.
    */
-  protected caption(text: string): void {
-    this.add
+  protected caption(text: string): MSDFTextInstance {
+    return this.add
       .msdfText(this.designWidth / 2, this.designHeight - 38, "Inter", text, 15)
       .setColor("#828893")
       .setOrigin(0.5)
