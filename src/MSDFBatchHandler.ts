@@ -68,13 +68,13 @@ const SimpleFragmentShader = [
     '    return max(min(r, g), min(max(r, g), b));',
     '}',
     '',
-    '// The exact signed distance to a rounded box centred on the origin, negative',
-    '// inside. `extent` is the box half-extent and `r` the corner radius, both in the',
-    '// same units as `p`. (`half` would read better and is a reserved word in GLSL',
-    '// ES 1.00.) An interpolated, per-corner `r` is legitimate here: it is a',
-    '// continuous geometric parameter, not a selector, and near any one corner the',
-    '// interpolant is dominated by that corner\'s value. Mid-edge, where interpolation',
-    '// is least faithful, the fragment is already deep inside and coverage saturates.',
+    //  The exact signed distance to a rounded box centred on the origin, negative
+    //  inside. `extent` is the box half-extent and `r` the corner radius, both in the
+    //  same units as `p`. (`half` would read better and is a reserved word in GLSL
+    //  ES 1.00.) An interpolated, per-corner `r` is legitimate here: it is a
+    //  continuous geometric parameter, not a selector, and near any one corner the
+    //  interpolant is dominated by that corner\'s value. Mid-edge, where interpolation
+    //  is least faithful, the fragment is already deep inside and coverage saturates.
     'float roundedBox(vec2 p, vec2 extent, float r)',
     '{',
     '    vec2 q = abs(p) - (extent - r);',
@@ -87,78 +87,78 @@ const SimpleFragmentShader = [
     '    float msdf = median(texel.r, texel.g, texel.b);',
     '    float tsdf = texel.a;',  // True SDF — meaningful only on MTSDF atlases.
     '',
-    '    // The screen size, in pixels, of this quad\'s UV box. Serves both lanes:',
-    '    //   glyph — the canonical msdfgen AA width is the distance range expressed',
-    '    //     in screen pixels, derived from the derivative of the *texture*',
-    '    //     coordinates, which interpolate linearly across the quad, so the width',
-    '    //     stays uniform instead of wobbling with the sampled field.',
-    '    //   solid — a rect\'s UVs span its own 0..1 box, so this *is* the rect\'s',
-    '    //     width and height in pixels, which is all a box SDF needs. No extra',
-    '    //     attribute, no uniform.',
-    '    //',
-    '    // The true screen-space gradient magnitude of each coordinate, not fwidth\'s',
-    '    // |dFdx| + |dFdy|. That sum overestimates by |cos| + |sin| of the rotation —',
-    '    // up to sqrt(2) at 45 degrees — which scales this whole space down uniformly.',
-    '    // The *shape* survives (both axes take the same factor) but the antialiasing',
-    '    // width, a constant 1.0 in that space, does not: a rotated edge softens to',
-    '    // 1.41px. The derivative fetches are paid either way; this costs two sqrt',
-    '    // over fwidth, and buys an exact 1px edge on glyphs and pills alike.',
+    //      The screen size, in pixels, of this quad\'s UV box. Serves both lanes:
+    //        glyph — the canonical msdfgen AA width is the distance range expressed
+    //          in screen pixels, derived from the derivative of the *texture*
+    //          coordinates, which interpolate linearly across the quad, so the width
+    //          stays uniform instead of wobbling with the sampled field.
+    //        solid — a rect\'s UVs span its own 0..1 box, so this *is* the rect\'s
+    //          width and height in pixels, which is all a box SDF needs. No extra
+    //          attribute, no uniform.
+    //     
+    //      The true screen-space gradient magnitude of each coordinate, not fwidth\'s
+    //      |dFdx| + |dFdy|. That sum overestimates by |cos| + |sin| of the rotation —
+    //      up to sqrt(2) at 45 degrees — which scales this whole space down uniformly.
+    //      The *shape* survives (both axes take the same factor) but the antialiasing
+    //      width, a constant 1.0 in that space, does not: a rotated edge softens to
+    //      1.41px. The derivative fetches are paid either way; this costs two sqrt
+    //      over fwidth, and buys an exact 1px edge on glyphs and pills alike.
     '    vec2 duvdx = dFdx(outTexCoord);',
     '    vec2 duvdy = dFdy(outTexCoord);',
     '    vec2 texGrad = vec2(length(vec2(duvdx.x, duvdy.x)), length(vec2(duvdx.y, duvdy.y)));',
     '    vec2 screenTexSize = vec2(1.0) / texGrad;',
     '',
-    '    // "This quad is soft." Per-corner and interpolated, like every other',
-    '    // channel, so it may only ever weight a blend between two behaviours that',
-    '    // agree at its ends — never select how another channel is decoded. (The',
-    '    // `solid` sentinel below may, because it is uniform across its quad by',
-    '    // construction.)',
+    //      "This quad is soft." Per-corner and interpolated, like every other
+    //      channel, so it may only ever weight a blend between two behaviours that
+    //      agree at its ends — never select how another channel is decoded. (The
+    //      `solid` sentinel below may, because it is uniform across its quad by
+    //      construction.)
     '    float softNorm = outParams.a;',
     '    float softStep = step(0.5 / 255.0, softNorm);',
     '',
-    '    // Both lanes produce this triple, and the composite below consumes it.',
+    //      Both lanes produce this triple, and the composite below consumes it.
     '    float fillCoverage;',
     '    float outlineCoverage;',
     '    float tone;',
     '    float fade;',
     '',
-    '    // A weight byte of 254 or 255 is the "this quad is a rect" sentinel, which a',
-    '    // real glyph cannot reach: packParams clips it to 252, a full byte below this',
-    '    // threshold, so a mediump varying cannot interpolate a bold glyph across it —',
-    '    // and a rect writes the same sentinel to all four corners anyway.',
-    '    //',
-    '    // So this branch is *dynamically uniform per primitive*: every fragment of a',
-    '    // quad takes the same side, no triangle diverges, and it stays one program in',
-    '    // one batch. A glyph therefore never evaluates the box SDF (which would also',
-    '    // square atlas-scaled coordinates, overflowing a mediump fragment at deep',
-    '    // zoom), and a rect never touches the distance field. The texture fetch and',
-    '    // every derivative stay above it, where control flow is unconditionally',
-    '    // uniform, as implicit-LOD sampling and dFdx require.',
+    //      A weight byte of 254 or 255 is the "this quad is a rect" sentinel, which a
+    //      real glyph cannot reach: packParams clips it to 252, a full byte below this
+    //      threshold, so a mediump varying cannot interpolate a bold glyph across it —
+    //      and a rect writes the same sentinel to all four corners anyway.
+    //     
+    //      So this branch is *dynamically uniform per primitive*: every fragment of a
+    //      quad takes the same side, no triangle diverges, and it stays one program in
+    //      one batch. A glyph therefore never evaluates the box SDF (which would also
+    //      square atlas-scaled coordinates, overflowing a mediump fragment at deep
+    //      zoom), and a rect never touches the distance field. The texture fetch and
+    //      every derivative stay above it, where control flow is unconditionally
+    //      uniform, as implicit-LOD sampling and dFdx require.
     '    if (outParams.r >= 253.0 / 255.0)',
     '    {',
-    '        // ── Solid lane: rounded box ────────────────────────────────────────',
-    '        // The same three shapes, read off the rect\'s own UV box instead of the',
-    '        // atlas. Each channel is a fraction of the half-thickness, the one length',
-    '        // a quad knows about itself, so a radius of 1 is a stadium at any size.',
+    //          ── Solid lane: rounded box ────────────────────────────────────────
+    //          The same three shapes, read off the rect\'s own UV box instead of the
+    //          atlas. Each channel is a fraction of the half-thickness, the one length
+    //          a quad knows about itself, so a radius of 1 is a stadium at any size.
     '        vec2 halfSize = 0.5 * screenTexSize;',
     '        vec2 boxCoord = (outTexCoord - 0.5) * screenTexSize;',
     '        float borderNorm = outParams.b;',
     '',
-    '        // Sentinel 254: a *dashed* rect. Its U spans one unit per dash rather than',
-    '        // 0..1, so screenTexSize.x — the same derivative the pill reads as its',
-    '        // width — is already one dash period in pixels, and folding U into a single',
-    '        // cell turns the box below into one dash, repeated. The count and the',
-    '        // marching-ants phase therefore ride the UVs at float precision and cost no',
-    '        // byte, which is what frees .b to be a duty cycle here instead of a border.',
-    '        //',
-    '        // The fold is seamless: roundedBox is even in x about the cell centre, so',
-    '        // fract 0 and fract 1 give the same distance and a dash may be cut by the',
-    '        // rect\'s own edge without a sliver where U wraps.',
-    '        //',
-    '        // Nested, but uniform per quad for the same reason as the outer branch — a',
-    '        // rect is one sentinel or the other, never a blend. Zeroing the border is',
-    '        // not cosmetic: .b is a duty cycle here, and left alone it would inset the',
-    '        // dash\'s face by a phantom ring.',
+    //          Sentinel 254: a *dashed* rect. Its U spans one unit per dash rather than
+    //          0..1, so screenTexSize.x — the same derivative the pill reads as its
+    //          width — is already one dash period in pixels, and folding U into a single
+    //          cell turns the box below into one dash, repeated. The count and the
+    //          marching-ants phase therefore ride the UVs at float precision and cost no
+    //          byte, which is what frees .b to be a duty cycle here instead of a border.
+    //         
+    //          The fold is seamless: roundedBox is even in x about the cell centre, so
+    //          fract 0 and fract 1 give the same distance and a dash may be cut by the
+    //          rect\'s own edge without a sliver where U wraps.
+    //         
+    //          Nested, but uniform per quad for the same reason as the outer branch — a
+    //          rect is one sentinel or the other, never a blend. Zeroing the border is
+    //          not cosmetic: .b is a duty cycle here, and left alone it would inset the
+    //          dash\'s face by a phantom ring.
     '        if (outParams.r < 254.5 / 255.0)',
     '        {',
     '            boxCoord.x = (fract(outTexCoord.x) - 0.5) * screenTexSize.x;',
@@ -171,116 +171,116 @@ const SimpleFragmentShader = [
     '        float borderPx = borderNorm * unit;',
     '        float softPx = outParams.a * unit;',
     '',
-    '        // Depth into the pill, positive inside it — the analogue of the glyph',
-    '        // lane\'s gDepth, which is why the expressions below mirror it, with the',
-    '        // 1-pixel AA floor in place of gAA.',
-    '        //',
-    '        // Unlike a glyph\'s shadow, the blur is *not* centred on the edge: it',
-    '        // fades inward, over [0, softPx]. A rect has no bleed room — its quad ends',
-    '        // exactly at the box — so a centred blur would lose its outer half to a',
-    '        // hard clip, taking the outer end of the two-tone ramp with it. Shifting',
-    '        // the ramp in by half its width makes the pill\'s box the outer bound of',
-    '        // everything it draws. Callers give a glow its room with `padding`, which',
-    '        // is theirs to spend.',
+    //          Depth into the pill, positive inside it — the analogue of the glyph
+    //          lane\'s gDepth, which is why the expressions below mirror it, with the
+    //          1-pixel AA floor in place of gAA.
+    //         
+    //          Unlike a glyph\'s shadow, the blur is *not* centred on the edge: it
+    //          fades inward, over [0, softPx]. A rect has no bleed room — its quad ends
+    //          exactly at the box — so a centred blur would lose its outer half to a
+    //          hard clip, taking the outer end of the two-tone ramp with it. Shifting
+    //          the ramp in by half its width makes the pill\'s box the outer bound of
+    //          everything it draws. Callers give a glow its room with `padding`, which
+    //          is theirs to spend.
     '        float sDepth = -boxDist;',
     '        float sHalfSoft = 0.5 * softPx;',
     '        float sSoft = max(softPx, 1.0);',
     '        fillCoverage = clamp((sDepth - borderPx - sHalfSoft) / sSoft + 0.5, 0.0, 1.0);',
     '        outlineCoverage = clamp((sDepth - sHalfSoft) / sSoft + 0.5, 0.0, 1.0);',
     '',
-    '        // The ring\'s visible body runs from the box edge inward, so the ramp',
-    '        // spans the deeper of the ring and the blur — no half, and no offset.',
+    //          The ring\'s visible body runs from the box edge inward, so the ramp
+    //          spans the deeper of the ring and the blur — no half, and no offset.
     '        tone = clamp(sDepth / max(max(borderPx, softPx), 1.0), 0.0, 1.0);',
     '',
-    '        // A solid quad samples no field, so the fade guard below has nothing to',
-    '        // read: its `outlineDist` would be a stray atlas texel. Force it open.',
+    //          A solid quad samples no field, so the fade guard below has nothing to
+    //          read: its `outlineDist` would be a stray atlas texel. Force it open.
     '        fade = 1.0;',
     '    }',
     '    else',
     '    {',
-    '        // ── Glyph lane: distance field ─────────────────────────────────────',
+    //          ── Glyph lane: distance field ─────────────────────────────────────
     '        float px = max(0.5 * dot(uUnitRange, screenTexSize), 1.0);',
     '        float weight = outParams.r - (128.0 / 255.0);',  // Signed fraction of the range; 128 is neutral.
     '        float rounded = outParams.g;',                   // Byte spans the full [0, 1]; per-corner.
     '        float widthNorm = outParams.b * 0.5;',           // Byte spans the useful [0, 0.5].
     '        float halfSoft = 0.5 * softNorm;',
     '',
-    '        // `widthNorm` has one meaning across this whole lane: how far outside the',
-    '        // fill edge the outline / shadow layer\'s edge sits. On an outline quad the',
-    '        // caller reads that as a width; on a shadow quad, whose fill is off and',
-    '        // whose blur is centred on that edge, the same number is a *spread* — a',
-    '        // dilation of the silhouette. Same decode, no selector, so a soft-on-one-',
-    '        // side shadow cannot straddle a threshold. Likewise `softNorm` blurs the',
-    '        // layer whichever quad it is on: set it with a width and the outline itself',
-    '        // glows, in the fill quad, with no shadow pass at all.',
+    //          `widthNorm` has one meaning across this whole lane: how far outside the
+    //          fill edge the outline / shadow layer\'s edge sits. On an outline quad the
+    //          caller reads that as a width; on a shadow quad, whose fill is off and
+    //          whose blur is centred on that edge, the same number is a *spread* — a
+    //          dilation of the silhouette. Same decode, no selector, so a soft-on-one-
+    //          side shadow cannot straddle a threshold. Likewise `softNorm` blurs the
+    //          layer whichever quad it is on: set it with a width and the outline itself
+    //          glows, in the fill quad, with no shadow pass at all.
     '',
-    '        // The fill keeps median(rgb) so corners stay sharp; only the outline /',
-    '        // shadow layer may round itself off the true SDF. Faux bold moves both',
-    '        // edges together, so an outline tracks the weight it surrounds.',
+    //          The fill keeps median(rgb) so corners stay sharp; only the outline /
+    //          shadow layer may round itself off the true SDF. Faux bold moves both
+    //          edges together, so an outline tracks the weight it surrounds.
     '        float fillEdge = 0.5 - weight;',
     '        float outlineEdge = fillEdge - widthNorm;',
     '        float outlineDist = mix(msdf, tsdf, rounded);',
     '',
-    '        // Depth into the outline / shadow layer, positive inside it.',
+    //          Depth into the outline / shadow layer, positive inside it.
     '        float gDepth = outlineDist - outlineEdge;',
     '        float gAA = 1.0 / px;',
     '',
-    '        // One coverage expression serves fill, outline and shadow: softNorm = 0',
-    '        // reproduces the plain 1-screen-pixel AA ramp exactly.',
+    //          One coverage expression serves fill, outline and shadow: softNorm = 0
+    //          reproduces the plain 1-screen-pixel AA ramp exactly.
     '        fillCoverage = clamp((msdf - fillEdge) * px + 0.5, 0.0, 1.0);',
     '        outlineCoverage = clamp(gDepth / max(softNorm, gAA) + 0.5, 0.0, 1.0);',
     '        tone = clamp((gDepth + halfSoft) / max(widthNorm + halfSoft, gAA), 0.0, 1.0);',
     '',
-    '        // Guard against haze in the deep background at extreme minification. A',
-    '        // soft glow has real alpha down in that region, so any nonzero softness',
-    '        // byte suppresses the fade; hard edges keep it.',
+    //          Guard against haze in the deep background at extreme minification. A
+    //          soft glow has real alpha down in that region, so any nonzero softness
+    //          byte suppresses the fade; hard edges keep it.
     '        fade = max(smoothstep(0.0, 0.2, outlineDist), softStep);',
     '    }',
     '',
-    '    // ── One composite ──────────────────────────────────────────────────────',
-    '    // Whichever lane ran, the rest is shared: a glyph\'s outline layer is a',
-    '    // pill\'s border ring, and a glyph\'s fill is the pill\'s face, inset by that',
-    '    // ring. A rect with all three bytes zero is a hard-edged box with an',
-    '    // antialiased boundary — an underline.',
+    //      ── One composite ──────────────────────────────────────────────────────
+    //      Whichever lane ran, the rest is shared: a glyph\'s outline layer is a
+    //      pill\'s border ring, and a glyph\'s fill is the pill\'s face, inset by that
+    //      ring. A rect with all three bytes zero is a hard-edged box with an
+    //      antialiased boundary — an underline.
     '',
-    '    // Two-tone. A quad whose fill layer is switched off — alpha byte exactly',
-    '    // zero, which is every shadow quad, every layered outline silhouette, and a',
-    '    // pill whose face is transparent — has no use for inColor, so it carries a',
-    '    // second colour there instead. The outline / shadow / border layer then ramps',
-    '    // from outOutline.rgb at its outer edge to that inner colour where it meets',
-    '    // the glyph: a white-hot glow core inside a coloured halo, a neon-tube',
-    '    // outline. A live fill owns inColor, so the gate switches the ramp off and',
-    '    // the composite below is unchanged.',
-    '    //',
-    '    // `tone` is depth into the layer\'s own visible body, 0 at the outer end and',
-    '    // 1 where it meets the glyph (or the pill\'s face). That body runs from the',
-    '    // outermost blur to the fill edge: the blur is centred on outlineEdge, so its',
-    '    // outer half reaches halfSoft past it, and outlineEdge is widthNorm below',
-    '    // fillEdge. The band is therefore exactly widthNorm + halfSoft, and each',
-    '    // effect is a corner of that one expression:',
-    '    //   outline        — halfSoft is 0; the band is [outlineEdge, fillEdge].',
-    '    //   soft shadow    — widthNorm is 0; outlineEdge *is* fillEdge, and only the',
-    '    //                    blur\'s outer half shows past the glyph. (Normalizing by',
-    '    //                    the *full* blur would strand the ramp at tone 0.5.)',
-    '    //   spread shadow  — both: a dilated silhouette with a blur on its rim.',
-    '    // With neither (a hard, unspread shadow) it collapses onto the 1-pixel AA',
-    '    // edge, which is all the body such a silhouette has.',
-    '    //',
-    '    // An outline keeps that ramp linear: its alpha is a flat 1 across the band,',
-    '    // so the two colours get equal screen area. A shadow\'s alpha falls off over',
-    '    // the very same interval, which would leave the outer colour stranded where',
-    '    // the shadow has already faded to nothing. Squaring holds the outer hue',
-    '    // through the opaque middle of the halo and keeps the inner colour to the',
-    '    // hot core against the glyph. Both curves are monotonic and agree at 0 and',
-    '    // 1, so blending them on an interpolated softStep stays a valid ramp.',
+    //      Two-tone. A quad whose fill layer is switched off — alpha byte exactly
+    //      zero, which is every shadow quad, every layered outline silhouette, and a
+    //      pill whose face is transparent — has no use for inColor, so it carries a
+    //      second colour there instead. The outline / shadow / border layer then ramps
+    //      from outOutline.rgb at its outer edge to that inner colour where it meets
+    //      the glyph: a white-hot glow core inside a coloured halo, a neon-tube
+    //      outline. A live fill owns inColor, so the gate switches the ramp off and
+    //      the composite below is unchanged.
+    //     
+    //      `tone` is depth into the layer\'s own visible body, 0 at the outer end and
+    //      1 where it meets the glyph (or the pill\'s face). That body runs from the
+    //      outermost blur to the fill edge: the blur is centred on outlineEdge, so its
+    //      outer half reaches halfSoft past it, and outlineEdge is widthNorm below
+    //      fillEdge. The band is therefore exactly widthNorm + halfSoft, and each
+    //      effect is a corner of that one expression:
+    //        outline        — halfSoft is 0; the band is [outlineEdge, fillEdge].
+    //        soft shadow    — widthNorm is 0; outlineEdge *is* fillEdge, and only the
+    //                         blur\'s outer half shows past the glyph. (Normalizing by
+    //                         the *full* blur would strand the ramp at tone 0.5.)
+    //        spread shadow  — both: a dilated silhouette with a blur on its rim.
+    //      With neither (a hard, unspread shadow) it collapses onto the 1-pixel AA
+    //      edge, which is all the body such a silhouette has.
+    //     
+    //      An outline keeps that ramp linear: its alpha is a flat 1 across the band,
+    //      so the two colours get equal screen area. A shadow\'s alpha falls off over
+    //      the very same interval, which would leave the outer colour stranded where
+    //      the shadow has already faded to nothing. Squaring holds the outer hue
+    //      through the opaque middle of the halo and keeps the inner colour to the
+    //      hot core against the glyph. Both curves are monotonic and agree at 0 and
+    //      1, so blending them on an interpolated softStep stays a valid ramp.
     '    tone = mix(tone, tone * tone, softStep);',
     '',
     '    float twoTone = 1.0 - step(0.5 / 255.0, outColor.a);',
     '    vec3 outlineRgb = mix(outOutline.rgb, outColor.rgb, tone * twoTone);',
     '',
-    '    // Honest fill-over-outline composite. Degenerate cases are exact: a zero',
-    '    // outline alpha leaves the plain fill, a zero fill alpha leaves the bare',
-    '    // outline silhouette (which is how the layered and shadow passes work).',
+    //      Honest fill-over-outline composite. Degenerate cases are exact: a zero
+    //      outline alpha leaves the plain fill, a zero fill alpha leaves the bare
+    //      outline silhouette (which is how the layered and shadow passes work).
     '    float af = fillCoverage * outColor.a;',
     '    float ao = outlineCoverage * outOutline.a * fade;',
     '',
