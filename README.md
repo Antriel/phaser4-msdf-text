@@ -439,15 +439,32 @@ text.setHighlight({
 });
 ```
 
-A face `alpha` of `0` frees the colour slot for `innerColor`, the inner end of
+A `faceAlpha` of `0` frees the colour slot for `innerColor`, the inner end of
 a colour ramp across the border — the same two-tone mechanism a glowing shadow
 uses. With `borderWidth: 1` (a ring that fills the pill's whole body, so the
 ramp spans the full half-thickness) and a `softness`, that is a glow blob:
 
 ```ts
-text.setHighlight({ alpha: 0, borderWidth: 1, softness: 0.75, radius: 1,
+text.setHighlight({ faceAlpha: 0, borderWidth: 1, softness: 0.75, radius: 1,
                     borderColor: 0x2b0a4a, innerColor: 0x9ad8ff, padding: 0.35 });
 ```
+
+#### The three alphas
+
+A pill is two layers, so it has an alpha per layer and one for the shape:
+
+| key | fades | notes |
+|---|---|---|
+| `alpha` | the whole pill | multiplies both of the others |
+| `faceAlpha` | the face only | a `0` hollows the pill out, and is the two-tone gate above |
+| `borderAlpha` | the ring only | ignored where `borderWidth` is `0` |
+
+`alpha` is the one to tween: it is what fades a pill *as a shape*, and it is safe
+on any pill — including the glow blob, whose `faceAlpha` is `0` on purpose. (Zero
+times anything is still zero, so dimming it never closes the two-tone gate its face
+is holding open.) All three are per-corner, and all three are multiplied in as the
+quad is packed, so fading a pill costs no rebuild and no re-seed. An underline or
+strikethrough has one layer, so its `alpha` is simply its alpha.
 
 - Pills draw **behind everything**, the text's own drop shadow included, and
   batch with the glyphs — still one draw call.
@@ -1045,8 +1062,11 @@ Each rect exposes:
   and `rotation` about the rect's centre.
 - **deform** — `offsetX` / `offsetY`, per-corner, in **pixels** (a rect has no
   em to normalize against).
-- **appearance**, all per-corner — `color`, `alpha`, `innerColor`,
-  `borderColor`, `borderAlpha`, `borderWidth`, `radius`, `softness`.
+- **appearance**, all per-corner — `color`, `alpha`, `faceAlpha`, `innerColor`,
+  `borderColor`, `borderAlpha`, `borderWidth`, `radius`, `softness`. The three
+  alphas mean here exactly what they mean on a `HighlightSpec` (the whole rect,
+  the face, the ring), so `r.setAlpha(t)` fades any rect — pill, glow blob or
+  rule — as a shape. A rule seeds `faceAlpha: 1`, having only the one layer.
 - **dash** — `dashCount` (`0` is solid; setting it dashes a rule outright),
   `dashDuty` and a per-rect `dashPhase`, so two rules can march at different
   speeds.

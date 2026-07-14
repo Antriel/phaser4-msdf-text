@@ -87,7 +87,8 @@ export interface ResolvedDecoration {
  */
 export interface ResolvedHighlight {
     color: Corners;        // face, packed 0xRRGGBB per corner
-    alpha: Corners;        // face alpha, 0-1 per corner
+    alpha: Corners;        // the whole pill, 0-1 per corner — modulates face *and* ring at pack
+    faceAlpha: Corners;    // face alpha, 0-1 per corner; a zero is the two-tone gate
     innerColor: Corners;   // two-tone inner end of the border ramp (face alpha 0 only)
     borderColor: Corners;
     borderAlpha: Corners;
@@ -322,7 +323,9 @@ function resolveRoundedCorners(value: boolean | number | PerCorner<number>): Cor
  * already erases the ring at pack time (the same rule `packOutlineAspect` applies
  * to glyph outlines), so nothing shows until a width opens it, and a caller who
  * sets a width gets a visible border without also naming an alpha. `innerColor`
- * defaults to `borderColor`, which makes the two-tone ramp an identity.
+ * defaults to `borderColor`, which makes the two-tone ramp an identity. All three
+ * alphas default to `1`, so the pill's own `alpha` is an identity modulation until
+ * someone fades it.
  */
 export function resolveHighlight(spec: boolean | HighlightSpec | undefined): ResolvedHighlight | null | undefined {
     if (spec === undefined) return undefined;
@@ -350,6 +353,7 @@ export function resolveHighlight(spec: boolean | HighlightSpec | undefined): Res
     return {
         color: s.color !== undefined ? resolveColorCorners(s.color) : uniformCorners(HIGHLIGHT_COLOR),
         alpha: s.alpha !== undefined ? resolveNumberCorners(s.alpha) : uniformCorners(1),
+        faceAlpha: s.faceAlpha !== undefined ? resolveNumberCorners(s.faceAlpha) : uniformCorners(1),
         innerColor: s.innerColor !== undefined ? resolveColorCorners(s.innerColor) : borderColor,
         borderColor: borderColor,
         borderAlpha: s.borderAlpha !== undefined ? resolveNumberCorners(s.borderAlpha) : uniformCorners(1),

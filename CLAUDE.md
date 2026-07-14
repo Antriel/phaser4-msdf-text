@@ -298,13 +298,28 @@ shadow included; underlines before the fill loop; strikethroughs after.
   each a fraction of the pill's **half-thickness** (`min(w,h)/2` — the only length
   a quad knows about itself), so `radius: 1` is a stadium at any size and the pill
   scales with the camera. The border ring rides `inOutline`, its alpha zeroed at
-  zero width exactly as `packOutlineAspect` does for a glyph outline. A face
-  `alpha` of `0` frees `inColor` for the two-tone ramp's inner end, so `alpha: 0,
-  borderWidth: 1` (a ring that fills its own body) plus a `softness` is a glow blob.
-  `softness` fades **inward** — a rect's quad ends exactly at its box, so an
-  outward blur would be clipped in half; the box is the outer bound of everything
-  the pill draws, and `padding` (em-relative, and legally negative) is how a caller
-  gives a glow room.
+  zero width exactly as `packOutlineAspect` does for a glyph outline. A
+  `faceAlpha` of `0` frees `inColor` for the two-tone ramp's inner end, so
+  `faceAlpha: 0, borderWidth: 1` (a ring that fills its own body) plus a `softness`
+  is a glow blob. `softness` fades **inward** — a rect's quad ends exactly at its
+  box, so an outward blur would be clipped in half; the box is the outer bound of
+  everything the pill draws, and `padding` (em-relative, and legally negative) is
+  how a caller gives a glow room.
+- **A pill has three alphas, because it is two layers.** `faceAlpha` and
+  `borderAlpha` are the layers' own; **`alpha` is the shape's**, and is a *pack-time
+  modulation* multiplied into both (`packRectCorner`, `packBorderRing`) — the same
+  lane, for the same reasons, as the object's `objAlpha`, which sits above it. It is
+  what fades a pill *as a pill*, which neither layer's own alpha can do, and it costs
+  no vertex byte, no rebuild and no re-seed.
+  - The face keeps a separate alpha **because a zero there is a sentinel**, not a
+    fade: it is what hands `inColor` to the two-tone ramp. Splitting the two means
+    the group alpha can never break a pill — `0 × faceAlpha` is still the zero byte
+    the gate reads, so dimming a glow blob dims it *as a blob* instead of collapsing
+    it into a plain fill.
+  - A rule has one layer, so its `alpha` already *is* its whole alpha and it takes
+    no `faceAlpha` key; its rect packs the identity. That is what makes `alpha` mean
+    "how visible this rect is" on every rect kind — the pill's extra key is the
+    exception that pays for itself, and `DecorationState` mirrors all three.
 
 Because the solid lane's coverage is now the box SDF's, **underlines are
 antialiased**: at a rect's boundary coverage is `0.5`, not the flat `1.0` it was

@@ -61,6 +61,8 @@ export class DecorScene extends ExampleScene {
     softness: 0,
     border: 0.18,
     borderColor: 0xffd23f,
+    borderAlpha: 1,
+    alpha: 1,
     faceAlpha: 1,
     twoTone: false,
     innerColor: 0x9ad8ff,
@@ -156,13 +158,16 @@ export class DecorScene extends ExampleScene {
     // A face alpha of 0 frees the colour slot for the two-tone ramp's inner
     // end, and a borderWidth of 1 is a ring that fills the pill — the whole
     // blob ramps from `borderColor` at its blurred rim to `innerColor` at the
-    // core. The same two-tone gate a glowing glyph shadow uses.
+    // core. The same two-tone gate a glowing glyph shadow uses. (The pill's own
+    // `alpha` is untouched, and is what would fade the blob: it multiplies both
+    // layers, so it dims the ring without closing the gate this face is holding
+    // open.)
     this.add
       .msdfText(950, 258, "Inter", "W A R P   C O R E", 36)
       .setColor("#0b0d12")
       .setOrigin(0.5)
       .setHighlight({
-        alpha: 0,
+        faceAlpha: 0,
         radius: 1,
         softness: 0.75,
         borderWidth: 1,
@@ -248,11 +253,16 @@ export class DecorScene extends ExampleScene {
     const p = this.params;
     this.playground.setHighlight({
       color: 0xd6304a,
-      alpha: p.faceAlpha,
+      // Two different things: `alpha` fades the pill as a shape (face and ring
+      // together), `faceAlpha` hollows it out — and a `faceAlpha` of 0 is what
+      // frees the colour slot for the two-tone ramp below.
+      alpha: p.alpha,
+      faceAlpha: p.faceAlpha,
       radius: p.radius,
       softness: p.softness,
       borderWidth: p.border,
       borderColor: p.borderColor,
+      borderAlpha: p.borderAlpha,
       innerColor: p.twoTone ? p.innerColor : undefined,
       padding: { x: p.padX, y: p.padY },
     });
@@ -278,7 +288,15 @@ export class DecorScene extends ExampleScene {
     h.addBinding(this.params, "softness", { min: 0, max: 1, step: 0.01 }).on("change", apply);
     h.addBinding(this.params, "border", { label: "borderWidth", min: 0, max: 1, step: 0.01 }).on("change", apply);
     h.addBinding(this.params, "borderColor", { label: "border color", view: "color" }).on("change", apply);
+    // The three alphas, in the order they compose. A pill is two layers, so each
+    // layer has one — drag `face alpha` to 0 and the pill hollows out into its own
+    // ring (which is also what frees the two-tone ramp below), drag `border alpha`
+    // and the ring goes while the face stays. `alpha` is the *shape's*: it
+    // multiplies both, so it is the one that fades the pill as a pill, and the only
+    // one that can fade a two-tone glow blob (whose face alpha is 0 by design).
+    h.addBinding(this.params, "alpha", { label: "alpha (whole pill)", min: 0, max: 1, step: 0.05 }).on("change", apply);
     h.addBinding(this.params, "faceAlpha", { label: "face alpha", min: 0, max: 1, step: 0.05 }).on("change", apply);
+    h.addBinding(this.params, "borderAlpha", { label: "border alpha", min: 0, max: 1, step: 0.05 }).on("change", apply);
     h.addBinding(this.params, "twoTone", { label: "two-tone" }).on("change", apply);
     h.addBinding(this.params, "innerColor", { label: "inner color", view: "color" }).on("change", apply);
     // Em-relative, and negative is legal: the pill's box starts at the run's

@@ -1420,6 +1420,14 @@ export const MSDFText: MSDFTextStatic = new Class({
         al.bottomLeft = alpha ? alpha.bottomLeft : baseAlpha;
         al.bottomRight = alpha ? alpha.bottomRight : baseAlpha;
 
+        // The face's own alpha, under that. A rule has no second layer to be
+        // independent *of*, so it seeds the identity and its `alpha` above carries
+        // the whole rule — which is what makes `alpha` mean "how visible this rect
+        // is" on every rect kind, and `faceAlpha` mean "how much face it has".
+        const faceAlpha: Corners | undefined = r.faceAlpha;
+        if (faceAlpha) copyCorners(s.faceAlpha, faceAlpha);
+        else setCorners(s.faceAlpha, 1);
+
         // The two-tone inner colour, read only where the face alpha is zero. A rule
         // has none, so it seeds the face colour and the ramp is an identity.
         const inner: Corners | undefined = r.inner;
@@ -2150,9 +2158,12 @@ export const MSDFText: MSDFTextStatic = new Class({
                     // text's colour drags an inherited underline along with it.
                     rgb: spec.color !== undefined ? spec.color : cs,
                     alpha: spec.alpha !== undefined ? spec.alpha : as,
-                    // A rule takes no border and no two-tone ramp; the renderer
-                    // substitutes its constant defaults. Named anyway so both rect
-                    // kinds share one hidden class.
+                    // A rule has one layer, so its `alpha` *is* its whole alpha and
+                    // the pill's separate face lane has nothing to say here — an
+                    // absent one packs as `1`. A rule likewise takes no border and no
+                    // two-tone ramp; the renderer substitutes its constant defaults.
+                    // Named anyway so both rect kinds share one hidden class.
+                    faceAlpha: undefined,
                     inner: undefined,
                     // A solid rule is the constant hard-edged box, so it packs
                     // nothing. A dashed one carries the dash's own shape.
@@ -2246,7 +2257,10 @@ export const MSDFText: MSDFTextStatic = new Class({
                     pass: PASS_HIGHLIGHT,
                     fontIdx: first.fontIdx,
                     rgb: spec.color,
+                    // The pill's own alpha modulates both its layers at submit; the
+                    // face's is the one the two-tone gate reads.
                     alpha: spec.alpha,
+                    faceAlpha: spec.faceAlpha,
                     // Read only where the face alpha is a zero byte, which is both
                     // "no face" and "this rgb is the border ramp's inner end".
                     inner: spec.innerColor,

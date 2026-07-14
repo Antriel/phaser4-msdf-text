@@ -124,21 +124,39 @@ export interface DecorationState {
      */
     color: Corners;
     /**
-     * Per-corner face alpha, `0-1`. At `0` the face is gone and the quad's colour
-     * slot is freed for {@link innerColor}, so a borderless pill vanishes while a
-     * bordered one becomes a ring that ramps to its inner colour — the same
-     * two-tone gate a glyph's shadow uses.
+     * Per-corner alpha of the **whole rect**, `0-1` — {@link faceAlpha} and
+     * {@link borderAlpha} are both multiplied by it at pack time. This is the knob
+     * that fades a rect as a shape, and the only one that is safe to drive from
+     * nothing to full on any rect: a hollow two-tone pill (whose `faceAlpha` is `0`
+     * *by design*) fades as a blob under it, because zero times anything is still
+     * the zero byte the ramp's gate is looking for.
+     *
+     * A rule seeds its resolved (or inherited) alpha here and an identity
+     * `faceAlpha`, so on every rect kind this means "how visible it is".
      */
     alpha: Corners;
     /**
+     * Per-corner face alpha, `0-1`, independent of the ring — the pill's face layer
+     * only. At `0` the face is gone and the quad's colour slot is freed for
+     * {@link innerColor}, so a borderless pill vanishes while a bordered one becomes
+     * a ring that ramps to its inner colour: the same two-tone gate a glyph's shadow
+     * uses. A rule has no ring, so this is seeded to `1` and {@link alpha} is its
+     * whole alpha.
+     */
+    faceAlpha: Corners;
+    /**
      * Per-corner inner end of the border's colour ramp, `0xRRGGBB`. Read only where
-     * the face {@link alpha} is zero. Equal to {@link borderColor} is a no-op.
+     * the face's *packed* alpha is zero — i.e. where {@link faceAlpha} or
+     * {@link alpha} is. Equal to {@link borderColor} is a no-op.
      */
     innerColor: Corners;
 
     /** Per-corner border-ring colour, `0xRRGGBB`. Pills only; a rule has no ring. */
     borderColor: Corners;
-    /** Per-corner border-ring alpha, `0-1`. Ignored wherever {@link borderWidth} is `0`. */
+    /**
+     * Per-corner border-ring alpha, `0-1`, independent of the face. Ignored wherever
+     * {@link borderWidth} is `0`.
+     */
     borderAlpha: Corners;
     /**
      * Per-corner border-ring width, as a fraction of the rect's half-thickness
@@ -195,8 +213,10 @@ export interface DecorationState {
     clearOffset(): void;
     /** Set the face colour (`0xRRGGBB`) on all four corners. */
     setColor(rgb: number): void;
-    /** Set the face alpha (`0-1`) on all four corners. */
+    /** Set the whole rect's alpha (`0-1`) on all four corners. See {@link alpha}. */
     setAlpha(alpha: number): void;
+    /** Set the face-only alpha (`0-1`) on all four corners. See {@link faceAlpha}. */
+    setFaceAlpha(alpha: number): void;
     /** Set the border ramp's inner colour (`0xRRGGBB`) on all four corners. */
     setInnerColor(rgb: number): void;
     /** Set the border colour (`0xRRGGBB`) on all four corners. */
@@ -233,6 +253,7 @@ function setAll(c: Corners, value: number): void {
 }
 function setColor(this: DecorationState, rgb: number): void { setAll(this.color, rgb); }
 function setAlpha(this: DecorationState, alpha: number): void { setAll(this.alpha, alpha); }
+function setFaceAlpha(this: DecorationState, alpha: number): void { setAll(this.faceAlpha, alpha); }
 function setInnerColor(this: DecorationState, rgb: number): void { setAll(this.innerColor, rgb); }
 function setBorderColor(this: DecorationState, rgb: number): void { setAll(this.borderColor, rgb); }
 function setBorderAlpha(this: DecorationState, alpha: number): void { setAll(this.borderAlpha, alpha); }
@@ -263,6 +284,7 @@ export function createDecorState(): DecorationState {
         offsetY: corners(0),
         color: corners(0xffffff),
         alpha: corners(1),
+        faceAlpha: corners(1),
         innerColor: corners(0xffffff),
         borderColor: corners(0),
         borderAlpha: corners(1),
@@ -276,6 +298,7 @@ export function createDecorState(): DecorationState {
         clearOffset,
         setColor,
         setAlpha,
+        setFaceAlpha,
         setInnerColor,
         setBorderColor,
         setBorderAlpha,

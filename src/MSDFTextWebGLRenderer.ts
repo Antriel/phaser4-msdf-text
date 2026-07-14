@@ -512,22 +512,28 @@ function packRectCorner(rgb: number, alpha: number, inner: number): number {
  * the pill's antialiased edge. The same rule, for the same reason, that
  * `packOutlineAspect` applies to a glyph's outline.
  *
+ * The ring's alpha is `borderAlpha × alpha × objAlpha`: its own layer's, the whole
+ * pill's, and the whole object's, three modulations of the same kind stacked. The
+ * pill's `alpha` is here (and on the face, below) rather than in a vertex byte or a
+ * seed for exactly the reason the object's is — see the `objAlpha` note.
+ *
  * One function for both rect paths: a `ResolvedHighlight` and a `DecorationState`
- * name the ring identically, and neither may bake it, since the alpha it packs is
- * under the object's live `objAlpha`.
+ * name the ring identically, and neither may bake it, since two of the three
+ * factors are live.
  */
 interface BorderRing {
+    alpha: Corners;
     borderColor: Corners;
     borderAlpha: Corners;
     borderWidth: Corners;
 }
 
 function packBorderRing(buf: PackedCorners, r: BorderRing): void {
-    const c = r.borderColor, a = r.borderAlpha, w = r.borderWidth;
-    buf.topLeft = packColor(c.topLeft, w.topLeft > 0 ? a.topLeft * objAlpha.topLeft : 0);
-    buf.topRight = packColor(c.topRight, w.topRight > 0 ? a.topRight * objAlpha.topRight : 0);
-    buf.bottomLeft = packColor(c.bottomLeft, w.bottomLeft > 0 ? a.bottomLeft * objAlpha.bottomLeft : 0);
-    buf.bottomRight = packColor(c.bottomRight, w.bottomRight > 0 ? a.bottomRight * objAlpha.bottomRight : 0);
+    const c = r.borderColor, a = r.borderAlpha, w = r.borderWidth, o = r.alpha;
+    buf.topLeft = packColor(c.topLeft, w.topLeft > 0 ? a.topLeft * o.topLeft * objAlpha.topLeft : 0);
+    buf.topRight = packColor(c.topRight, w.topRight > 0 ? a.topRight * o.topRight * objAlpha.topRight : 0);
+    buf.bottomLeft = packColor(c.bottomLeft, w.bottomLeft > 0 ? a.bottomLeft * o.bottomLeft * objAlpha.bottomLeft : 0);
+    buf.bottomRight = packColor(c.bottomRight, w.bottomRight > 0 ? a.bottomRight * o.bottomRight * objAlpha.bottomRight : 0);
 }
 
 /**
@@ -581,17 +587,25 @@ function submitDecorations(
 
         const rgb: Corners | undefined = r.rgb;
         const alpha: Corners | undefined = r.alpha;
+        const face: Corners | undefined = r.faceAlpha;
         const inner: Corners | undefined = r.inner;
         const rTL = rgb ? rgb.topLeft : baseRgb;
         const rTR = rgb ? rgb.topRight : baseRgb;
         const rBL = rgb ? rgb.bottomLeft : baseRgb;
         const rBR = rgb ? rgb.bottomRight : baseRgb;
-        // An absent alpha inherits the object's fill alpha; either way the object's
-        // own `alpha` modulates it here, so a pill fades with the text it sits behind.
-        const aTL = (alpha ? alpha.topLeft : baseAlpha) * objAlpha.topLeft;
-        const aTR = (alpha ? alpha.topRight : baseAlpha) * objAlpha.topRight;
-        const aBL = (alpha ? alpha.bottomLeft : baseAlpha) * objAlpha.bottomLeft;
-        const aBR = (alpha ? alpha.bottomRight : baseAlpha) * objAlpha.bottomRight;
+        // An absent rect alpha inherits the object's fill alpha (a rule's; a pill
+        // never inherits). Under it, the face's own alpha — a pill's second layer,
+        // and the lane whose zero is the two-tone gate; a rule has none, so it packs
+        // as 1. Over it, the object's own alpha, so a pill fades with the text it
+        // sits behind.
+        const fTL = face ? face.topLeft : 1;
+        const fTR = face ? face.topRight : 1;
+        const fBL = face ? face.bottomLeft : 1;
+        const fBR = face ? face.bottomRight : 1;
+        const aTL = fTL * (alpha ? alpha.topLeft : baseAlpha) * objAlpha.topLeft;
+        const aTR = fTR * (alpha ? alpha.topRight : baseAlpha) * objAlpha.topRight;
+        const aBL = fBL * (alpha ? alpha.bottomLeft : baseAlpha) * objAlpha.bottomLeft;
+        const aBR = fBR * (alpha ? alpha.bottomRight : baseAlpha) * objAlpha.bottomRight;
         rectColor.topLeft = packRectCorner(rTL, aTL, inner ? inner.topLeft : rTL);
         rectColor.topRight = packRectCorner(rTR, aTR, inner ? inner.topRight : rTR);
         rectColor.bottomLeft = packRectCorner(rBL, aBL, inner ? inner.bottomLeft : rBL);
@@ -700,15 +714,16 @@ function submitDecorationStates(
 }
 
 /**
- * A rect state's face colour, under `objAlpha`, with the same zero-alpha two-tone
- * handover as a built rect.
+ * A rect state's face colour: the face's own alpha under the rect's and the
+ * object's, with the same zero-alpha two-tone handover as a built rect. `seedRect`
+ * resolved every inheritance, so unlike the static path there is no fallback here.
  */
 function packRectStateColor(buf: PackedCorners, s: DecorationState): void {
-    const c = s.color, a = s.alpha, inner = s.innerColor;
-    const aTL = a.topLeft * objAlpha.topLeft;
-    const aTR = a.topRight * objAlpha.topRight;
-    const aBL = a.bottomLeft * objAlpha.bottomLeft;
-    const aBR = a.bottomRight * objAlpha.bottomRight;
+    const c = s.color, a = s.alpha, f = s.faceAlpha, inner = s.innerColor;
+    const aTL = f.topLeft * a.topLeft * objAlpha.topLeft;
+    const aTR = f.topRight * a.topRight * objAlpha.topRight;
+    const aBL = f.bottomLeft * a.bottomLeft * objAlpha.bottomLeft;
+    const aBR = f.bottomRight * a.bottomRight * objAlpha.bottomRight;
     buf.topLeft = packRectCorner(c.topLeft, aTL, inner.topLeft);
     buf.topRight = packRectCorner(c.topRight, aTR, inner.topRight);
     buf.bottomLeft = packRectCorner(c.bottomLeft, aBL, inner.bottomLeft);

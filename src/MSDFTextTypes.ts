@@ -143,12 +143,42 @@ export interface HighlightPadding {
  * Unlike a decoration, a highlight never inherits the text's fill colour (a slab
  * of text-coloured paint behind the text would hide it), so a colour tween on the
  * object does not drag the pill along.
+ *
+ * A pill has **three** alphas, because it is two layers: {@link faceAlpha} and
+ * {@link borderAlpha} are those layers' own, and {@link alpha} is the whole shape's
+ * — it multiplies both. Fading a pill is `alpha`; hollowing one out is a
+ * `faceAlpha` of `0` (which is also what frees {@link innerColor}). A rule, having
+ * no ring, needs only the one, so {@link DecorationSpec} keeps a plain `alpha` and
+ * means the same thing by it.
  */
 export interface HighlightSpec {
     /** Face colour — a scalar or a per-corner gradient. Default marker yellow. */
     color?: ColorValue | PerCorner<ColorValue>;
-    /** Face alpha (0-1). Default `1`. A face alpha of `0` frees {@link innerColor}. */
+    /**
+     * The **whole pill's** alpha (0-1), face and border ring together. Default `1`.
+     * `0` is an invisible pill, whatever else it carries.
+     *
+     * It is a modulation, not a layer of its own: the renderer multiplies it into
+     * the face and the ring as it packs them, exactly as the object's own `alpha`
+     * is multiplied into everything it draws. So it costs no vertex byte, no
+     * rebuild and no draw call — and it is what fades a pill *as a shape*, which
+     * neither {@link faceAlpha} nor {@link borderAlpha} can do alone.
+     *
+     * It also cannot break a two-tone pill, which is the reason the face lane keeps
+     * an alpha of its own: the ramp's gate is a `faceAlpha` of `0`, and zero times
+     * anything is still zero, so a glow blob dimmed by this key stays a glow blob
+     * all the way down to nothing.
+     */
     alpha?: number | PerCorner<number>;
+    /**
+     * Face alpha (0-1), independent of the border ring. Default `1`.
+     *
+     * A face alpha of `0` is also the switch that frees {@link innerColor} — the
+     * face's colour slot is what the two-tone ramp rides. To *fade* a pill, reach
+     * for {@link alpha} instead: this one leaves the ring at full strength (which is
+     * the point of it — a hollow, bordered pill is a face alpha of `0`).
+     */
+    faceAlpha?: number | PerCorner<number>;
     /** Corner radius, `0` (square) to `1` (a stadium). Default `0`. */
     radius?: number | PerCorner<number>;
     /**
@@ -169,15 +199,15 @@ export interface HighlightSpec {
     borderWidth?: number | PerCorner<number>;
     /** Border colour. Default black — invisible until `borderWidth` opens it. */
     borderColor?: ColorValue | PerCorner<ColorValue>;
-    /** Border alpha (0-1). Default `1`. */
+    /** Border-ring alpha (0-1), independent of the face. Default `1`. */
     borderAlpha?: number | PerCorner<number>;
     /**
      * Colour at the border's inner edge: the ring ramps to it from `borderColor`
-     * across its own width. Requires a face `alpha` of `0` — the inner colour
+     * across its own width. Requires a {@link faceAlpha} of `0` — the inner colour
      * rides the face's colour slot, which an opaque face has already spent (the
      * same constraint that makes a two-tone glyph outline force `outlineLayered`).
      *
-     * A pill with `alpha: 0`, `borderWidth: 1` and a `softness` is therefore a
+     * A pill with `faceAlpha: 0`, `borderWidth: 1` and a `softness` is therefore a
      * two-tone glow blob: the ring fills the whole pill and ramps from
      * `borderColor` at the blurred rim to `innerColor` at its core. With no face to
      * inset, `borderWidth` becomes purely the ramp's depth — lower it to reach the
