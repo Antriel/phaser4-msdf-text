@@ -24,8 +24,8 @@ const TITLE_GRADIENT = {
 const BASELINE: Segment[] = [
   { text: "Inter " },
   { text: "Anton ", font: "Anton", color: 0xffd23f },
-  { text: "Bangers ", font: "Bangers", color: 0xff8c42, space: { after: 0.14 } },
-  { text: "Mono ", font: "JetBrainsMono", color: 0x7fd4ff, space: { after: -0.18 } },
+  { text: "Bangers ", font: "Bangers", color: 0xff8c42, space: { after: 0.16 } },
+  { text: "Mono ", font: "JetBrainsMono", color: 0x7fd4ff, space: { after: -0.29 } },
   { text: "Condensed", font: "RobotoCondensed", color: 0x9ae6b4 },
 ];
 
@@ -120,7 +120,7 @@ export class FontsScene extends ExampleScene {
 
     // ── Block A: the shared baseline, drawn ──
     this.blockA = this.add
-      .msdfText(640, 150, "Inter", "", 44)
+      .msdfText(640, 120, "Inter", "", 44)
       .setColor("#f0ecff")
       .setOrigin(0.5, 0);
 
@@ -130,7 +130,7 @@ export class FontsScene extends ExampleScene {
     const ascent = Math.max(
       ...BASELINE_FONTS.map((key) => (fontCache.get(key) as MSDFFont).getAscender(44)),
     );
-    this.baselineY = 150 + ascent;
+    this.baselineY = 120 + ascent;
     this.guide = this.add.graphics().setDepth(-3);
     this.guideLabel = this.add
       .msdfText(0, this.baselineY, "Inter", "baseline", 13)
@@ -142,7 +142,7 @@ export class FontsScene extends ExampleScene {
 
     // ── Block B: mixed-font content + the persistent 'fire' rule ──
     this.blockB = this.add
-      .msdfText(640, 262, "Inter", "", 40)
+      .msdfText(640, 222, "Inter", "", 40)
       .setColor("#f0ecff")
       .setOrigin(0.5, 0)
       .setCenterAlign()
@@ -161,7 +161,7 @@ export class FontsScene extends ExampleScene {
       .setRichText(SIZED);
 
     this.caption(
-      "All five faces live in one merged atlas, so the whole scene is one draw call — verify " +
+      "All five faces live in one merged atlas, so the whole scene is one draw call - verify " +
         "with GL Capture. The mono run's underline takes thickness and position from its own " +
         "font's metrics. No kerning and no glyph fallback across a font boundary; `space` is " +
         "how you reconcile two faces by hand where no kern pair can.",

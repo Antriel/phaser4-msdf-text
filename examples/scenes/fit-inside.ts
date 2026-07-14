@@ -36,7 +36,7 @@ export class FitInsideScene extends ExampleScene {
     font: "Inter",
     width: 620,
     height: 300,
-    maxFontSize: 50,
+    maxFontSize: 35,
     align: "center" as "left" | "center" | "right",
     hAlign: "center" as NonNullable<FitOptions["hAlign"]>,
     vAlign: "middle" as NonNullable<FitOptions["vAlign"]>,
@@ -122,7 +122,7 @@ export class FitInsideScene extends ExampleScene {
     });
     f.addBinding(this.params, "width", { min: 160, max: 900, step: 10 }).on("change", refit);
     f.addBinding(this.params, "height", { min: 80, max: 500, step: 10 }).on("change", refit);
-    f.addBinding(this.params, "maxFontSize", { label: "max font size", min: 10, max: 200, step: 1 }).on(
+    f.addBinding(this.params, "maxFontSize", { label: "max font size", min: 10, max: 60, step: 1 }).on(
       "change",
       refit,
     );

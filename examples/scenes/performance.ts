@@ -48,7 +48,7 @@ export class PerformanceScene extends ExampleScene {
       const text = this.add
         .msdfText(
           Phaser.Math.Between(40, this.designWidth - 40),
-          Phaser.Math.Between(120, this.designHeight - 60),
+          Phaser.Math.Between(120, this.designHeight - 80),
           "Inter",
           word,
           24,
@@ -93,7 +93,7 @@ export class PerformanceScene extends ExampleScene {
   update(_time: number, delta: number): void {
     const dt = delta / 1000;
     const maxX = this.designWidth - 30;
-    const maxY = this.designHeight - 50;
+    const maxY = this.designHeight - 70;
 
     for (const m of this.movers) {
       const t = m.text;

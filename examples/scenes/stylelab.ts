@@ -66,10 +66,10 @@ const PRESETS: Record<string, Partial<LabParams>> = {
   // lettering. Softness cannot reach it — blurring is the one thing this look
   // must not do — so before spread it was simply unreachable.
   Sticker: {
-    fill: "#ffd23f", weight: 1.2,
+    fill: "#ffd23f", weight: 0.6,
     outlineWidth: 3.5, outlineColor: "#ffffff", outlineAlpha: 1,
     outlineRounded: 1, outlineSoftness: 0, outlineLayered: true, outlineTwoTone: false,
-    shadowX: 5, shadowY: 8, shadowColor: "#1c1633", shadowAlpha: 1,
+    shadowX: 5, shadowY: 8, shadowColor: "#000000", shadowAlpha: 1,
     shadowSoftness: 0, shadowSpread: 3.5, shadowRounded: 1,
     shadowTwoTone: false, pulse: false,
   },
@@ -110,8 +110,8 @@ const PRESETS: Record<string, Partial<LabParams>> = {
     shadowTwoTone: false, pulse: false,
   },
   Comic: {
-    fill: "#ffd23f", weight: 1.5,
-    outlineWidth: 4, outlineColor: "#1a1030", outlineAlpha: 1,
+    fill: "#ffd23f", weight: 0.6,
+    outlineWidth: 4, outlineColor: "#080216", outlineAlpha: 1,
     outlineRounded: 1, outlineSoftness: 0, outlineLayered: true, outlineTwoTone: false,
     shadowX: 5, shadowY: 5, shadowColor: "#1a1030", shadowAlpha: 1,
     shadowSoftness: 0, shadowSpread: 0, shadowRounded: 1,
@@ -160,26 +160,26 @@ export class StyleLabScene extends ExampleScene {
     );
 
     this.hero = this.add
-      .msdfText(640, 280, this.params.font, this.params.word, 150)
+      .msdfText(640, 240, this.params.font, this.params.word, 150)
       .setOrigin(0.5)
       .setLetterSpacing(6);
 
     const small = this.add
-      .msdfText(640, 450, this.params.font, "crisp down to small sizes", 36)
+      .msdfText(640, 400, this.params.font, "crisp down to small sizes", 36)
       .setOrigin(0.5)
       .setLetterSpacing(3);
 
     // Deliberately tight spacing so a thick outline overlaps the next glyph —
     // the artifact `layered` removes.
     const tight = this.add
-      .msdfText(640, 560, this.params.font, "SPILLOVER", 90)
+      .msdfText(640, 510, this.params.font, "SPILLOVER", 90)
       .setOrigin(0.5)
       .setLetterSpacing(-2);
 
     this.texts = [this.hero, small, tight];
 
     // Start on a preset so the lab opens looking like a lab, not a form.
-    Object.assign(this.params, PRESETS.Sticker);
+    Object.assign(this.params, PRESETS.Neon);
     this.apply();
 
     this.caption(

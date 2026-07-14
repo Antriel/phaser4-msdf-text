@@ -28,7 +28,7 @@ export class EffectsScene extends ExampleScene {
     effect: "wave",
     speed: 1.5,
     amplitude: 10,
-    softness: 5,
+    softness: 12,
     spread: 4,
     cornerWeight: 3.6,
     cornerWidth: 3.0,
@@ -563,7 +563,7 @@ export class EffectsScene extends ExampleScene {
         mode(
           "gradient",
           "Gradient",
-          "A different colour per corner of every quad — plain tinting cannot do that. Both pickers are read live each frame.",
+          "A different colour per corner of every quad - plain tinting cannot do that. Both pickers are read live each frame.",
           (f) => {
             f.addBinding(this.params, "topColor", {
               label: "top color",
@@ -584,7 +584,7 @@ export class EffectsScene extends ExampleScene {
         mode(
           "typewriter",
           "Typewriter + rule",
-          "glyph.visible skips the quad entirely — no zero-alpha submissions. A second, decoration callback trims the underline to the typed glyphs, which the glyph callback cannot reach.",
+          "glyph.visible skips the quad entirely - no zero-alpha submissions. A second, decoration callback trims the underline to the typed glyphs, which the glyph callback cannot reach.",
           speed,
         ),
         mode(
@@ -602,19 +602,19 @@ export class EffectsScene extends ExampleScene {
         mode(
           "jitter",
           "Jitter",
-          "Per-glyph position, re-randomized every frame — the glyph array is re-seeded from the object before each callback, so nothing accumulates.",
+          "Per-glyph position, re-randomized every frame - the glyph array is re-seeded from the object before each callback, so nothing accumulates.",
           amplitude,
         ),
         mode(
           "popin",
           "Pop-in",
-          "Per-glyph scale with a stagger. A glyph at scale 0 keeps its slot — the layout never reflows.",
+          "Per-glyph scale with a stagger. A glyph at scale 0 keeps its slot - the layout never reflows.",
           speed,
         ),
         mode(
           "fade",
           "Fade",
-          "Per-glyph fill alpha, separate from colour — one call, no bit-packing.",
+          "Per-glyph fill alpha, separate from colour - one call, no bit-packing.",
           speed,
         ),
         mode(
@@ -626,7 +626,7 @@ export class EffectsScene extends ExampleScene {
         mode(
           "outline",
           "Outline",
-          "Outline colour and alpha are per-glyph vertex data, so every glyph cycles its own hue — and it all stays one draw call.",
+          "Outline colour and alpha are per-glyph vertex data, so every glyph cycles its own hue - and it all stays one draw call.",
           speed,
         ),
         mode(
@@ -652,7 +652,7 @@ export class EffectsScene extends ExampleScene {
         mode(
           "glowbeat",
           "Glow beat",
-          "Per-glyph shadow softness with a zero offset reads as a glow — each glyph pulses on its own beat, in the same draw call.",
+          "Per-glyph shadow softness with a zero offset reads as a glow - each glyph pulses on its own beat, in the same draw call.",
           (f) => {
             speed(f);
             softness(f);
@@ -661,7 +661,7 @@ export class EffectsScene extends ExampleScene {
         mode(
           "sticker",
           "Sticker pump",
-          "Shadow spread dilates the silhouette without blurring it — softness cannot do that. It is per-corner, so the slab swells toward the bottom-right and stays crisp.",
+          "Shadow spread dilates the silhouette without blurring it - softness cannot do that. It is per-corner, so the slab swells toward the bottom-right and stays crisp.",
           (f) => {
             speed(f);
             f.addBinding(this.params, "spread", { min: 0, max: 6, step: 0.1 });
@@ -670,7 +670,7 @@ export class EffectsScene extends ExampleScene {
         mode(
           "orbit",
           "Orbit light (soft-side shadow)",
-          "Shadow softness is per-corner: the penumbra widens only on the side away from the light and stays hard against the glyph — a soft-on-one-side shadow no single value can express.",
+          "Shadow softness is per-corner: the penumbra widens only on the side away from the light and stays hard against the glyph - a soft-on-one-side shadow no single value can express.",
           (f) => {
             speed(f);
             softness(f);
@@ -706,7 +706,7 @@ export class EffectsScene extends ExampleScene {
         mode(
           "ribbon",
           "Ribbon wave",
-          "offsetY written as a field over text space: neighbouring corners sample the same wave, so the word bends as one continuous ribbon — a vertical shear scale/rotation/skew cannot produce.",
+          "offsetY written as a field over text space: neighbouring corners sample the same wave, so the word bends as one continuous ribbon - a vertical shear scale/rotation/skew cannot produce.",
           (f) => {
             speed(f);
             amplitude(f);
@@ -715,7 +715,7 @@ export class EffectsScene extends ExampleScene {
         mode(
           "keystone",
           "Keystone",
-          "offsetX makes a trapezium — impossible for any affine transform, which only ever maps a rectangle to a parallelogram. The honest cost: letterforms crease along the quad diagonal at a hard taper.",
+          "offsetX makes a trapezium - impossible for any affine transform, which only ever maps a rectangle to a parallelogram. The honest cost: letterforms crease along the quad diagonal at a hard taper.",
           (f) => {
             speed(f);
             f.addBinding(this.params, "taper", {
@@ -728,7 +728,7 @@ export class EffectsScene extends ExampleScene {
         mode(
           "jelly",
           "Jelly",
-          "Four corners, four phases — a non-parallelogram wobble beyond the transform lane. Em-relative, so a narrow I and a wide W wobble alike.",
+          "Four corners, four phases - a non-parallelogram wobble beyond the transform lane. Em-relative, so a narrow I and a wide W wobble alike.",
           (f) => {
             speed(f);
             amplitude(f);

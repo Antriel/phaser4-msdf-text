@@ -17,10 +17,14 @@ import type { MSDFTextInstance, Segment } from "../../src";
 // is the union of the runs' metrics.
 const MARKER: Segment[] = [
   "Style layers reach the ",
-  { text: "highlight", highlight: { color: 0xffe066, radius: 0.35, padding: { x: 0.2, y: 0.06 } }, color: 0x1a1030 },
-  " lane, so a rule or a range pills exactly the run it matches — and a pill spans\nmixed ",
+  {
+    text: "highlight",
+    highlight: { color: 0xffe066, radius: 0.35, padding: { x: 0.08, y: 0.06 } },
+    color: 0x1a1030,
+  },
+  " lane, so a rule or a range pills exactly the run it matches - and a pill spans\nmixed ",
   { text: "sizes", fontScale: 1.6 },
-  { text: " and fonts", font: "Bangers" },
+  { text: " and fonts", font: "Bangers", space: { after: 0.1 } },
   " as one shape.",
 ];
 
@@ -122,7 +126,7 @@ export class DecorScene extends ExampleScene {
 
     this.caption(
       "Pills draw behind everything, the text's own drop shadow included. Underlines split " +
-        "where an inherited colour changes, and a dashed one is still a single quad — the dash " +
+        "where an inherited colour changes, and a dashed one is still a single quad - the dash " +
         "count rides its UVs, so tweening dashPhase marches the ants for free. All of it batches " +
         "with the glyphs.",
     );
@@ -133,7 +137,7 @@ export class DecorScene extends ExampleScene {
     // The damage-number look: a stadium with a crisp border. The drop shadow
     // lands *on* the pill, because highlights submit behind every other pass.
     this.add
-      .msdfText(330, 170, "Inter", "CRITICAL  2 4 8", 44)
+      .msdfText(330, 140, "Inter", "CRITICAL  2 4 8", 44)
       .setColor("#fff6d5")
       .setOrigin(0.5)
       .setShadow(0, 5, 0x000000, 0.45, 4)
@@ -148,20 +152,25 @@ export class DecorScene extends ExampleScene {
     // Radius is a continuous byte, so it interpolates across the quad like a
     // colour corner does — a tab shape, square along the bottom.
     this.add
-      .msdfText(950, 170, "Inter", "a tab, not a pill", 34)
+      .msdfText(950, 140, "Inter", "a tab, not a pill", 34)
       .setColor("#1a1030")
       .setOrigin(0.5)
       .setHighlight({
         color: 0x7fd4ff,
         radius: { topLeft: 1, topRight: 1, bottomLeft: 0, bottomRight: 0 },
-        softness: { topLeft: 0, topRight: 0.5, bottomLeft: 0, bottomRight: 0.5 },
+        softness: {
+          topLeft: 0,
+          topRight: 0.5,
+          bottomLeft: 0,
+          bottomRight: 0.5,
+        },
         padding: { x: 0.3, y: 0.12 },
       });
 
     // Softening the face alone reads as a marker pen: no border, translucent,
     // and enough blur that the edge stops being a rule.
     this.add
-      .msdfText(330, 258, "Inter", "drawn on with a marker", 36)
+      .msdfText(330, 210, "Inter", "drawn on with a marker", 36)
       .setColor("#1a1030")
       .setOrigin(0.5)
       .setHighlight({
@@ -180,7 +189,7 @@ export class DecorScene extends ExampleScene {
     // layers, so it dims the ring without closing the gate this face is holding
     // open.)
     this.add
-      .msdfText(950, 258, "Inter", "W A R P   C O R E", 36)
+      .msdfText(950, 210, "Inter", "W A R P   C O R E", 36)
       .setColor("#0b0d12")
       .setOrigin(0.5)
       .setHighlight({
@@ -195,7 +204,7 @@ export class DecorScene extends ExampleScene {
 
     // Rich-text runs reaching the highlight lane.
     const marker = this.add
-      .msdfText(640, 330, "Inter", "", 30)
+      .msdfText(640, 255, "Inter", "", 30)
       .setColor("#f0ecff")
       .setOrigin(0.5, 0)
       .setCenterAlign()
@@ -204,12 +213,22 @@ export class DecorScene extends ExampleScene {
     // One overlay across both runs, so both resolve to the *same* highlight and
     // merge into one pill — two segments each naming this literal would not.
     marker.addStyle("sizes and fonts", {
-      highlight: { color: 0x7fd4ff, alpha: 0.35, radius: 1, padding: 0.1 },
+      highlight: {
+        color: 0x7fd4ff,
+        alpha: 0.35,
+        radius: 1,
+        padding: {
+          top: -0.1,
+          bottom: 0.1,
+          left: -0.1,
+          right: 0,
+        },
+      },
     });
 
     // Underline / strikethrough splits, driven purely by the segments.
     this.add
-      .msdfText(640, 448, "Inter", "", 28)
+      .msdfText(640, 410, "Inter", "", 28)
       .setColor("#f0ecff")
       .setOrigin(0.5, 0)
       .setCenterAlign()
@@ -221,7 +240,7 @@ export class DecorScene extends ExampleScene {
     // period is rounded to fit each rect a whole number of times — so a rule
     // always begins and ends the same way, whatever it happens to span.
     this.add
-      .msdfText(280, 566, "Inter", "dashed", 30)
+      .msdfText(280, 525, "Inter", "dashed", 30)
       .setColor("#f0ecff")
       .setOrigin(0.5)
       .setUnderline({ dash: true });
@@ -231,32 +250,42 @@ export class DecorScene extends ExampleScene {
     // circle. Inter's underline is 0.068 em, so a 1.6x rule is ~0.11 em thick —
     // which is where `length` has to land for a round dot rather than a lozenge.
     this.add
-      .msdfText(530, 566, "Inter", "dotted", 30)
+      .msdfText(530, 525, "Inter", "dotted", 30)
       .setColor("#f0ecff")
       .setOrigin(0.5)
-      .setUnderline({ thickness: 1.6, dash: { length: 0.11, gap: 0.1, radius: 1 } });
+      .setUnderline({
+        thickness: 1.6,
+        dash: { length: 0.11, gap: 0.1, radius: 1 },
+      });
 
     // Softness blurs a dash exactly as it blurs a pill — inward from its own box.
     this.add
-      .msdfText(800, 566, "Inter", "soft", 30)
+      .msdfText(800, 525, "Inter", "soft", 30)
       .setColor("#f0ecff")
       .setOrigin(0.5)
-      .setUnderline({ thickness: 2.5, color: 0x7fd4ff, dash: { length: 0.24, gap: 0.16, radius: 1, softness: 0.9 } });
+      .setUnderline({
+        thickness: 2.5,
+        color: 0x7fd4ff,
+        dash: { length: 0.24, gap: 0.16, radius: 1, softness: 0.9 },
+      });
 
     // And the ants march: one `dashPhase` field, tweened in `update`. Nothing is
     // rebuilt — the phase slides the rect's UV origin at submit time — and a dash
     // cut by the rule's end simply travels through it.
     this.ants = this.add
-      .msdfText(1040, 566, "Inter", "marching", 30)
+      .msdfText(1040, 525, "Inter", "marching", 30)
       .setColor("#ffd23f")
       .setOrigin(0.5)
-      .setUnderline({ thickness: 1.4, dash: { length: 0.16, gap: 0.1, radius: 1 } });
+      .setUnderline({
+        thickness: 1.4,
+        dash: { length: 0.16, gap: 0.1, radius: 1 },
+      });
   }
 
   /** The one row the controls touch. */
   private buildPlayground(): void {
     this.playground = this.add
-      .msdfText(640, 645, "Inter", "P L A Y G R O U N D", 40)
+      .msdfText(640, 610, "Inter", "P L A Y G R O U N D", 40)
       .setColor("#fff6d5")
       .setOrigin(0.5);
     this.applyPlayground();
@@ -312,7 +341,7 @@ export class DecorScene extends ExampleScene {
     // text flips the moment face alpha stops being 0, which is the one thing a
     // static caption could never show.
     p.note = !p.twoTone
-      ? "off — two-tone ramps the ring from\nborder (rim) to inner (core) color"
+      ? "off - two-tone ramps the ring from\nborder (rim) to inner (core) color"
       : p.faceAlpha === 0
         ? "face α 0 has freed the face color\nslot: the ring ramps border → inner"
         : "no ramp: face α > 0, so the face is\nstill using the slot. Set it to 0.";

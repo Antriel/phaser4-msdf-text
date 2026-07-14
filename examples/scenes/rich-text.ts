@@ -119,7 +119,7 @@ export class RichTextScene extends ExampleScene {
     this.applyAll();
 
     this.caption(
-      "Paint order: segments → overlays (in the order added) → callback; the style added last " +
+      "Paint order: segments -> overlays (in the order added) -> callback; the style added last " +
         "wins where two overlap. The text getter still returns the plain string. Content-anchored " +
         "overlays survive a text change and re-derive; position-anchored ones are dropped by it. " +
         "The callback layers alpha over the overlay's colour, keyed on each glyph's srcIndex.",
