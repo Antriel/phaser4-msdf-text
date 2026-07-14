@@ -60,6 +60,7 @@ export class DecorScene extends ExampleScene {
     radius: 1,
     softness: 0,
     border: 0.18,
+    faceColor: 0xd6304a,
     borderColor: 0xffd23f,
     borderAlpha: 1,
     alpha: 1,
@@ -69,13 +70,21 @@ export class DecorScene extends ExampleScene {
     padX: 0.3,
     padY: 0.12,
     underline: true,
+    customColor: false,
+    ruleColor: 0x7fd4ff,
+    customAlpha: false,
+    ruleAlpha: 1,
     thickness: 1,
     offset: 0,
     dash: false,
     dashLength: 0.14,
     dashGap: 0.09,
     dashRadius: 0,
+    dashSoftness: 0,
+    march: false,
+    marchSpeed: 1,
     strike: false,
+    note: "",
   };
 
   constructor() {
@@ -88,9 +97,17 @@ export class DecorScene extends ExampleScene {
    * (the renderer wraps it), and it resolves at submit time, so this costs no
    * rebuild, no re-seed and no relayout. A tween on the field would do just as
    * well; this is only so the speed reads honestly per second.
+   *
+   * The playground's own `march` toggle drives the identical field on
+   * `this.playground`, so whatever dash you dial in above can be set marching
+   * without touching `applyPlayground` at all — `dashPhase` lives outside the
+   * decoration spec precisely so animating it never rebuilds anything.
    */
   update(_time: number, delta: number): void {
     if (this.ants) this.ants.dashPhase += delta / 1000;
+    if (this.playground && this.params.march) {
+      this.playground.dashPhase += (delta / 1000) * this.params.marchSpeed;
+    }
   }
 
   protected build(): void {
@@ -252,7 +269,7 @@ export class DecorScene extends ExampleScene {
   private applyPlayground(): void {
     const p = this.params;
     this.playground.setHighlight({
-      color: 0xd6304a,
+      color: p.faceColor,
       // Two different things: `alpha` fades the pill as a shape (face and ring
       // together), `faceAlpha` hollows it out — and a `faceAlpha` of 0 is what
       // frees the colour slot for the two-tone ramp below.
@@ -270,11 +287,35 @@ export class DecorScene extends ExampleScene {
     // off — no sentinel, no fold, the same constant params a rule has always
     // packed. A strikethrough takes the identical spec: the two are one code
     // path that differs only in where the rect lands.
-    const dash = p.dash ? { length: p.dashLength, gap: p.dashGap, radius: p.dashRadius } : false;
+    const dash = p.dash
+      ? { length: p.dashLength, gap: p.dashGap, radius: p.dashRadius, softness: p.dashSoftness }
+      : false;
+    // Both `color` and `alpha` default to "inherit the run's resolved fill" —
+    // there is no numeric value that means that, so each gets its own toggle
+    // rather than a slider alone. `undefined` (toggle off) is what re-opens the
+    // inherit path; a rule shares this with a highlight's `innerColor` sentinel
+    // in spirit, though here it's a JS `undefined`, not a packed byte.
+    const decorColor = p.customColor ? p.ruleColor : undefined;
+    const decorAlpha = p.customAlpha ? p.ruleAlpha : undefined;
     this.playground.setUnderline(
-      p.underline ? { thickness: p.thickness, offset: p.offset, dash } : false,
+      p.underline
+        ? { color: decorColor, alpha: decorAlpha, thickness: p.thickness, offset: p.offset, dash }
+        : false,
     );
-    this.playground.setStrikethrough(p.strike ? { dash } : false);
+    // Strikethrough takes the identical spec — same lane, same inherit rule —
+    // so the color/alpha controls above drive both rules at once.
+    this.playground.setStrikethrough(p.strike ? { color: decorColor, alpha: decorAlpha, dash } : false);
+
+    // The status line under the two-tone controls. It states the gate as a
+    // *reaction*: two-tone is not a mode, it is what the shader does with the
+    // face's freed colour slot when the face alpha byte is exactly 0 — so the
+    // text flips the moment face alpha stops being 0, which is the one thing a
+    // static caption could never show.
+    p.note = !p.twoTone
+      ? "off — two-tone ramps the ring from\nborder (rim) to inner (core) color"
+      : p.faceAlpha === 0
+        ? "face α 0 has freed the face color\nslot: the ring ramps border → inner"
+        : "no ramp: face α > 0, so the face is\nstill using the slot. Set it to 0.";
   }
 
   protected addControls(pane: Pane): void {
@@ -287,6 +328,10 @@ export class DecorScene extends ExampleScene {
     h.addBinding(this.params, "radius", { min: 0, max: 1, step: 0.01 }).on("change", apply);
     h.addBinding(this.params, "softness", { min: 0, max: 1, step: 0.01 }).on("change", apply);
     h.addBinding(this.params, "border", { label: "borderWidth", min: 0, max: 1, step: 0.01 }).on("change", apply);
+    // The plain split: a pill is two layers, and each owns a flat color — the
+    // face fills the inside, the border paints the ring. (Two-tone, below, is a
+    // different thing: a ramp *within* the ring.)
+    h.addBinding(this.params, "faceColor", { label: "face color", view: "color" }).on("change", apply);
     h.addBinding(this.params, "borderColor", { label: "border color", view: "color" }).on("change", apply);
     // The three alphas, in the order they compose. A pill is two layers, so each
     // layer has one — drag `face alpha` to 0 and the pill hollows out into its own
@@ -297,8 +342,24 @@ export class DecorScene extends ExampleScene {
     h.addBinding(this.params, "alpha", { label: "alpha (whole pill)", min: 0, max: 1, step: 0.05 }).on("change", apply);
     h.addBinding(this.params, "faceAlpha", { label: "face alpha", min: 0, max: 1, step: 0.05 }).on("change", apply);
     h.addBinding(this.params, "borderAlpha", { label: "border alpha", min: 0, max: 1, step: 0.05 }).on("change", apply);
-    h.addBinding(this.params, "twoTone", { label: "two-tone" }).on("change", apply);
+    // Two-tone is gated on face alpha being exactly 0 — the empty face is what
+    // donates its color slot to the ramp's inner end. The toggle honours that
+    // gate instead of silently losing to it: switching it on snaps face alpha
+    // to 0 (watch the slider move), and dragging face alpha back up kills the
+    // ramp — which the status line below narrates as it happens.
+    h.addBinding(this.params, "twoTone", { label: "two-tone ring" }).on("change", (ev) => {
+      if (ev.value && this.params.faceAlpha > 0) {
+        this.params.faceAlpha = 0;
+        pane.refresh();
+      }
+      apply();
+    });
     h.addBinding(this.params, "innerColor", { label: "inner color", view: "color" }).on("change", apply);
+    // A readonly string binding is tweakpane's one way to put prose in the
+    // pane; hiding the label (settable to null only post-creation) gives the
+    // text the full row. It polls `params.note`, so applyPlayground just
+    // rewrites the string.
+    h.addBinding(this.params, "note", { readonly: true, multiline: true, rows: 2 }).label = null;
     // Em-relative, and negative is legal: the pill's box starts at the run's
     // ascender/descender, so a negative padY crops in towards the letterforms.
     h.addBinding(this.params, "padX", { label: "padding x (em)", min: -0.2, max: 1, step: 0.01 }).on("change", apply);
@@ -306,6 +367,14 @@ export class DecorScene extends ExampleScene {
 
     const u = pane.addFolder({ title: "Underline (playground row)" });
     u.addBinding(this.params, "underline", { label: "enabled" }).on("change", apply);
+    // Off (default) leaves `color`/`alpha` undefined, so both rules inherit the
+    // run's resolved fill colour/alpha — the same behaviour the DECOR gallery
+    // row above demonstrates by splitting per coloured word. On pins them to
+    // the values below instead, on both underline and strikethrough.
+    u.addBinding(this.params, "customColor", { label: "custom color" }).on("change", apply);
+    u.addBinding(this.params, "ruleColor", { label: "rule color", view: "color" }).on("change", apply);
+    u.addBinding(this.params, "customAlpha", { label: "custom alpha" }).on("change", apply);
+    u.addBinding(this.params, "ruleAlpha", { label: "rule alpha", min: 0, max: 1, step: 0.05 }).on("change", apply);
     u.addBinding(this.params, "thickness", { min: 0.25, max: 4, step: 0.05 }).on("change", apply);
     u.addBinding(this.params, "offset", { label: "offset (em)", min: -0.3, max: 0.3, step: 0.01 }).on("change", apply);
     // Dash length and gap are em-relative to the run's size, like `offset`; the
@@ -317,6 +386,15 @@ export class DecorScene extends ExampleScene {
     u.addBinding(this.params, "dashLength", { label: "dash length (em)", min: 0.01, max: 0.5, step: 0.01 }).on("change", apply);
     u.addBinding(this.params, "dashGap", { label: "dash gap (em)", min: 0.01, max: 0.5, step: 0.01 }).on("change", apply);
     u.addBinding(this.params, "dashRadius", { label: "cap radius", min: 0, max: 1, step: 0.01 }).on("change", apply);
+    // Blurs the dash inward from its own box, exactly like a pill's softness —
+    // the "soft" look in the gallery row above is this field.
+    u.addBinding(this.params, "dashSoftness", { label: "dash softness", min: 0, max: 1, step: 0.01 }).on("change", apply);
+    // `dashPhase` lives outside the decoration spec (it resolves at submit
+    // time, not rebuild), so marching it needs no `apply()` — it's a plain
+    // per-frame increment in `update()`, same field the static "marching"
+    // sample in the gallery ticks.
+    u.addBinding(this.params, "march", { label: "march (animate dashPhase)" });
+    u.addBinding(this.params, "marchSpeed", { label: "march speed (periods/s)", min: -3, max: 3, step: 0.05 });
 
     pane.addBinding(this.params, "strike", { label: "strikethrough" }).on("change", apply);
   }
