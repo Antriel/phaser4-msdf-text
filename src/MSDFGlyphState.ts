@@ -12,6 +12,11 @@
  * cover the common "all four corners the same" case; reach into the per-corner
  * `Corners` objects only for gradients.
  *
+ * The one thing a glyph's alpha is *not* is the object's `alpha`. That is a
+ * modulation the renderer multiplies in when it packs, so it composes with
+ * whatever is written here instead of being overwritten by it: fading a text out
+ * fades its glyphs, its runs' shadows and its pills, whoever last set their alpha.
+ *
  * `weight` and every effect channel on the two layers — `outline.width` /
  * `.rounded` / `.softness`, `shadow.softness` / `.spread` / `.rounded` — are
  * per-corner too, because they ride the same interpolated vertex attribute: a

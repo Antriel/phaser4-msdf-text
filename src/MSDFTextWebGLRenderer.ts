@@ -99,16 +99,30 @@ const zeroColor: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, botto
 const outlineToneBuf: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 const shadowToneBuf: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 const zeroCorners: Corners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
-// The object's effective per-corner alpha, for decorations that inherit it.
-const baseAlpha: Corners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
+
+/**
+ * The object's own per-corner alpha (Phaser's `Alpha` component). It is a
+ * **modulation**, so it is applied *here*, where every colour attribute is packed
+ * — never seeded into a `GlyphState` or a `DecorationState`.
+ *
+ * That is the whole reason it lives at pack time: a style run *overwrites* what
+ * the seed wrote (that is what a run is), so an object alpha folded into the seed
+ * would be silently discarded by any run naming an `alpha` of its own — and by
+ * any display / decoration callback setting one. Multiplied in at the pack, it
+ * survives both, a highlight pill fades like everything else, and changing
+ * `text.alpha` costs no re-seed at all.
+ */
+const objAlpha: Corners = { topLeft: 1, topRight: 1, bottomLeft: 1, bottomRight: 1 };
 
 // A solid underline / strikethrough rect: a hard-edged box, no radius, no border,
 // no blur. A highlight pill and a dashed rule carry their own packed params.
 const rectParams: PackedCorners = { topLeft: SOLID_PARAMS, topRight: SOLID_PARAMS, bottomLeft: SOLID_PARAMS, bottomRight: SOLID_PARAMS };
 const rectColor: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
-// A rect state packs its own border and shape every frame (the built rect packed
-// them once, at rebuild); these are where they land.
-const stateBorder: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
+// A pill's border ring, packed every frame — by both rect paths, since its alpha
+// takes the object's live alpha and no rebuild is triggered by an alpha change.
+// A rect *state* also packs its own shape each frame (the built rect packed that
+// once, at rebuild, and it carries no alpha to modulate).
+const borderBuf: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 const stateParams: PackedCorners = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 // A rect spans the full 0..1 of its own UV box. Originally just so
 // `fwidth(texCoord)` stayed nonzero, but the shader now reads those derivatives
@@ -273,12 +287,12 @@ function packStaticParams(src: any, count: number): void {
 /** The smallest alpha that survives `packColor`'s truncation to a byte. */
 const MIN_ALPHA = 1 / 255;
 
-/** Pack a per-corner colour + alpha pair into a batch buffer. */
+/** Pack a per-corner colour + alpha pair into a batch buffer, under `objAlpha`. */
 function packAspect(buf: PackedCorners, color: Corners, alpha: Corners): void {
-    buf.topLeft = packColor(color.topLeft, alpha.topLeft);
-    buf.topRight = packColor(color.topRight, alpha.topRight);
-    buf.bottomLeft = packColor(color.bottomLeft, alpha.bottomLeft);
-    buf.bottomRight = packColor(color.bottomRight, alpha.bottomRight);
+    buf.topLeft = packColor(color.topLeft, alpha.topLeft * objAlpha.topLeft);
+    buf.topRight = packColor(color.topRight, alpha.topRight * objAlpha.topRight);
+    buf.bottomLeft = packColor(color.bottomLeft, alpha.bottomLeft * objAlpha.bottomLeft);
+    buf.bottomRight = packColor(color.bottomRight, alpha.bottomRight * objAlpha.bottomRight);
 }
 
 /**
@@ -304,12 +318,19 @@ function packToneAspect(buf: PackedCorners, color: Corners): void {
  *
  * Only the combined pass needs this: a layered fill quad carries no outline, and
  * a shadow or silhouette quad has no fill colour to confuse in the first place.
+ *
+ * The handover is decided on the alpha the shader will actually see — i.e. after
+ * `objAlpha` — because that is the byte it reads the sentinel off.
  */
 function packFillAspect(buf: PackedCorners, color: Corners, alpha: Corners, fallback: Corners): void {
-    buf.topLeft = packColor(alpha.topLeft >= MIN_ALPHA ? color.topLeft : fallback.topLeft, alpha.topLeft);
-    buf.topRight = packColor(alpha.topRight >= MIN_ALPHA ? color.topRight : fallback.topRight, alpha.topRight);
-    buf.bottomLeft = packColor(alpha.bottomLeft >= MIN_ALPHA ? color.bottomLeft : fallback.bottomLeft, alpha.bottomLeft);
-    buf.bottomRight = packColor(alpha.bottomRight >= MIN_ALPHA ? color.bottomRight : fallback.bottomRight, alpha.bottomRight);
+    const aTL = alpha.topLeft * objAlpha.topLeft;
+    const aTR = alpha.topRight * objAlpha.topRight;
+    const aBL = alpha.bottomLeft * objAlpha.bottomLeft;
+    const aBR = alpha.bottomRight * objAlpha.bottomRight;
+    buf.topLeft = packColor(aTL >= MIN_ALPHA ? color.topLeft : fallback.topLeft, aTL);
+    buf.topRight = packColor(aTR >= MIN_ALPHA ? color.topRight : fallback.topRight, aTR);
+    buf.bottomLeft = packColor(aBL >= MIN_ALPHA ? color.bottomLeft : fallback.bottomLeft, aBL);
+    buf.bottomRight = packColor(aBR >= MIN_ALPHA ? color.bottomRight : fallback.bottomRight, aBR);
 }
 
 /**
@@ -320,10 +341,10 @@ function packFillAspect(buf: PackedCorners, color: Corners, alpha: Corners, fall
  * hugging the letterform, which has a body and must survive.
  */
 function packOutlineAspect(buf: PackedCorners, color: Corners, alpha: Corners, width: Corners, softness: Corners): void {
-    buf.topLeft = packColor(color.topLeft, (width.topLeft > 0 || softness.topLeft > 0) ? alpha.topLeft : 0);
-    buf.topRight = packColor(color.topRight, (width.topRight > 0 || softness.topRight > 0) ? alpha.topRight : 0);
-    buf.bottomLeft = packColor(color.bottomLeft, (width.bottomLeft > 0 || softness.bottomLeft > 0) ? alpha.bottomLeft : 0);
-    buf.bottomRight = packColor(color.bottomRight, (width.bottomRight > 0 || softness.bottomRight > 0) ? alpha.bottomRight : 0);
+    buf.topLeft = packColor(color.topLeft, (width.topLeft > 0 || softness.topLeft > 0) ? alpha.topLeft * objAlpha.topLeft : 0);
+    buf.topRight = packColor(color.topRight, (width.topRight > 0 || softness.topRight > 0) ? alpha.topRight * objAlpha.topRight : 0);
+    buf.bottomLeft = packColor(color.bottomLeft, (width.bottomLeft > 0 || softness.bottomLeft > 0) ? alpha.bottomLeft * objAlpha.bottomLeft : 0);
+    buf.bottomRight = packColor(color.bottomRight, (width.bottomRight > 0 || softness.bottomRight > 0) ? alpha.bottomRight * objAlpha.bottomRight : 0);
 }
 
 /**
@@ -486,6 +507,30 @@ function packRectCorner(rgb: number, alpha: number, inner: number): number {
 }
 
 /**
+ * A pill's border ring, zeroing its alpha wherever the width is zero — at zero
+ * width the ring's outer edge coincides with the face's, so it would only fringe
+ * the pill's antialiased edge. The same rule, for the same reason, that
+ * `packOutlineAspect` applies to a glyph's outline.
+ *
+ * One function for both rect paths: a `ResolvedHighlight` and a `DecorationState`
+ * name the ring identically, and neither may bake it, since the alpha it packs is
+ * under the object's live `objAlpha`.
+ */
+interface BorderRing {
+    borderColor: Corners;
+    borderAlpha: Corners;
+    borderWidth: Corners;
+}
+
+function packBorderRing(buf: PackedCorners, r: BorderRing): void {
+    const c = r.borderColor, a = r.borderAlpha, w = r.borderWidth;
+    buf.topLeft = packColor(c.topLeft, w.topLeft > 0 ? a.topLeft * objAlpha.topLeft : 0);
+    buf.topRight = packColor(c.topRight, w.topRight > 0 ? a.topRight * objAlpha.topRight : 0);
+    buf.bottomLeft = packColor(c.bottomLeft, w.bottomLeft > 0 ? a.bottomLeft * objAlpha.bottomLeft : 0);
+    buf.bottomRight = packColor(c.bottomRight, w.bottomRight > 0 ? a.bottomRight * objAlpha.bottomRight : 0);
+}
+
+/**
  * Submit the decoration rects belonging to one pass, back to front. They follow
  * the layout, never the per-glyph transform: a scaled or rotated glyph moves, its
  * underline (or the pill behind it) does not.
@@ -509,7 +554,7 @@ function submitDecorations(
     originOffsetX: number,
     originOffsetY: number,
     baseRgb: number,
-    baseAlpha: Corners,
+    baseAlpha: number,
     dashPhase: number
 ): void {
     for (let i = 0; i < rects.length; i++) {
@@ -541,16 +586,31 @@ function submitDecorations(
         const rTR = rgb ? rgb.topRight : baseRgb;
         const rBL = rgb ? rgb.bottomLeft : baseRgb;
         const rBR = rgb ? rgb.bottomRight : baseRgb;
-        rectColor.topLeft = packRectCorner(rTL, alpha ? alpha.topLeft : baseAlpha.topLeft, inner ? inner.topLeft : rTL);
-        rectColor.topRight = packRectCorner(rTR, alpha ? alpha.topRight : baseAlpha.topRight, inner ? inner.topRight : rTR);
-        rectColor.bottomLeft = packRectCorner(rBL, alpha ? alpha.bottomLeft : baseAlpha.bottomLeft, inner ? inner.bottomLeft : rBL);
-        rectColor.bottomRight = packRectCorner(rBR, alpha ? alpha.bottomRight : baseAlpha.bottomRight, inner ? inner.bottomRight : rBR);
+        // An absent alpha inherits the object's fill alpha; either way the object's
+        // own `alpha` modulates it here, so a pill fades with the text it sits behind.
+        const aTL = (alpha ? alpha.topLeft : baseAlpha) * objAlpha.topLeft;
+        const aTR = (alpha ? alpha.topRight : baseAlpha) * objAlpha.topRight;
+        const aBL = (alpha ? alpha.bottomLeft : baseAlpha) * objAlpha.bottomLeft;
+        const aBR = (alpha ? alpha.bottomRight : baseAlpha) * objAlpha.bottomRight;
+        rectColor.topLeft = packRectCorner(rTL, aTL, inner ? inner.topLeft : rTL);
+        rectColor.topRight = packRectCorner(rTR, aTR, inner ? inner.topRight : rTR);
+        rectColor.bottomLeft = packRectCorner(rBL, aBL, inner ? inner.bottomLeft : rBL);
+        rectColor.bottomRight = packRectCorner(rBR, aBR, inner ? inner.bottomRight : rBR);
+
+        // A pill's ring, packed per frame off the resolved highlight it kept. A
+        // rule has none, and takes the constant zero.
+        const ring: BorderRing | undefined = r.highlight;
+        let borderData = zeroColor;
+        if (ring) {
+            packBorderRing(borderBuf, ring);
+            borderData = borderBuf;
+        }
 
         // Rects take no deform: they live outside `_characters`, so no `GlyphState`
         // owns one (see the decorations note in CLAUDE.md).
         BatchMSDFChar(drawingContext, batchHandler, b.texture, rectQuad,
             originOffsetX, originOffsetY, calcMatrix, rectColor,
-            r.border || zeroColor, r.params || rectParams, null, null, 0);
+            borderData, r.params || rectParams, null, null, 0);
     }
 }
 
@@ -595,7 +655,7 @@ function submitDecorationStates(
         const u1 = count > 0 ? count - phase : 1;
 
         packRectStateColor(rectColor, s);
-        packRectStateBorder(stateBorder, s);
+        packBorderRing(borderBuf, s);
         packRectStateParams(stateParams, s);
 
         if (s.scaleX !== 1 || s.scaleY !== 1 || s.rotation !== 0) {
@@ -621,7 +681,7 @@ function submitDecorationStates(
             tempCharData.u1 = u1;
             tempCharData.v1 = 1;
             BatchMSDFChar(drawingContext, batchHandler, b.texture, tempCharData, 0, 0, tempCharMatrix,
-                rectColor, stateBorder, stateParams, s.offsetX, s.offsetY, 1);
+                rectColor, borderBuf, stateParams, s.offsetX, s.offsetY, 1);
         } else {
             rectQuad.x = s.x;
             rectQuad.y = s.y;
@@ -633,33 +693,26 @@ function submitDecorationStates(
             // normalize against — so it rides the same corner offsets with a unit
             // scale.
             BatchMSDFChar(drawingContext, batchHandler, b.texture, rectQuad,
-                originOffsetX, originOffsetY, calcMatrix, rectColor, stateBorder, stateParams,
+                originOffsetX, originOffsetY, calcMatrix, rectColor, borderBuf, stateParams,
                 s.offsetX, s.offsetY, 1);
         }
     }
 }
 
-/** A rect state's face colour, with the same zero-alpha two-tone handover as a built rect. */
+/**
+ * A rect state's face colour, under `objAlpha`, with the same zero-alpha two-tone
+ * handover as a built rect.
+ */
 function packRectStateColor(buf: PackedCorners, s: DecorationState): void {
     const c = s.color, a = s.alpha, inner = s.innerColor;
-    buf.topLeft = packRectCorner(c.topLeft, a.topLeft, inner.topLeft);
-    buf.topRight = packRectCorner(c.topRight, a.topRight, inner.topRight);
-    buf.bottomLeft = packRectCorner(c.bottomLeft, a.bottomLeft, inner.bottomLeft);
-    buf.bottomRight = packRectCorner(c.bottomRight, a.bottomRight, inner.bottomRight);
-}
-
-/**
- * A rect state's border ring, zeroing its alpha wherever the width is zero — the
- * rule `packBorder` applies at build time, and `packOutlineAspect` applies to a
- * glyph's outline, for the same reason: at zero width the ring has no body and
- * would only fringe the rect's antialiased edge.
- */
-function packRectStateBorder(buf: PackedCorners, s: DecorationState): void {
-    const c = s.borderColor, a = s.borderAlpha, w = s.borderWidth;
-    buf.topLeft = packColor(c.topLeft, w.topLeft > 0 ? a.topLeft : 0);
-    buf.topRight = packColor(c.topRight, w.topRight > 0 ? a.topRight : 0);
-    buf.bottomLeft = packColor(c.bottomLeft, w.bottomLeft > 0 ? a.bottomLeft : 0);
-    buf.bottomRight = packColor(c.bottomRight, w.bottomRight > 0 ? a.bottomRight : 0);
+    const aTL = a.topLeft * objAlpha.topLeft;
+    const aTR = a.topRight * objAlpha.topRight;
+    const aBL = a.bottomLeft * objAlpha.bottomLeft;
+    const aBR = a.bottomRight * objAlpha.bottomRight;
+    buf.topLeft = packRectCorner(c.topLeft, aTL, inner.topLeft);
+    buf.topRight = packRectCorner(c.topRight, aTR, inner.topRight);
+    buf.bottomLeft = packRectCorner(c.bottomLeft, aBL, inner.bottomLeft);
+    buf.bottomRight = packRectCorner(c.bottomRight, aBR, inner.bottomRight);
 }
 
 /**
@@ -717,6 +770,13 @@ function MSDFTextWebGLRenderer(
     const matrixResult = GetCalcMatrix(src, camera, parentMatrix);
     const calcMatrix = matrixResult.calc;
 
+    // The object's own alpha, published for every pack below. A modulation, not a
+    // seeded value — see `objAlpha`.
+    objAlpha.topLeft = src._alphaTL;
+    objAlpha.topRight = src._alphaTR;
+    objAlpha.bottomLeft = src._alphaBL;
+    objAlpha.bottomRight = src._alphaBR;
+
     // Subtract displayOrigin so origin maps to the text's bounding box.
     const originOffsetX = -src.displayOriginX;
     const originOffsetY = -src.displayOriginY;
@@ -740,13 +800,11 @@ function MSDFTextWebGLRenderer(
     // exact — and it keeps a rect's U span small however long a marching-ants
     // tween has been accumulating.
     let dashPhase = 0;
+    // The fill alpha a rule inherits when it named none of its own. The object's
+    // `alpha` is *not* in it — that rides `objAlpha`, at the pack.
+    let baseAlpha = 0;
     if (hasDecorations) {
-        const cA = src._color.a;
-        baseAlpha.topLeft = cA * src._alphaTL;
-        baseAlpha.topRight = cA * src._alphaTR;
-        baseAlpha.bottomLeft = cA * src._alphaBL;
-        baseAlpha.bottomRight = cA * src._alphaBR;
-
+        baseAlpha = src._color.a;
         const p = src.dashPhase;
         dashPhase = p - Math.floor(p);
     }
@@ -769,13 +827,14 @@ function MSDFTextWebGLRenderer(
         // per-corner object alpha. Outline and shadow likewise use one colour.
         const c = src._color;
         const cA = c.a;
-        const aTL = cA * src._alphaTL, aTR = cA * src._alphaTR, aBL = cA * src._alphaBL, aBR = cA * src._alphaBR;
+        const aTL = cA * objAlpha.topLeft, aTR = cA * objAlpha.topRight;
+        const aBL = cA * objAlpha.bottomLeft, aBR = cA * objAlpha.bottomRight;
 
         const oc = src.outlineColor, oA = hasOutline ? src.outlineAlpha : 0;
-        outlineBuf.topLeft = packColor(oc, oA * src._alphaTL);
-        outlineBuf.topRight = packColor(oc, oA * src._alphaTR);
-        outlineBuf.bottomLeft = packColor(oc, oA * src._alphaBL);
-        outlineBuf.bottomRight = packColor(oc, oA * src._alphaBR);
+        outlineBuf.topLeft = packColor(oc, oA * objAlpha.topLeft);
+        outlineBuf.topRight = packColor(oc, oA * objAlpha.topRight);
+        outlineBuf.bottomLeft = packColor(oc, oA * objAlpha.bottomLeft);
+        outlineBuf.bottomRight = packColor(oc, oA * objAlpha.bottomRight);
 
         // A fully transparent fill frees its colour attribute for the two-tone
         // ramp, so it must carry the outline's colour rather than the (now
@@ -787,10 +846,10 @@ function MSDFTextWebGLRenderer(
         fillBuf.bottomRight = packColor(aBR >= MIN_ALPHA ? fc : oc, aBR);
 
         const sc = src.shadowColor, sA = src.shadowAlpha;
-        shadowBuf.topLeft = packColor(sc, sA * src._alphaTL);
-        shadowBuf.topRight = packColor(sc, sA * src._alphaTR);
-        shadowBuf.bottomLeft = packColor(sc, sA * src._alphaBL);
-        shadowBuf.bottomRight = packColor(sc, sA * src._alphaBR);
+        shadowBuf.topLeft = packColor(sc, sA * objAlpha.topLeft);
+        shadowBuf.topRight = packColor(sc, sA * objAlpha.topRight);
+        shadowBuf.bottomLeft = packColor(sc, sA * objAlpha.bottomLeft);
+        shadowBuf.bottomRight = packColor(sc, sA * objAlpha.bottomRight);
 
         // Inner ends of the two colour ramps. `-1` means "inherit the outer
         // colour", which makes the shader's mix an identity.

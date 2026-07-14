@@ -600,6 +600,20 @@ public/assets/fonts/       # Sample fonts for the dev app only (not shipped to n
 - **FONTS.md** — generating MSDF font atlases
 
 ## Gotchas / invariants
+- **Object alpha is a pack-time modulation** — `text.alpha` (and the per-corner
+  `alphaTopLeft`…) never reaches a `GlyphState` or a `DecorationState`. The
+  renderer publishes it as `objAlpha` and multiplies it into every colour
+  attribute as it packs. It **has** to live there: a style run *overwrites* what
+  the seed wrote — that is what a run is — so an alpha folded into the seed was
+  silently discarded by any run naming an `alpha` of its own, and by any callback
+  setting one. That was a real bug: a per-run shadow ignored `text.alpha`, and a
+  highlight pill (whose `alpha` and `borderAlpha` always resolve, defaulting to
+  `1`) never faded at all. Consequences: an alpha change costs **no re-seed and no
+  rebuild** (so `Components.Alpha` needs no override, and a fade tween on a styled
+  text is free), and a pill's border ring is packed at *submit* rather than baked
+  at rebuild — its alpha has to see the object's live value. The zero-alpha
+  two-tone sentinel is read off the *modulated* byte, which is the one the shader
+  sees.
 - **Premultiplied alpha (shader output)** — all shader output must be
   `vec4(rgb * a, a)`.
 - **Atlas upload (no premultiply)** — `MSDFFontFile` uploads the atlas itself

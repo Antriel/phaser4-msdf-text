@@ -45,7 +45,7 @@ import {
     type StyleRun,
     type StyleOverlay
 } from './MSDFTextStyle';
-import { packColor, packSolidParams, type Corners, type PackedCorners } from './MSDFColor';
+import { packSolidParams, type Corners, type PackedCorners } from './MSDFColor';
 import type {
     ColorValue,
     DecorationSpec,
@@ -200,22 +200,6 @@ function packPillParams(h: ResolvedHighlight): PackedCorners {
         topRight: packSolidParams(h.radius.topRight, h.borderWidth.topRight, h.softness.topRight),
         bottomLeft: packSolidParams(h.radius.bottomLeft, h.borderWidth.bottomLeft, h.softness.bottomLeft),
         bottomRight: packSolidParams(h.radius.bottomRight, h.borderWidth.bottomRight, h.softness.bottomRight)
-    };
-}
-
-/**
- * Pack a pill's border ring, zeroing its alpha wherever the width is zero — at
- * zero width the ring's outer edge coincides with the face's, so it would only
- * ever fringe the pill's antialiased edge. The same rule, for the same reason,
- * that `packOutlineAspect` applies to a glyph's outline.
- */
-function packBorder(h: ResolvedHighlight): PackedCorners {
-    const c = h.borderColor, a = h.borderAlpha, w = h.borderWidth;
-    return {
-        topLeft: packColor(c.topLeft, w.topLeft > 0 ? a.topLeft : 0),
-        topRight: packColor(c.topRight, w.topRight > 0 ? a.topRight : 0),
-        bottomLeft: packColor(c.bottomLeft, w.bottomLeft > 0 ? a.bottomLeft : 0),
-        bottomRight: packColor(c.bottomRight, w.bottomRight > 0 ? a.bottomRight : 0)
     };
 }
 
@@ -460,61 +444,6 @@ export const MSDFText: MSDFTextStatic = new Class({
     _defaultRenderNodesMap: {
         get: function () {
             return DefaultMSDFNodes;
-        }
-    },
-
-    // ========================================================================
-    // Alpha overrides
-    // ========================================================================
-    // Phaser's `Components.Alpha` mixin has no hook for "appearance changed" —
-    // it just writes `_alphaTL`/etc. directly. With rich-text styles the
-    // per-glyph array bakes the object's alpha in at seed time (like colour and
-    // weight), so these delegate to the mixin's own logic and then flag the
-    // same coalesced re-seed via `_markAppearanceDirty`.
-
-    setAlpha: function (topLeft?: number, topRight?: number, bottomLeft?: number, bottomRight?: number) {
-        Components.Alpha.setAlpha.call(this, topLeft, topRight, bottomLeft, bottomRight);
-        this._markAppearanceDirty();
-        return this;
-    },
-
-    alpha: {
-        get: function (this: any): number { return this._alpha; },
-        set: function (this: any, value: number) {
-            Components.Alpha.alpha.set.call(this, value);
-            this._markAppearanceDirty();
-        }
-    },
-
-    alphaTopLeft: {
-        get: function (this: any): number { return this._alphaTL; },
-        set: function (this: any, value: number) {
-            Components.Alpha.alphaTopLeft.set.call(this, value);
-            this._markAppearanceDirty();
-        }
-    },
-
-    alphaTopRight: {
-        get: function (this: any): number { return this._alphaTR; },
-        set: function (this: any, value: number) {
-            Components.Alpha.alphaTopRight.set.call(this, value);
-            this._markAppearanceDirty();
-        }
-    },
-
-    alphaBottomLeft: {
-        get: function (this: any): number { return this._alphaBL; },
-        set: function (this: any, value: number) {
-            Components.Alpha.alphaBottomLeft.set.call(this, value);
-            this._markAppearanceDirty();
-        }
-    },
-
-    alphaBottomRight: {
-        get: function (this: any): number { return this._alphaBR; },
-        set: function (this: any, value: number) {
-            Components.Alpha.alphaBottomRight.set.call(this, value);
-            this._markAppearanceDirty();
         }
     },
 
@@ -1431,18 +1360,18 @@ export const MSDFText: MSDFTextStatic = new Class({
             states.length = n;
         }
 
-        // The object's live colour and per-corner alpha — what a rule that named
-        // no colour of its own inherits. The static submit path resolves this per
-        // rect as it goes; here it is resolved once, into the state, so a callback
-        // never sees the "absent means inherit" sentinel.
-        const cA = this._color.a;
+        // The object's live colour and alpha — what a rule that named no colour of
+        // its own inherits. The static submit path resolves this per rect as it
+        // goes; here it is resolved once, into the state, so a callback never sees
+        // the "absent means inherit" sentinel. The object's *own* `alpha` is not in
+        // it: like a glyph's, that is a modulation the renderer applies at pack
+        // time, so a callback's alpha composes with it instead of replacing it.
         const baseRgb = this.color;
-        const aTL = cA * this._alphaTL, aTR = cA * this._alphaTR;
-        const aBL = cA * this._alphaBL, aBR = cA * this._alphaBR;
+        const baseAlpha = this._color.a;
         const phase = this.dashPhase;
 
         for (let i = 0; i < n; i++) {
-            this.seedRect(states[i], rects[i], baseRgb, aTL, aTR, aBL, aBR, phase);
+            this.seedRect(states[i], rects[i], baseRgb, baseAlpha, phase);
         }
         return states;
     },
@@ -1456,7 +1385,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         s: DecorationState,
         r: any,
         baseRgb: number,
-        aTL: number, aTR: number, aBL: number, aBR: number,
+        baseAlpha: number,
         phase: number
     ): void {
         (s as any).pass = r.pass;
@@ -1486,10 +1415,10 @@ export const MSDFText: MSDFTextStatic = new Class({
         col.bottomLeft = rgb ? rgb.bottomLeft : baseRgb;
         col.bottomRight = rgb ? rgb.bottomRight : baseRgb;
         const al = s.alpha;
-        al.topLeft = alpha ? alpha.topLeft : aTL;
-        al.topRight = alpha ? alpha.topRight : aTR;
-        al.bottomLeft = alpha ? alpha.bottomLeft : aBL;
-        al.bottomRight = alpha ? alpha.bottomRight : aBR;
+        al.topLeft = alpha ? alpha.topLeft : baseAlpha;
+        al.topRight = alpha ? alpha.topRight : baseAlpha;
+        al.bottomLeft = alpha ? alpha.bottomLeft : baseAlpha;
+        al.bottomRight = alpha ? alpha.bottomRight : baseAlpha;
 
         // The two-tone inner colour, read only where the face alpha is zero. A rule
         // has none, so it seeds the face colour and the ramp is an identity.
@@ -1713,17 +1642,20 @@ export const MSDFText: MSDFTextStatic = new Class({
         const w = g.weight, ow = this.weight;
         w.topLeft = w.topRight = w.bottomLeft = w.bottomRight = ow;
 
+        // Alpha here is the *style* alpha only — the object's own `alpha` is a
+        // modulation the renderer applies when it packs, not a value seeded in.
+        // It has to be: a style run overwrites what it seeds (that is what a run
+        // is), so an object alpha folded in here would be discarded by any run
+        // naming an alpha of its own — and by any callback setting one.
         const c = this._color;
         const cA = c.a;
-        const aTL = cA * this._alphaTL, aTR = cA * this._alphaTR;
-        const aBL = cA * this._alphaBL, aBR = cA * this._alphaBR;
 
         // Single base colour, applied to all four corners. Per-corner gradients
         // are the caller's to set after seeding (e.g. in a display callback).
         const rgb = this.color;
         const ft = g.fill.color, fa = g.fill.alpha;
         ft.topLeft = ft.topRight = ft.bottomLeft = ft.bottomRight = rgb;
-        fa.topLeft = aTL; fa.topRight = aTR; fa.bottomLeft = aBL; fa.bottomRight = aBR;
+        fa.topLeft = fa.topRight = fa.bottomLeft = fa.bottomRight = cA;
 
         const st = g.shadow.color, sa = g.shadow.alpha;
         const sc = this.shadowColor;
@@ -1732,8 +1664,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         // of a per-run / per-glyph shadow the untouched glyphs draw nothing.
         const sAlpha = this.hasShadow() ? this.shadowAlpha : 0;
         st.topLeft = st.topRight = st.bottomLeft = st.bottomRight = sc;
-        sa.topLeft = sAlpha * this._alphaTL; sa.topRight = sAlpha * this._alphaTR;
-        sa.bottomLeft = sAlpha * this._alphaBL; sa.bottomRight = sAlpha * this._alphaBR;
+        sa.topLeft = sa.topRight = sa.bottomLeft = sa.bottomRight = sAlpha;
         // `-1` means "no ramp": seed the outer colour, so the shader's mix is an
         // identity and a glyph state never carries the sentinel.
         const sin = g.shadow.innerColor;
@@ -1751,8 +1682,7 @@ export const MSDFText: MSDFTextStatic = new Class({
         const ot = g.outline.color, oa = g.outline.alpha;
         const oc = this.outlineColor, oAlpha = this.outlineAlpha;
         ot.topLeft = ot.topRight = ot.bottomLeft = ot.bottomRight = oc;
-        oa.topLeft = oAlpha * this._alphaTL; oa.topRight = oAlpha * this._alphaTR;
-        oa.bottomLeft = oAlpha * this._alphaBL; oa.bottomRight = oAlpha * this._alphaBR;
+        oa.topLeft = oa.topRight = oa.bottomLeft = oa.bottomRight = oAlpha;
         const oin = g.outline.innerColor;
         const oInner = this._outlineInnerColor >= 0 ? this._outlineInnerColor : oc;
         oin.topLeft = oin.topRight = oin.bottomLeft = oin.bottomRight = oInner;
@@ -2224,7 +2154,6 @@ export const MSDFText: MSDFTextStatic = new Class({
                     // substitutes its constant defaults. Named anyway so both rect
                     // kinds share one hidden class.
                     inner: undefined,
-                    border: undefined,
                     // A solid rule is the constant hard-edged box, so it packs
                     // nothing. A dashed one carries the dash's own shape.
                     params: dashCount > 0 ? (dash as ResolvedDash).params : undefined,
@@ -2321,7 +2250,9 @@ export const MSDFText: MSDFTextStatic = new Class({
                     // Read only where the face alpha is a zero byte, which is both
                     // "no face" and "this rgb is the border ramp's inner end".
                     inner: spec.innerColor,
-                    border: packBorder(spec),
+                    // The border ring is packed at *submit*, off `highlight`, not
+                    // baked here: its alpha has to take the object's live alpha,
+                    // and an alpha change never triggers a rebuild.
                     params: packPillParams(spec),
                     // A pill is never dashed — the byte a dash spends on its duty
                     // cycle is the pill's border width. Named so both rect kinds
