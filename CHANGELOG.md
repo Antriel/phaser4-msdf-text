@@ -5,6 +5,96 @@ All notable changes to this project are documented here. The format is based on
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0,
 so minor versions may carry breaking changes).
 
+## [0.4.0]
+
+### Added
+- **Rich text — per-run styling, no markup in the string.** `setRichText(segments)`
+  for content-as-runs, and `addStyle(target, style)` for overlays on top. Targets
+  are a keyword/`RegExp` match, a source span, a named segment, or your own
+  matcher function; the returned `StyleHandle` can `update()` or `remove()` the
+  style. Content-anchored targets survive a text change. A run takes any
+  `StyleSpec` key — colour, alpha, weight, outline, shadow, scale, rotation,
+  skew, decorations, and the structural keys below.
+- **Per-run size (`fontScale`) and per-run typeface (`font`).** Mixed sizes and
+  mixed fonts in one text object, aligned on shared baselines. A run on a
+  different atlas texture costs one more draw call; a merged atlas avoids that.
+- **Merged atlases.** `msdf-atlas-gen -and` multi-font atlases load as one
+  texture, each `-fontname` registered as its own font (`parseMSDFFontSet`).
+- **Underline, strikethrough and highlight pills.** `setUnderline()` /
+  `setStrikethrough()` / `setHighlight()`, or per run via a style. Pills take
+  `radius`, `borderWidth`/`borderColor`, `softness` and `padding`; rules take
+  `thickness`, `offset` and a `dash` spec (dashed, dotted, and `dashPhase` for
+  marching ants). All of it batches with the glyphs — a highlighted, underlined,
+  shadowed, outlined text is still **one draw call**.
+- **`fitInside(rect, options)`.** Binary-searches the largest `fontSize` whose
+  word-wrapped layout fits a box, and optionally positions the block inside it
+  (`hAlign`/`vAlign`). Shrink-only by default; pass `maxFontSize` to grow.
+- **Faux bold — `weight`.** Widens glyphs without changing their advance.
+  Object-level, per run, and per corner on `GlyphState`.
+- **New effects.** `outlineSoftness` (at `outlineWidth: 0` it *is* a glow, in the
+  fill's own quad — no extra pass), `shadowSpread` (dilate before blurring; works
+  on plain MSDF), and independent `shadowRounded`. Two-tone ramps for both layers
+  via `setOutlineInnerColor()` / `setShadowInnerColor()` — neon tube, white-hot
+  glow core.
+- **Quad deform — `GlyphState.offsetX` / `offsetY`.** Per-corner displacement in
+  em, in the glyph's local frame: trapezia, jelly, melt, keystone — shapes the
+  scale/rotation/skew transforms cannot reach. Plus `skewPivot` (shear from an
+  em offset below the baseline), `visible` (a hidden glyph costs no quad), and
+  `setGlyph(char)` — swap a letterform at render time without relayout, so the
+  word churns in place.
+- **Glyph provenance and line metrics.** `GlyphState` exposes readonly
+  `srcIndex` / `line` / `srcLine` / `width` / `height` / `em` / `baselineOffset`,
+  and `text.lines` gives cached per-line `x` / `width` / `top` / `baselineY` /
+  `bottom` — the domain a per-glyph effect needs to write itself as a field over
+  text space.
+- **`setDecorationCallback()`.** The rects' equivalent of `displayCallback`:
+  a per-frame `DecorationState[]` covering every underline, strikethrough and
+  pill (which `displayCallback` cannot see — they are rects, not glyphs).
+- **`setSpacingCallback()` / `refreshSpacing()`** and the per-run `space` key —
+  extra advance at a run's edges, em-relative, negative allowed. For kerning
+  across a font boundary, where there is no kern pair to fall back on.
+- **`perGlyphShadow`.** Runs the shadow pass for shadows set from a callback or
+  `editGlyphs()` on a text that has no shadow of its own. (Rich-text styles that
+  set a shadow enable the pass themselves.)
+- Per-glyph `outline` gained `width` / `rounded` / `softness`, and `shadow`
+  gained `softness` / `spread` / `rounded`, all per corner.
+- New examples: **Style Lab**, **Rich Text**, **Mixed Fonts & Sizes**,
+  **Highlights & Decorations**, **Fit Inside** (replacing Outline, Glow and
+  Layout).
+
+### Changed
+- **Object alpha now composes with per-glyph alpha** instead of merely seeding
+  it. `text.alpha` (and the per-corner `alphaTopLeft`…) is multiplied into every
+  colour as it is packed, so a callback or style run that sets an alpha of its
+  own no longer discards the object's. Migration: a callback setting
+  `g.fill.alpha = 1` on a text with `alpha = 0.5` now draws at `0.5`, not `1`.
+  In exchange, an alpha change costs no re-seed and no rebuild — a fade tween on
+  a styled text is free.
+- **`rounded` is a continuous `0–1` amount, not a flag** (`outlineRounded`,
+  `shadowRounded`, and the `rounded` argument of `setOutline`). Intermediates
+  blend sharp into round, so it tweens and can be ramped per corner. `true` /
+  `false` are still accepted and land on the two ends.
+- `shadowRounded` is now independent of `shadowSoftness` rather than derived from
+  it. It defaults to `1`, which reproduces the old behaviour.
+- `getTextBounds()` on empty text reports zero lines instead of one, agreeing
+  with `text.width` / `.height`, which were already `0`.
+
+### Fixed
+- Object-level colour/outline/shadow changes did not refresh the text while a
+  display callback was active.
+- Setting empty text did not update the object's dimensions.
+
+### Performance
+- `getTextBounds()` reads the layout cached by the last rebuild; it used to
+  re-run the entire wrap and measure on every call — a per-frame relayout when
+  called from a display callback.
+- The fragment shader branches between its glyph and solid lanes instead of
+  evaluating both and mixing, which also removes a `mediump` overflow at deep
+  zoom.
+- Every vertex effect rides one normalized `UNSIGNED_BYTE` vec4, so outline
+  width, softness, rounding, weight and the shadow's spread are all per-vertex:
+  texts with *different* outline widths still batch together.
+
 ## [0.3.0]
 
 ### Added
