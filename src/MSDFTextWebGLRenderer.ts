@@ -213,6 +213,8 @@ interface FontBinding {
     unitY: number;
     invRange: number;
     isMtsdf: boolean;
+    /** 1 = pixel-art mode (bitmap glyph lane), 0 = SDF. Global, read per render. */
+    pixelArt: number;
     /** Object-level params, pre-packed for this font. Static mode only. */
     staticParams: number;
     staticShadowParams: number;
@@ -234,9 +236,12 @@ function resolveBindings(src: any, baseTexture: any): number {
     while (bindings.length < count) {
         bindings.push({
             texture: null, font: null, unitX: 0, unitY: 0, invRange: 0, isMtsdf: false,
+            pixelArt: 0,
             staticParams: 0, staticShadowParams: 0
         });
     }
+
+    const pixelArt = src.scene.game.config.pixelArt === true ? 1 : 0;
 
     for (let i = 0; i < count; i++) {
         const data = runFonts[i].data;
@@ -250,6 +255,7 @@ function resolveBindings(src: any, baseTexture: any): number {
         b.unitY = range / data.atlasHeight;
         b.invRange = 1 / range;
         b.isMtsdf = data.distanceField.fieldType === 'mtsdf';
+        b.pixelArt = pixelArt;
     }
 
     return count;
@@ -397,12 +403,15 @@ function configureFont(
     batchHandler: MSDFBatchHandlerInstance,
     drawingContext: any,
     unitRangeX: number,
-    unitRangeY: number
+    unitRangeY: number,
+    pixelArt: number
 ): void {
-    if (batchHandler.hasUnitRangeChanged(unitRangeX, unitRangeY)) {
+    if (batchHandler.hasUnitRangeChanged(unitRangeX, unitRangeY) ||
+        batchHandler.hasPixelArtChanged(pixelArt)) {
         batchHandler.run(drawingContext);
     }
     batchHandler.setUnitRange(unitRangeX, unitRangeY);
+    batchHandler.setPixelArt(pixelArt);
 }
 
 /**
@@ -568,7 +577,7 @@ function submitDecorations(
         if (r.pass !== pass) continue;
 
         const b = bindings[r.fontIdx];
-        if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY);
+        if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY, b.pixelArt);
 
         rectQuad.x = r.x;
         rectQuad.y = r.y;
@@ -658,7 +667,7 @@ function submitDecorationStates(
         if (s.pass !== pass || !s.visible) continue;
 
         const b = bindings[s.fontIdx];
-        if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY);
+        if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY, b.pixelArt);
 
         // A dashed rect spans one unit of U per dash; the phase slides that origin.
         // Wrapped into [0, 1) — exact, since the pattern repeats every unit — so a
@@ -804,7 +813,7 @@ function MSDFTextWebGLRenderer(
     const fontCount = resolveBindings(src, baseTexture);
     const multiFont = fontCount > 1;
     if (!multiFont) {
-        configureFont(batchHandler, drawingContext, bindings[0].unitX, bindings[0].unitY);
+        configureFont(batchHandler, drawingContext, bindings[0].unitX, bindings[0].unitY, bindings[0].pixelArt);
     }
 
     const hasOutline = src.hasOutline();
@@ -942,7 +951,7 @@ function MSDFTextWebGLRenderer(
             if (perGlyph && !glyphs![i].visible) continue;
 
             const b = bindings[char.fontIdx];
-            if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY);
+            if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY, b.pixelArt);
 
             if (perGlyph) {
                 const g = glyphs![i];
@@ -979,7 +988,7 @@ function MSDFTextWebGLRenderer(
             if (perGlyph && !glyphs![i].visible) continue;
 
             const b = bindings[char.fontIdx];
-            if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY);
+            if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY, b.pixelArt);
 
             if (perGlyph) {
                 const g = glyphs![i];
@@ -1022,7 +1031,7 @@ function MSDFTextWebGLRenderer(
         if (perGlyph && !glyphs![i].visible) continue;
 
         const b = bindings[char.fontIdx];
-        if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY);
+        if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY, b.pixelArt);
 
         if (perGlyph) {
             const g = glyphs![i];
