@@ -782,7 +782,7 @@ function MSDFTextWebGLRenderer(
         return;
     }
 
-    const matrixResult = GetCalcMatrix(src, camera, parentMatrix);
+    const matrixResult = GetCalcMatrix(src, camera, parentMatrix, !drawingContext.useCanvas);
     const calcMatrix = matrixResult.calc;
 
     // The object's own alpha, published for every pack below. A modulation, not a
