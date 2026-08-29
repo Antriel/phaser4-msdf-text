@@ -213,6 +213,8 @@ interface FontBinding {
     unitY: number;
     invRange: number;
     isMtsdf: boolean;
+    /** 1 = pixel-art mode (bitmap glyph lane), 0 = SDF. Global, read per render. */
+    pixelArt: number;
     /** Object-level params, pre-packed for this font. Static mode only. */
     staticParams: number;
     staticShadowParams: number;
@@ -234,9 +236,12 @@ function resolveBindings(src: any, baseTexture: any): number {
     while (bindings.length < count) {
         bindings.push({
             texture: null, font: null, unitX: 0, unitY: 0, invRange: 0, isMtsdf: false,
+            pixelArt: 0,
             staticParams: 0, staticShadowParams: 0
         });
     }
+
+    const pixelArt = src.scene.game.config.pixelArt === true ? 1 : 0;
 
     for (let i = 0; i < count; i++) {
         const data = runFonts[i].data;
@@ -250,6 +255,7 @@ function resolveBindings(src: any, baseTexture: any): number {
         b.unitY = range / data.atlasHeight;
         b.invRange = 1 / range;
         b.isMtsdf = data.distanceField.fieldType === 'mtsdf';
+        b.pixelArt = pixelArt;
     }
 
     return count;
@@ -274,6 +280,11 @@ function packStaticParams(src: any, count: number): void {
 
     for (let i = 0; i < count; i++) {
         const b = bindings[i];
+        if (b.pixelArt) {
+            b.staticParams = packParams(0, 0, 0, 0);
+            b.staticShadowParams = packParams(0, 0, 0, 0);
+            continue;
+        }
         const inv = b.invRange;
         const outSoft = b.isMtsdf ? src.outlineSoftness : 0;
         const shSoft = b.isMtsdf ? src.shadowSoftness : 0;
@@ -397,12 +408,15 @@ function configureFont(
     batchHandler: MSDFBatchHandlerInstance,
     drawingContext: any,
     unitRangeX: number,
-    unitRangeY: number
+    unitRangeY: number,
+    pixelArt: number
 ): void {
-    if (batchHandler.hasUnitRangeChanged(unitRangeX, unitRangeY)) {
+    if (batchHandler.hasUnitRangeChanged(unitRangeX, unitRangeY) ||
+        batchHandler.hasPixelArtChanged(pixelArt)) {
         batchHandler.run(drawingContext);
     }
     batchHandler.setUnitRange(unitRangeX, unitRangeY);
+    batchHandler.setPixelArt(pixelArt);
 }
 
 /**
@@ -568,7 +582,7 @@ function submitDecorations(
         if (r.pass !== pass) continue;
 
         const b = bindings[r.fontIdx];
-        if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY);
+        if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY, b.pixelArt);
 
         rectQuad.x = r.x;
         rectQuad.y = r.y;
@@ -658,7 +672,7 @@ function submitDecorationStates(
         if (s.pass !== pass || !s.visible) continue;
 
         const b = bindings[s.fontIdx];
-        if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY);
+        if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY, b.pixelArt);
 
         // A dashed rect spans one unit of U per dash; the phase slides that origin.
         // Wrapped into [0, 1) — exact, since the pattern repeats every unit — so a
@@ -803,8 +817,9 @@ function MSDFTextWebGLRenderer(
     // binding, so the effects degrade to the standard look per *run*.
     const fontCount = resolveBindings(src, baseTexture);
     const multiFont = fontCount > 1;
+    const pixelArt = bindings[0].pixelArt === 1;
     if (!multiFont) {
-        configureFont(batchHandler, drawingContext, bindings[0].unitX, bindings[0].unitY);
+        configureFont(batchHandler, drawingContext, bindings[0].unitX, bindings[0].unitY, bindings[0].pixelArt);
     }
 
     const hasOutline = src.hasOutline();
@@ -845,7 +860,7 @@ function MSDFTextWebGLRenderer(
         const aTL = cA * objAlpha.topLeft, aTR = cA * objAlpha.topRight;
         const aBL = cA * objAlpha.bottomLeft, aBR = cA * objAlpha.bottomRight;
 
-        const oc = src.outlineColor, oA = hasOutline ? src.outlineAlpha : 0;
+        const oc = src.outlineColor, oA = hasOutline && !pixelArt ? src.outlineAlpha : 0;
         outlineBuf.topLeft = packColor(oc, oA * objAlpha.topLeft);
         outlineBuf.topRight = packColor(oc, oA * objAlpha.topRight);
         outlineBuf.bottomLeft = packColor(oc, oA * objAlpha.bottomLeft);
@@ -912,7 +927,7 @@ function MSDFTextWebGLRenderer(
     //
     // A two-tone outline forces layering: the inner colour rides the fill
     // attribute, which a combined fill+outline quad has already spoken for.
-    const layered = (src.outlineLayered || src.outlineInnerColor >= 0) && (hasOutline || perGlyph);
+    const layered = !pixelArt && (src.outlineLayered || src.outlineInnerColor >= 0) && (hasOutline || perGlyph);
 
     // ── Highlight pass — pills behind everything, the shadow included. ───────
     if (hasDecorations) {
@@ -942,7 +957,7 @@ function MSDFTextWebGLRenderer(
             if (perGlyph && !glyphs![i].visible) continue;
 
             const b = bindings[char.fontIdx];
-            if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY);
+            if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY, b.pixelArt);
 
             if (perGlyph) {
                 const g = glyphs![i];
@@ -951,11 +966,13 @@ function MSDFTextWebGLRenderer(
                 // it dilates the same median(rgb) edge a thick outline does — so
                 // it rides `width`, the one channel a shadow quad leaves idle, and
                 // needs no clamp.
-                const softness = b.isMtsdf ? g.shadow.softness : zeroCorners;
-                const rounded = b.isMtsdf ? g.shadow.rounded : zeroCorners;
+                const softness = b.isMtsdf && !pixelArt ? g.shadow.softness : zeroCorners;
+                const rounded = b.isMtsdf && !pixelArt ? g.shadow.rounded : zeroCorners;
+                const weight = pixelArt ? zeroCorners : g.weight;
+                const spread = pixelArt ? zeroCorners : g.shadow.spread;
                 packAspect(shadowBuf, g.shadow.color, g.shadow.alpha);
                 packToneAspect(shadowToneBuf, g.shadow.innerColor);
-                packParamsAspect(shadowParams, g.weight, rounded, g.shadow.spread, softness, b.invRange);
+                packParamsAspect(shadowParams, weight, rounded, spread, softness, b.invRange);
                 submitOneGlyph(drawingContext, batchHandler, b.texture, quad,
                     g.x + swapDX + g.shadow.x, g.y + swapDY + g.shadow.y,
                     g.scaleX, g.scaleY, g.rotation, g.skew,
@@ -979,16 +996,18 @@ function MSDFTextWebGLRenderer(
             if (perGlyph && !glyphs![i].visible) continue;
 
             const b = bindings[char.fontIdx];
-            if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY);
+            if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY, b.pixelArt);
 
             if (perGlyph) {
                 const g = glyphs![i];
                 const quad = resolveGlyphQuad(char, g.glyph, b.font);
-                const rounded = b.isMtsdf ? g.outline.rounded : zeroCorners;
-                const softness = b.isMtsdf ? g.outline.softness : zeroCorners;
-                packOutlineAspect(outlineBuf, g.outline.color, g.outline.alpha, g.outline.width, softness);
+                const rounded = b.isMtsdf && !pixelArt ? g.outline.rounded : zeroCorners;
+                const softness = b.isMtsdf && !pixelArt ? g.outline.softness : zeroCorners;
+                const outlineWidth = pixelArt ? zeroCorners : g.outline.width;
+                const weight = pixelArt ? zeroCorners : g.weight;
+                packOutlineAspect(outlineBuf, g.outline.color, g.outline.alpha, outlineWidth, softness);
                 packToneAspect(outlineToneBuf, g.outline.innerColor);
-                packParamsAspect(glyphParams, g.weight, rounded, g.outline.width, softness, b.invRange);
+                packParamsAspect(glyphParams, weight, rounded, outlineWidth, softness, b.invRange);
                 submitOneGlyph(drawingContext, batchHandler, b.texture, quad,
                     g.x + swapDX, g.y + swapDY, g.scaleX, g.scaleY, g.rotation, g.skew,
                     g.skewPivot, g.offsetX, g.offsetY,
@@ -1022,16 +1041,18 @@ function MSDFTextWebGLRenderer(
         if (perGlyph && !glyphs![i].visible) continue;
 
         const b = bindings[char.fontIdx];
-        if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY);
+        if (multiFont) configureFont(batchHandler, drawingContext, b.unitX, b.unitY, b.pixelArt);
 
         if (perGlyph) {
             const g = glyphs![i];
             const quad = resolveGlyphQuad(char, g.glyph, b.font);
-            const rounded = b.isMtsdf ? g.outline.rounded : zeroCorners;
-            const softness = b.isMtsdf ? g.outline.softness : zeroCorners;
+            const rounded = b.isMtsdf && !pixelArt ? g.outline.rounded : zeroCorners;
+            const softness = b.isMtsdf && !pixelArt ? g.outline.softness : zeroCorners;
+            const outlineWidth = pixelArt ? zeroCorners : g.outline.width;
+            const weight = pixelArt ? zeroCorners : g.weight;
             let outlineData = zeroColor;
             if (combined) {
-                packOutlineAspect(outlineBuf, g.outline.color, g.outline.alpha, g.outline.width, softness);
+                packOutlineAspect(outlineBuf, g.outline.color, g.outline.alpha, outlineWidth, softness);
                 packFillAspect(fillBuf, g.fill.color, g.fill.alpha, g.outline.color);
                 outlineData = outlineBuf;
             } else {
@@ -1040,7 +1061,7 @@ function MSDFTextWebGLRenderer(
             // In the layered case the outline layer is already drawn and this
             // quad's outline alpha is zero, so its width and softness are inert
             // here — passed anyway, so both branches share one pack.
-            packParamsAspect(glyphParams, g.weight, rounded, g.outline.width, softness, b.invRange);
+            packParamsAspect(glyphParams, weight, rounded, outlineWidth, softness, b.invRange);
             submitOneGlyph(drawingContext, batchHandler, b.texture, quad,
                 g.x + swapDX, g.y + swapDY, g.scaleX, g.scaleY, g.rotation, g.skew,
                 g.skewPivot, g.offsetX, g.offsetY,

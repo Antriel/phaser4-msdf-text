@@ -57,6 +57,7 @@ const SimpleFragmentShader = [
     '',
     'uniform sampler2D uMainSampler;',
     'uniform vec2 uUnitRange;',  // distanceRange / atlasSize — per texture, never per glyph.
+    'uniform float uPixelArt;',  // 0 = SDF glyph lane, 1 = bitmap glyph lane. Per draw, like uUnitRange.
     '',
     'varying vec2 outTexCoord;',
     'varying vec4 outColor;',    // Fill colour + alpha; a zero alpha frees .rgb as the two-tone inner colour.
@@ -198,6 +199,16 @@ const SimpleFragmentShader = [
     '    }',
     '    else',
     '    {',
+    //          Pixel-art mode: coverage is the texel alpha; no ramp (tone 0), no fade guard.
+    '        if (uPixelArt > 0.5)',
+    '        {',
+    '            fillCoverage = texel.a;',
+    '            outlineCoverage = texel.a;',
+    '            tone = 0.0;',
+    '            fade = 1.0;',
+    '        }',
+    '        else',
+    '        {',
     //          ── Glyph lane: distance field ─────────────────────────────────────
     '        float px = max(0.5 * dot(uUnitRange, screenTexSize), 1.0);',
     '        float weight = outParams.r - (128.0 / 255.0);',  // Signed fraction of the range; 128 is neutral.
@@ -235,6 +246,7 @@ const SimpleFragmentShader = [
     //          soft glow has real alpha down in that region, so any nonzero softness
     //          byte suppresses the fade; hard edges keep it.
     '        fade = max(smoothstep(0.0, 0.2, outlineDist), softStep);',
+    '        }',
     '    }',
     '',
     //      ── One composite ──────────────────────────────────────────────────────
@@ -300,7 +312,10 @@ type DrawingContext = any;
 interface MSDFBatchHandlerInstance {
     _currentTexture: WebGLTextureWrapper | null;
     _unitRange: [number, number];
+    _pixelArt: number;
 
+    setPixelArt(v: number): void;
+    hasPixelArtChanged(v: number): boolean;
     instanceCount: number;
     instancesPerBatch: number;
     bytesPerInstance: number;
@@ -360,6 +375,17 @@ class MSDFBatchHandler extends PhaserBatchHandler {
         const self = this as unknown as MSDFBatchHandlerInstance;
         self._currentTexture = null;
         self._unitRange = [4 / 512, 4 / 512];
+        self._pixelArt = 0;
+    }
+
+    setPixelArt(v: number): void {
+        const self = this as unknown as MSDFBatchHandlerInstance;
+        self._pixelArt = v;
+    }
+
+    hasPixelArtChanged(v: number): boolean {
+        const self = this as unknown as MSDFBatchHandlerInstance;
+        return self._pixelArt !== v;
     }
 
     setUnitRange(x: number, y: number): void {
@@ -397,6 +423,7 @@ class MSDFBatchHandler extends PhaserBatchHandler {
 
         programManager.setUniform('uMainSampler', 0);
         programManager.setUniform('uUnitRange', self._unitRange);
+        programManager.setUniform('uPixelArt', self._pixelArt);
 
         drawingContext.renderer.setProjectionMatrixFromDrawingContext(drawingContext);
         programManager.setUniform('uProjectionMatrix', drawingContext.renderer.projectionMatrix.val);

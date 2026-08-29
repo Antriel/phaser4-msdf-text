@@ -129,10 +129,13 @@ export const MSDFFontFile = new Class({
                 const img = image.data;
                 const wrap = gl.CLAMP_TO_EDGE;
 
+                // Use NEAREST filtering and bypass the SDF lane in pixel-art mode.
+                const filter = this.loader.systems.game.config.pixelArt === true ? gl.NEAREST : gl.LINEAR;
+
                 const glTexture = renderer.createTexture2D(
                     0,                    // mipLevel
-                    gl.LINEAR,            // minFilter — MSDF requires linear filtering
-                    gl.LINEAR,            // magFilter
+                    filter,               // minFilter — LINEAR for MSDF, NEAREST in pixel-art mode
+                    filter,               // magFilter
                     wrap, wrap,           // wrapT, wrapS
                     gl.RGBA,              // format
                     img,                  // source image element

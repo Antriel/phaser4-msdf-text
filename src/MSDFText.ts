@@ -154,6 +154,20 @@ function warnNeedsMtsdf(text: any, effectName: string): boolean {
     return false;
 }
 
+function warnOnceIfPixelArt(text: any, effectName: string): void {
+    if (text.scene.game.config.pixelArt !== true) return;
+    if (!text._pixelArtWarnings) {
+        text._pixelArtWarnings = {};
+    }
+    if (!text._pixelArtWarnings[effectName]) {
+        text._pixelArtWarnings[effectName] = true;
+        console.warn(
+            `[MSDFText] "${effectName}" is distance-field based and is ignored ` +
+            `in pixel-art mode (game config "pixelArt: true").`
+        );
+    }
+}
+
 /**
  * Element-wise equality of two size-scale maps (either may be `null`, meaning
  * "uniform size"). A rebuild is only worth paying for when this says no.
@@ -1095,6 +1109,9 @@ export const MSDFText: MSDFTextStatic = new Class({
      */
     setWeight: function (weight: number) {
         this.weight = weight;
+        if (weight !== 0) {
+            warnOnceIfPixelArt(this, 'weight');
+        }
         return this;
     },
 
@@ -1752,6 +1769,9 @@ export const MSDFText: MSDFTextStatic = new Class({
         if (this.outlineSoftness > 0) {
             warnNeedsMtsdf(this, 'soft outline');
         }
+        if (width > 0 || this.outlineSoftness > 0) {
+            warnOnceIfPixelArt(this, 'outline');
+        }
         return this;
     },
 
@@ -1879,6 +1899,9 @@ export const MSDFText: MSDFTextStatic = new Class({
         this.shadowSpread = Math.max(0, spread);
         if (this.shadowSoftness > 0) {
             warnNeedsMtsdf(this, 'soft shadow');
+        }
+        if (this.shadowSoftness > 0 || this.shadowSpread > 0) {
+            warnOnceIfPixelArt(this, 'soft/spread shadow');
         }
         return this;
     },
