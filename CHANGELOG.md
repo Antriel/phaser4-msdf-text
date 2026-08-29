@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0,
 so minor versions may carry breaking changes).
 
+## [0.4.1]
+
+### Fixed
+- Text was mispositioned whenever it rendered into a framebuffer rather than
+  straight to the canvas — under a camera with filters, `alpha < 1` or
+  `forceComposite`, and inside a `Filters.Mask` (a masked scroller, say).
+  `GetCalcMatrix` was called without `ignoreCameraPosition`, so it used the
+  camera's *combined* matrix and baked the camera's screen position into every
+  glyph quad — which the compositor then applied a second time. It now passes
+  `!drawingContext.useCanvas`, matching every stock Phaser 4 WebGL renderer.
+  Rendering direct to the canvas is unchanged. Thanks to @rmartone (#1).
+
 ## [0.4.0]
 
 ### Added
